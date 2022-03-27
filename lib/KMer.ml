@@ -1,0 +1,242 @@
+module IntComparable = struct type t = int let compare = (-) end
+
+module IntSet = Set.Make (IntComparable)
+module IntMap = Map.Make (IntComparable)
+
+module IntHash =
+  struct
+    type t = int
+    let equal (i: int) (j: int) = (i - j = 0) (*(i = j)*)
+    let hash (i: int) = i (* land max_int *)
+  end
+module IntHashtbl = Hashtbl.Make (IntHash)
+let add_to_kmer_counter counter hash occs =
+  try
+    let found = IntHashtbl.find counter hash in
+    found := !found + occs
+  with Not_found ->
+    IntHashtbl.add counter hash (ref occs)
+
+module ReadStore:
+  sig
+    type file_t =
+      | SingleEndFile of string
+      | PairedEndFile of string * string
+    type read_t = {
+      tag: string;
+      seq: string;
+      qua: string
+    }
+    type template_t =
+      | SingleEndRead of read_t
+      | PairedEndRead of read_t * read_t
+    type t = template_t array
+    (* A filter is something that separates reads into (singletons, selected, leftovers) *)
+    val singleton: int
+    val selected: int
+    val unmarked: int
+    type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+    val empty: t
+    val length: t -> int
+    val add_from_fastq: t -> file_t -> t
+    (* Arguments to the function are store, set of read ids, name of output prefix
+        (output reads can be both SE and PE) *)
+    val to_fastq: t -> filter_t -> string -> unit
+    val seq_length: t -> int
+    (* Arguments to the function are read id, segment id, payload *)
+    val iter: (int -> int -> read_t -> unit) -> t -> unit
+  end
+= struct
+    type file_t =
+      | SingleEndFile of string
+      | PairedEndFile of string * string
+    type read_t = {
+      tag: string;
+      seq: string;
+      qua: string
+    }
+    type template_t =
+      | SingleEndRead of read_t
+      | PairedEndRead of read_t * read_t
+    type t = template_t array
+    let singleton = 0
+    let selected = 1
+    let unmarked = 2
+    type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+    let empty = [||]
+    let iter f =
+      Array.iteri
+        (fun templ_i -> function
+          | SingleEndRead segm ->
+            f templ_i 0 segm
+          | PairedEndRead (segm1, segm2) ->
+            f templ_i 0 segm1;
+            f templ_i 1 segm2)
+    let length = Array.length
+    let seq_length store =
+      let res = ref 0 in
+      iter (fun _ _ segm -> res := !res + String.length segm.seq) store;
+      !res
+    let add_from_fastq orig file =
+      let lines = ref 0 in
+      let error msg =
+        Printf.sprintf "ReadStore.add_from_fastq: After %d lines: %s" !lines msg |> failwith in
+      let res =
+        match file with
+        | SingleEndFile file ->
+          let input = open_in file and res = ref [] in
+          Printf.eprintf "ReadStore.add_from_fastq: Reading SE file '%s'...%!" file;
+          begin try
+            while true do
+              let tag = input_line input in
+              let seq = input_line input in
+              let tmp = input_line input in
+              let qua = input_line input in
+              if tag.[0] <> '@' || tmp.[0] <> '+' then
+                error "Malformed FASTQ file";
+              res :=
+                SingleEndRead
+                  { tag = String.sub tag 1 (String.length tag - 1); seq = seq; qua = qua }
+                :: !res
+            done
+          with End_of_file -> ()
+          end;
+          Printf.eprintf " done.\n%!";
+          close_in input;
+          Array.append orig (Array.of_list !res)
+        | PairedEndFile (file1, file2) ->
+          let input1 = open_in file1 and input2 = open_in file2 and res = ref [] in
+          Printf.eprintf "ReadStore.add_from_fastq: Reading PE files '%s' and '%s'...%!" file1 file2;
+          begin try
+            while true do
+              let tag1 = input_line input1 in
+              let seq1 = input_line input1 in
+              let tmp1 = input_line input1 in
+              let qua1 = input_line input1 in
+              let tag2 = input_line input2 in
+              let seq2 = input_line input2 in
+              let tmp2 = input_line input2 in
+              let qua2 = input_line input2 in
+              if tag1.[0] <> '@' || tmp1.[0] <> '+' || tag2.[0] <> '@' || tmp2.[0] <> '+' then
+                error "Malformed FASTQ file";
+              res :=
+                PairedEndRead begin
+                  { tag = String.sub tag1 1 (String.length tag1 - 1); seq = seq1; qua = qua1 },
+                  { tag = String.sub tag2 1 (String.length tag2 - 1); seq = seq2; qua = qua2 }
+                end :: !res
+            done
+          with End_of_file -> ()
+          end;
+          close_in input1;
+          close_in input2;
+          Printf.eprintf " done.\n%!";
+          Array.append orig (Array.of_list !res) in
+      Printf.eprintf
+        "ReadStore.add_from_fastq: %d reads in store so far (total length %d)\n%!"
+        (Array.length res) (seq_length res);
+      res
+    let to_fastq store filter prefix =
+      let len = Array.length store in
+      if Bigarray.Array1.dim filter <> len then
+        failwith
+          "ReadStore.to_fastq: Invalid parameters (filter length must be the same as the number of reads)";
+      let print_fastq_record classification output read =
+        Printf.fprintf output "@%d__%s\n%s\n+\n%s\n%!" classification read.tag read.seq read.qua
+      and output1 = open_out (prefix ^ "_SE.fastq")
+      and output2 = [| open_out (prefix ^ "_PE_1.fastq"); open_out (prefix ^ "_PE_2.fastq") |] in
+      Printf.eprintf "ReadStore.to_fastq: Writing %d reads...%!" len;
+      Array.iteri
+        (fun i -> function
+          | SingleEndRead segm ->
+            print_fastq_record filter.{i} output1 segm
+          | PairedEndRead (segm1, segm2) ->
+            print_fastq_record filter.{i} output2.(0) segm1;
+            print_fastq_record filter.{i} output2.(1) segm2)
+        store;
+      close_out output1;
+      close_out output2.(0);
+      close_out output2.(1);
+      Printf.eprintf " done.\n%!"
+  end
+
+module type KMerHash =
+  sig
+    type t
+    type strand_t =
+      | Forward
+      | Reverse
+    val k: int
+    (* Iterates a function over all hashes that can be extracted from a string
+        according to the specific method being used *)
+    val iter: (t -> int -> unit) -> string -> unit
+    (*val decode: t -> string*)
+  end
+
+module type IntParameter =
+  sig
+    val value: int
+  end
+
+module EncodingHash (K: IntParameter):
+  KMerHash with type t = int
+= struct
+    type t = int
+    type strand_t =
+      | Forward
+      | Reverse
+    let k =
+      if K.value > 30 then
+        Printf.sprintf "EncodingHash.k: Invalid argument (k must be <= 30, found %d)" K.value |> failwith;
+      K.value
+    (* This is not thread-safe, but hopefully more optimised than placing the filter into iter() *)
+    let filter = IntHashtbl.create 1024
+    exception Exit of int
+    let iter f s =
+      (* We have to take the RC into account.
+         We also want to present repeated k-mers only once,
+          so that we can replace sets of reads with lists *)
+      let len = String.length s
+      (* 0b--..--11..1100 *)
+      and mask_f = 1 lsl (2 * k) - 4
+      and mask_r = 1 lsl (2 * k - 2) - 1 in
+      let red_len = len - 1 in
+      (* This function is invoked to compute the first hash
+          and start processing starting from a given position *)
+      let rec accumulate_hashes pos =
+        let shift (old_hash_f, old_hash_r) pos =
+          let encoded_f, encoded_r =
+            match s.[pos] with
+            | 'A' | 'a' -> 0, 3
+            | 'C' | 'c' -> 1, 2
+            | 'G' | 'g' -> 2, 1
+            | 'T' | 't' -> 3, 0
+            | _ -> raise_notrace (Exit pos) in
+          ((old_hash_f lsl 2) land mask_f) lor encoded_f,
+          ((old_hash_r lsr 2) land mask_r) lor (encoded_r lsl (2 * (k - 1))) in
+        (* There must be at least k letters left *)
+        if len - pos < k then
+          ()
+        else begin
+          (* Compute the first hash(es).
+             Our k-mer over alphabet ACGT, and its reverse complement,
+              are encoded into base-4 numbers.
+              The first 30 letters at most are used.
+              If there are Ns or other non-base letters, the string is split *)
+          let top = pos + k - 2 and hashes = ref (0, 0) in
+          try
+            for i = pos to top do
+              hashes := shift !hashes i
+            done;
+            for i = pos + k - 1 to red_len do
+              hashes := shift !hashes i;
+              let hash_f, hash_r = !hashes in
+              add_to_kmer_counter filter hash_f 1;
+              add_to_kmer_counter filter hash_r 1
+            done
+          with Exit p -> accumulate_hashes (p + 1)
+        end in
+      IntHashtbl.clear filter;
+      accumulate_hashes 0;
+      IntHashtbl.iter (fun hash cntr -> f hash !cntr) filter
+
+  end
