@@ -713,8 +713,8 @@ module Parallel:
       let red_threads = threads - 1 in
       (* I am the ouptut process *)
       let close_pipe (pipe_in, pipe_out) = Unix.close pipe_in; Unix.close pipe_out in
-      let close_pipes_in = Array.iter (fun (pipe_in, pipe_out) -> Unix.close pipe_in)
-      and close_pipes_out = Array.iter (fun (pipe_in, pipe_out) -> Unix.close pipe_out)
+      let close_pipes_in = Array.iter (fun (pipe_in, _) -> Unix.close pipe_in)
+      and close_pipes_out = Array.iter (fun (_, pipe_out) -> Unix.close pipe_out)
       and close_pipes = Array.iter close_pipe
       and get_stuff_for_select pipes =
         let pipes = Array.map fst pipes in

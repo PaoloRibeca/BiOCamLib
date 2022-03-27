@@ -337,7 +337,7 @@ module Translation:
       | "30" | "Table30" | "Table_30" -> Table_30
       | "31" | "Table31" | "Table_31" -> Table_31
       | w -> failwith ("Invalid translation table '" ^ w ^ "'")
-    let describe = function
+    let [@warning "-32"] describe = function
       | Table_1 -> "Standard"
       | Table_2 -> "VertebrateMitochondrial"
       | Table_3 -> "YeastMitochondrial"
@@ -668,7 +668,7 @@ module Reference:
         Bytes.to_string res
       end
     let get_table obj str_ivl =
-      let { Types.low = { Types.name } } = str_ivl in
+      let { Types.low = { Types.name; _ }; _ } = str_ivl in
       let _, table = find obj name in
       table
     let get_sequence_and_table obj str_ivl =
