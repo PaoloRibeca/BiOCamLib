@@ -20,12 +20,13 @@ let add_to_kmer_counter counter hash occs =
 module ReadStore:
   sig
     type file_t =
-      | SingleEndFile of string
-      | PairedEndFile of string * string
+      | FASTA of string
+      | SingleEndFASTQ of string
+      | PairedEndFASTQ of string * string
     type read_t = {
       tag: string;
       seq: string;
-      qua: string
+      qua: string (* Reads from FASTA files have empty qualities *)
     }
     type template_t =
       | SingleEndRead of read_t
@@ -38,18 +39,19 @@ module ReadStore:
     type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
     val empty: t
     val length: t -> int
-    val add_from_fastq: t -> file_t -> t
+    val add_from_files: t -> file_t -> t
     (* Arguments to the function are store, set of read ids, name of output prefix
-        (output reads can be both SE and PE) *)
-    val to_fastq: t -> filter_t -> string -> unit
+        (output reads can be FASTA and/or FASTQ SE and/or FASTQ PE) *)
+    val to_files: t -> filter_t -> string -> unit
     val seq_length: t -> int
     (* Arguments to the function are read id, segment id, payload *)
     val iter: (int -> int -> read_t -> unit) -> t -> unit
   end
 = struct
     type file_t =
-      | SingleEndFile of string
-      | PairedEndFile of string * string
+      | FASTA of string
+      | SingleEndFASTQ of string
+      | PairedEndFASTQ of string * string
     type read_t = {
       tag: string;
       seq: string;
@@ -77,82 +79,50 @@ module ReadStore:
       let res = ref 0 in
       iter (fun _ _ segm -> res := !res + String.length segm.seq) store;
       !res
-    let add_from_fastq orig file =
-      let lines = ref 0 in
-      let error msg =
-        Printf.sprintf "ReadStore.add_from_fastq: After %d lines: %s" !lines msg |> failwith in
-      let res =
-        match file with
-        | SingleEndFile file ->
-          let input = open_in file and res = ref [] in
-          Printf.eprintf "ReadStore.add_from_fastq: Reading SE file '%s'...%!" file;
-          begin try
-            while true do
-              let tag = input_line input in
-              let seq = input_line input in
-              let tmp = input_line input in
-              let qua = input_line input in
-              if tag.[0] <> '@' || tmp.[0] <> '+' then
-                error "Malformed FASTQ file";
-              res :=
-                SingleEndRead
-                  { tag = String.sub tag 1 (String.length tag - 1); seq = seq; qua = qua }
-                :: !res
-            done
-          with End_of_file -> ()
-          end;
-          Printf.eprintf " done.\n%!";
-          close_in input;
-          Array.append orig (Array.of_list !res)
-        | PairedEndFile (file1, file2) ->
-          let input1 = open_in file1 and input2 = open_in file2 and res = ref [] in
-          Printf.eprintf "ReadStore.add_from_fastq: Reading PE files '%s' and '%s'...%!" file1 file2;
-          begin try
-            while true do
-              let tag1 = input_line input1 in
-              let seq1 = input_line input1 in
-              let tmp1 = input_line input1 in
-              let qua1 = input_line input1 in
-              let tag2 = input_line input2 in
-              let seq2 = input_line input2 in
-              let tmp2 = input_line input2 in
-              let qua2 = input_line input2 in
-              if tag1.[0] <> '@' || tmp1.[0] <> '+' || tag2.[0] <> '@' || tmp2.[0] <> '+' then
-                error "Malformed FASTQ file";
-              res :=
-                PairedEndRead begin
-                  { tag = String.sub tag1 1 (String.length tag1 - 1); seq = seq1; qua = qua1 },
-                  { tag = String.sub tag2 1 (String.length tag2 - 1); seq = seq2; qua = qua2 }
-                end :: !res
-            done
-          with End_of_file -> ()
-          end;
-          close_in input1;
-          close_in input2;
-          Printf.eprintf " done.\n%!";
-          Array.append orig (Array.of_list !res) in
-      Printf.eprintf
-        "ReadStore.add_from_fastq: %d reads in store so far (total length %d)\n%!"
-        (Array.length res) (seq_length res);
+    let add_from_files orig file =
+      let res = ref [] in
+      begin match file with
+      | FASTA file ->
+        Sequences.FASTA.iter
+        (fun _ tag seq ->
+          SingleEndRead { tag; seq; qua = "" } |> Tools.Misc.accum res)
+        file
+      | SingleEndFASTQ file ->
+        Sequences.FASTQ.iter_se
+          (fun _ tag seq qua ->
+            SingleEndRead { tag; seq; qua } |> Tools.Misc.accum res)
+          file
+      | PairedEndFASTQ (file1, file2) ->
+        Sequences.FASTQ.iter_pe
+          (fun _ tag1 seq1 qua1 tag2 seq2 qua2 ->
+            PairedEndRead ({ tag = tag1; seq = seq1; qua = qua1 }, { tag = tag2; seq = seq2; qua = qua2 }) |> Tools.Misc.accum res)
+          file1 file2
+      end;
+      let res = Array.append orig (Array.of_list !res) in
+      Printf.eprintf "%s: %d reads in store so far (total length %d)\n%!" __FUNCTION__ (Array.length res) (seq_length res);
       res
-    let to_fastq store filter prefix =
+    let to_files store filter prefix =
       let len = Array.length store in
       if Bigarray.Array1.dim filter <> len then
-        failwith
-          "ReadStore.to_fastq: Invalid parameters (filter length must be the same as the number of reads)";
+        Printf.sprintf "%s: Invalid parameters (filter length must be the same as the number of reads)" __FUNCTION__ |> failwith;
       let print_fastq_record classification output read =
         Printf.fprintf output "@%d__%s\n%s\n+\n%s\n%!" classification read.tag read.seq read.qua
+      and output0 = open_out (prefix ^ ".fasta")
       and output1 = open_out (prefix ^ "_SE.fastq")
       and output2 = [| open_out (prefix ^ "_PE_1.fastq"); open_out (prefix ^ "_PE_2.fastq") |] in
-      Printf.eprintf "ReadStore.to_fastq: Writing %d reads...%!" len;
+      Printf.eprintf "%s: Writing %d reads...%!" __FUNCTION__ len;
       Array.iteri
         (fun i -> function
           | SingleEndRead segm ->
-            print_fastq_record filter.{i} output1 segm
+            if segm.qua = "" then
+              Printf.fprintf output0 ">%d__%s\n%s\n%!" filter.{i} segm.tag segm.seq
+            else
+              print_fastq_record filter.{i} output1 segm
           | PairedEndRead (segm1, segm2) ->
             print_fastq_record filter.{i} output2.(0) segm1;
             print_fastq_record filter.{i} output2.(1) segm2)
         store;
+      close_out output0;
       close_out output1;
       close_out output2.(0);
       close_out output2.(1);
@@ -186,7 +156,7 @@ module EncodingHash (K: IntParameter):
       | Reverse
     let k =
       if K.value > 30 then
-        Printf.sprintf "EncodingHash.k: Invalid argument (k must be <= 30, found %d)" K.value |> failwith;
+        Printf.sprintf "%s: Invalid argument (k must be <= 30, found %d)" __FUNCTION__ K.value |> failwith;
       K.value
     (* This is not thread-safe, but hopefully more optimised than placing the filter into iter() *)
     let filter = IntHashtbl.create 1024
@@ -230,8 +200,10 @@ module EncodingHash (K: IntParameter):
             for i = pos + k - 1 to red_len do
               hashes := shift !hashes i;
               let hash_f, hash_r = !hashes in
-              add_to_kmer_counter filter hash_f 1;
-              add_to_kmer_counter filter hash_r 1
+              if hash_f <= hash_r then
+                add_to_kmer_counter filter hash_f 1
+              else
+                add_to_kmer_counter filter hash_r 1
             done
           with Exit p -> accumulate_hashes (p + 1)
         end in
