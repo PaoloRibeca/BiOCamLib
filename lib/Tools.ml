@@ -1,5 +1,5 @@
 (* This library is
-    (C) 2015-2021 Paolo Ribeca, <paolo.ribeca@gmail.com>.
+    (C) 2015-2022 Paolo Ribeca, <paolo.ribeca@gmail.com>.
    It contains several general-purpose utilities, in particular:
     * a module to parse command-line options
     * a module to arbitrarily parallelize streams following a
@@ -35,6 +35,12 @@ module IntMap: module type of Map.Make (ComparableInt) = Map.Make (ComparableInt
 module RComparableInt = MakeRComparable (struct type t = int end)
 module IntRSet: module type of Set.Make (RComparableInt) = Set.Make (RComparableInt)
 module IntRMap: module type of Map.Make (RComparableInt) = Map.Make (RComparableInt)
+module ComparableFloat = MakeComparable (struct type t = float end)
+module FloatSet: module type of Set.Make (ComparableFloat) = Set.Make (ComparableFloat)
+module FloatMap: module type of Map.Make (ComparableFloat) = Map.Make (ComparableFloat)
+module RComparableFloat = MakeRComparable (struct type t = float end)
+module FloatRSet: module type of Set.Make (RComparableFloat) = Set.Make (RComparableFloat)
+module FloatRMap: module type of Map.Make (RComparableFloat) = Map.Make (RComparableFloat)
 module ComparableString = MakeComparable (struct type t = string end)
 module StringSet: module type of Set.Make (ComparableString) = Set.Make (ComparableString)
 module StringMap: module type of Map.Make (ComparableString) = Map.Make (ComparableString)
@@ -71,12 +77,27 @@ module OrderedMultimap (OKey:Map.OrderedType) (OVal:Set.OrderedType) =
       with Not_found ->
         om
     let iter_set = KeyMap.iter
+    let iteri_set f =
+      let i = ref 0 in
+      KeyMap.iter
+        (fun k s ->
+          f !i k s;
+          incr i)
     let iter f =
       KeyMap.iter
         (fun k s ->
           ValSet.iter
             (fun v ->
               f k v)
+            s)
+    let iteri f =
+      let i = ref 0 in
+      KeyMap.iter
+        (fun k s ->
+          ValSet.iter
+            (fun v ->
+              f !i k v;
+              incr i)
             s)
     let max_binding = KeyMap.max_binding
     let min_binding = KeyMap.min_binding
