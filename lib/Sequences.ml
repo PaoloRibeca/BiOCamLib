@@ -49,17 +49,19 @@ module Misc:
 
   end
 
-  module FASTA:
+module FASTA:
   sig
-    val iter: ?linter:(string -> string) -> (int -> string -> string -> unit) -> string -> unit
+    val iter: ?linter:(string -> string) -> ?verbose:bool -> (int -> string -> string -> unit) -> string -> unit
     val parallel_iter: ?linter:(string -> string) -> ?buffered_chunks_per_thread:int ->
                        ?max_memory:int -> ?verbose:bool ->
       string -> (int -> (string * string) list -> 'a) -> ('a -> unit) -> int -> unit
   
   end
 = struct
-    let iter ?(linter = Misc.dnaize ~keep_dashes:false) f filename =
+    let iter ?(linter = Misc.dnaize ~keep_dashes:false) ?(verbose = true) f filename =
       let file = open_in filename and progr = ref 0 and current = ref "" and seq = Buffer.create 1048576 in
+      if verbose then
+        Printf.eprintf "%s: Reading FASTA file '%s'...%!" __FUNCTION__ filename;
       let process_current () =
         if !current <> "" then begin
           f !progr !current (Buffer.contents seq);
@@ -77,8 +79,10 @@ module Misc:
         done
       with End_of_file ->
         process_current ();
-        close_in file
-    let parallel_iter ?(linter = Misc.dnaize ~keep_dashes:false) ?(buffered_chunks_per_thread = 10)
+        close_in file;
+        if verbose then
+          Printf.eprintf " done.\n%!"
+      let parallel_iter ?(linter = Misc.dnaize ~keep_dashes:false) ?(buffered_chunks_per_thread = 10)
                       ?(max_memory = 1000000000) ?(verbose = true)
         filename (f:int -> (string * string) list -> 'a) (g:'a -> unit) threads =
       let max_block_bytes = max_memory / (buffered_chunks_per_thread * threads) in
@@ -108,8 +112,8 @@ module Misc:
       read_up_to_next_sequence_name ();
       if Buffer.contents seq <> "" then
         Buffer.contents seq |>
-          Printf.sprintf "On line %d: Malformed FASTA file (found content '%s' before sequence name)" !read |>
-          failwith;
+          Printf.sprintf "%s: On line %d: Malformed FASTA file (found content '%s' before sequence name)" __FUNCTION__ !read
+          |> failwith;
       if not !eof_reached then
         Tools.Parallel.process_stream_chunkwise ~buffered_chunks_per_thread:buffered_chunks_per_thread
           (fun () ->
@@ -122,7 +126,7 @@ module Misc:
                 read_up_to_next_sequence_name ();
                 let seq = Buffer.contents seq in
                 if seq = "" then begin
-                  Printf.sprintf "On line %d: Malformed FASTA file (sequence '%s' is empty)" !read current
+                  Printf.sprintf "%s: On line %d: Malformed FASTA file (sequence '%s' is empty)" __FUNCTION__ !read current
                   |> failwith
                 end;
                 incr seqs;
@@ -142,6 +146,64 @@ module Misc:
             end;
             res)
           g threads
+
+  end
+
+module FASTQ:
+  sig
+    val iter_se: ?linter:(string -> string) -> ?verbose:bool -> (int -> string -> string -> string -> unit) -> string -> unit
+    val iter_pe: ?linter:(string -> string) -> ?verbose:bool ->
+      (int -> string -> string -> string -> string -> string -> string -> unit) -> string -> string -> unit
+
+  end
+= struct
+    let iter_se ?(linter = Misc.dnaize ~keep_dashes:false) ?(verbose = true) f file =
+      let read = ref 0 and input = open_in file in
+      if verbose then
+        Printf.eprintf "%s: Reading SE FASTQ file '%s'...%!" __FUNCTION__ file;
+      begin try
+        while true do
+          let tag = input_line input in
+          let seq = input_line input in
+          let tmp = input_line input in
+          let qua = input_line input in
+          read := !read + 4;
+          if tag.[0] <> '@' || tmp.[0] <> '+' then
+            Printf.sprintf "%s: On line %d: Malformed FASTQ file" __FUNCTION__ !read |> failwith;
+          f (!read / 4) (String.sub tag 1 (String.length tag - 1)) (linter seq) qua
+        done
+      with End_of_file -> ()
+      end;
+      close_in input;
+      if verbose then
+        Printf.eprintf " done.\n%!"
+    let iter_pe ?(linter = Misc.dnaize ~keep_dashes:false) ?(verbose = true) f file1 file2 =
+      let read = ref 0 and input1 = open_in file1 and input2 = open_in file2 in
+      if verbose then
+        Printf.eprintf "%s: Reading PE FASTQ files '%s' and '%s'...%!" __FUNCTION__ file1 file2;
+      begin try
+        while true do
+          let tag1 = input_line input1 in
+          let seq1 = input_line input1 in
+          let tmp1 = input_line input1 in
+          let qua1 = input_line input1 in
+          let tag2 = input_line input2 in
+          let seq2 = input_line input2 in
+          let tmp2 = input_line input2 in
+          let qua2 = input_line input2 in
+          read := !read + 4;
+          if tag1.[0] <> '@' || tmp1.[0] <> '+' || tag2.[0] <> '@' || tmp2.[0] <> '+' then
+            Printf.sprintf "%s: On line %d: Malformed FASTQ file" __FUNCTION__ !read |> failwith;
+          f (!read / 4)
+            (String.sub tag1 1 (String.length tag1 - 1)) (linter seq1) qua1
+            (String.sub tag2 1 (String.length tag2 - 1)) (linter seq2) qua2
+        done
+      with End_of_file -> ()
+      end;
+      close_in input1;
+      close_in input2;
+      if verbose then
+        Printf.eprintf " done.\n%!"
 
   end
 
