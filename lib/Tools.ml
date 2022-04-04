@@ -143,7 +143,7 @@ module Misc:
       | [] -> raise Not_found
       | hd :: tail -> rl := tail; hd
     (* *)
-    let array_of_rlist l = Array.of_list (List.rev l)
+    let array_of_rlist l = List.rev l |> Array.of_list
     let array_riter f a =
       let l = Array.length a in
       let red_l = l - 1 in
