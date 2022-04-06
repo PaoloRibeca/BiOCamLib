@@ -114,18 +114,18 @@ module ReadStore:
           file1 file2
       end;
       let res = Array.append orig (Array.of_list !res) in
-      Printf.eprintf "%s: %d reads in store so far (total length %d)\n%!" __FUNCTION__ (Array.length res) (seq_length res);
+      Printf.eprintf "(%s): %d reads in store so far (total length %d)\n%!" __FUNCTION__ (Array.length res) (seq_length res);
       res
     let to_files store filter prefix =
       let len = Array.length store in
       if Bigarray.Array1.dim filter <> len then
-        Printf.sprintf "%s: Invalid parameters (filter length must be the same as the number of reads)" __FUNCTION__ |> failwith;
+        Printf.sprintf "(%s): Invalid parameters (filter length must be the same as the number of reads)" __FUNCTION__ |> failwith;
       let print_fastq_record classification output read =
         Printf.fprintf output "@%d__%s\n%s\n+\n%s\n%!" classification read.tag read.seq read.qua
       and output0 = open_out (prefix ^ ".fasta")
       and output1 = open_out (prefix ^ "_SE.fastq")
       and output2 = [| open_out (prefix ^ "_PE_1.fastq"); open_out (prefix ^ "_PE_2.fastq") |] in
-      Printf.eprintf "%s: Writing %d reads...%!" __FUNCTION__ len;
+      Printf.eprintf "(%s): Writing %d reads...%!" __FUNCTION__ len;
       Array.iteri
         (fun i -> function
           | SingleEndRead segm ->
@@ -171,7 +171,7 @@ module EncodingHash (K: IntParameter):
       | Reverse
     let k =
       if K.value > 30 then
-        Printf.sprintf "%s: Invalid argument (k must be <= 30, found %d)" __FUNCTION__ K.value |> failwith;
+        Printf.sprintf "(%s): Invalid argument (k must be <= 30, found %d)" __FUNCTION__ K.value |> failwith;
       K.value
     (* This is not thread-safe, but hopefully more optimised than placing the filter into iter() *)
     let filter = IntHashtbl.create 1024
