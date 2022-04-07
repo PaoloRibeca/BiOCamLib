@@ -564,14 +564,14 @@ module Translation:
         end else
           starts in
 (*
-Printf.printf "String=%s\n%!" s;
-IntSet.iter (Printf.printf "Stop=%d\n%!") stops;
+Printf.eprintf "String=%s\n%!" s;
+IntSet.iter (Printf.eprintf "Stop=%d\n%!") stops;
 *)
       let buf = Buffer.create 1024 and results = ref [] in
       IntSet.iter
         (fun start ->
 (*
-Printf.printf "<<<Start=%d\n%!" start;
+Printf.eprintf "<<<Start=%d\n%!" start;
 *)
           (* For each start there is one possible translation *)
           Buffer.clear buf;
@@ -612,14 +612,14 @@ Printf.printf "<<<Start=%d\n%!" start;
                   | _ -> failwith "Translation table not yet implemented"
                   end;
 (*
-Printf.printf "%d>>>%s\n%!" pos (Buffer.contents buf);
+Printf.eprintf "%d>>>%s\n%!" pos (Buffer.contents buf);
 *)
                 if IntSet.mem (start + pos) stops then
                   raise Exit)
               (String.sub s start (String.length s - start))
           with Exit ->
 (*
-Printf.printf "!!!%s\n%!" (Buffer.contents buf);
+Printf.eprintf "!!!%s\n%!" (Buffer.contents buf);
 *)
             let contents = Buffer.contents buf in
             if String.length contents >= min_length then
