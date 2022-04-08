@@ -407,8 +407,12 @@ module Argv:
         (4) Mandatory/optional * default/no-default class
         (5) Parsing action when option is encountered *)
     type spec_t = string list * string option * string list * class_t * (string -> unit)
+    (* Sets the header text *)
+    val set_header: string -> unit
     (* Sets the text following the program name *)
     val set_synopsis: string -> unit
+    val header: ?output:out_channel -> unit -> unit
+    val synopsis: ?output:out_channel -> unit -> unit
     val usage: ?output:out_channel -> unit -> unit
     val get_parameter: unit -> string
     val get_parameter_boolean: unit -> bool
@@ -431,14 +435,18 @@ module Argv:
       | Optional
       | Default of (unit -> string)
     type spec_t = string list * string option * string list * class_t * (string -> unit)
-    let synopsis = ref ""
-    let set_synopsis s = synopsis := " " ^ s
+    let _header = ref ""
+    let set_header s = _header := s
+    let _synopsis = ref ""
+    let set_synopsis s = _synopsis := s
     let argv = Sys.argv
     let i = ref 1
-    let buf = ref ("Usage:\n  " ^ argv.(0))
-    let usage ?(output = stderr) () = Stdlib.Printf.fprintf output "%s" !buf
+    let _usage = ref ("Usage:\n  " ^ argv.(0)) (* It will be completed by parse () *)
+    let header ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_header
+    let synopsis ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_synopsis
+    let usage ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_usage
     let error ?(output = stderr) f_n msg =
-      usage ~output:output ();
+      usage ~output ();
       Stdlib.Printf.fprintf output "Tools.Argv.%s: %s\n%!" f_n msg;
       exit 1
     let template_get n what f =
@@ -450,7 +458,7 @@ module Argv:
     let template_filter f g =
       (fun () ->
         let res = f () in
-        if res |> g then
+        if g res then
           res
         else
           raise Not_found)
@@ -483,14 +491,14 @@ module Argv:
       i := len;
       res
     let parse specs =
-      buf := !buf ^ !synopsis ^ "\n";
+      _usage := !_header ^ !_usage ^ " " ^ !_synopsis ^ "\n";
       let table = ref StringMap.empty and mandatory = ref StringSet.empty in
       List.iteri
         (fun i (opts, vl, help, clss, act) ->
           if opts = [] && help = [] then
             error "parse" ("Malformed initializer for option #" ^ string_of_int i);
           if help <> [] then begin
-            buf := !buf ^ begin
+            _usage := !_usage ^ begin
               if opts <> [] then
                 "  "
               else
@@ -501,8 +509,8 @@ module Argv:
             (fun i opt ->
               if help <> [] then begin
                 if i > 0 then
-                  buf := !buf ^ "|";
-                buf := !buf ^ opt
+                  _usage := !_usage ^ "|";
+                _usage := !_usage ^ opt
               end;
               if StringMap.mem opt !table then
                 error "parse" ("Duplicate command line option '" ^ opt ^ "' in table");
@@ -519,7 +527,7 @@ module Argv:
                 table := StringMap.add opt act !table)
             opts;
           if help <> [] then begin
-            buf := !buf ^ begin
+            _usage := !_usage ^ begin
               match vl with
               | None -> ""
               | Some vl ->  "\n    " ^ vl
@@ -531,16 +539,16 @@ module Argv:
             end;
             List.iter begin
               if opts <> [] then
-                (fun help -> buf := !buf ^ "   | " ^ help ^ "\n")
+                (fun help -> _usage := !_usage ^ "   | " ^ help ^ "\n")
               else
-                (fun help -> buf := !buf ^ help ^ "\n")
+                (fun help -> _usage := !_usage ^ help ^ "\n")
             end help;
             match clss with
             | Mandatory ->
-              buf := !buf ^ "   * (mandatory)\n"
+              _usage := !_usage ^ "   * (mandatory)\n"
             | Optional -> ()
             | Default def ->
-              buf := !buf ^ "   | (default='" ^ def () ^ "')\n"
+              _usage := !_usage ^ "   | (default='" ^ def () ^ "')\n"
           end)
         specs;
       let len = Array.length argv in
@@ -611,7 +619,7 @@ module Subprocess:
         Stdlib.Printf.eprintf "Subprocess.spawn_with_args_and_process_output: Executing command '%s'...\n%!" command
       end;
       let process_out, process_in, process_err =
-        Unix.open_process_args_full command args (Unix.unsafe_environment ()) in
+        Unix.unsafe_environment () |> Unix.open_process_args_full command args in
       close_out process_in;
       if verbose then
         Stdlib.Printf.eprintf "Subprocess.spawn_with_args_and_process_output: Executing initialization function...\n%!";
@@ -712,6 +720,7 @@ module QuotedFilename:
 
 module Parallel:
   sig
+    val get_nproc: unit -> int
     exception Number_of_chunks_must_be_positive of int
     exception Number_of_threads_must_be_positive of int
     val process_stream_chunkwise: ?buffered_chunks_per_thread:int ->
@@ -723,6 +732,11 @@ module Parallel:
       in_channel -> (Buffer.t -> int -> string -> unit) -> out_channel -> int -> unit
   end
 = struct
+    let get_nproc () =
+      try
+        Subprocess.spawn_and_read_single_line "nproc" |> int_of_string
+      with _ ->
+        1
     exception Number_of_chunks_must_be_positive of int
     exception Number_of_threads_must_be_positive of int
     let process_stream_chunkwise ?(buffered_chunks_per_thread = 10)
