@@ -73,7 +73,7 @@ module FASTA:
   
   end
 = struct
-    let iter ?(linter = Misc.dnaize ~keep_dashes:false) ?(verbose = true) f filename =
+    let iter ?(linter = Misc.dnaize ~keep_dashes:false) ?(verbose = false) f filename =
       let file = open_in filename and progr = ref 0 and current = ref "" and seq = Buffer.create 1048576 in
       if verbose then
         Printf.eprintf "(%s): Reading FASTA file '%s'...%!" __FUNCTION__ filename;
@@ -98,7 +98,7 @@ module FASTA:
         if verbose then
           Printf.eprintf " done.\n%!"
       let parallel_iter ?(linter = Misc.dnaize ~keep_dashes:false) ?(buffered_chunks_per_thread = 10)
-                      ?(max_memory = 1000000000) ?(verbose = true)
+                        ?(max_memory = 1000000000) ?(verbose = false)
         filename (f:int -> (string * string) list -> 'a) (g:'a -> unit) threads =
       let max_block_bytes = max_memory / (buffered_chunks_per_thread * threads) in
       (* Parallel section *)
@@ -172,7 +172,7 @@ module FASTQ:
 
   end
 = struct
-    let iter_se ?(linter = Misc.dnaize ~keep_dashes:false) ?(verbose = true) f file =
+    let iter_se ?(linter = Misc.dnaize ~keep_dashes:false) ?(verbose = false) f file =
       let read = ref 0 and input = open_in file in
       if verbose then
         Printf.eprintf "(%s): Reading SE FASTQ file '%s'...%!" __FUNCTION__ file;
@@ -192,7 +192,7 @@ module FASTQ:
       close_in input;
       if verbose then
         Printf.eprintf " done.\n%!"
-    let iter_pe ?(linter = Misc.dnaize ~keep_dashes:false) ?(verbose = true) f file1 file2 =
+    let iter_pe ?(linter = Misc.dnaize ~keep_dashes:false) ?(verbose = false) f file1 file2 =
       let read = ref 0 and input1 = open_in file1 and input2 = open_in file2 in
       if verbose then
         Printf.eprintf "(%s): Reading PE FASTQ files '%s' and '%s'...%!" __FUNCTION__ file1 file2;

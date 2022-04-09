@@ -54,10 +54,10 @@ module ReadStore:
     type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
     val empty: t
     val length: t -> int
-    val add_from_files: t -> file_t -> t
+    val add_from_files: ?verbose:bool -> t -> file_t -> t
     (* Arguments to the function are store, set of read ids, name of output prefix
         (output reads can be FASTA and/or FASTQ SE and/or FASTQ PE) *)
-    val to_files: t -> filter_t -> string -> unit
+    val to_files: ?verbose:bool -> t -> filter_t -> string -> unit
     val seq_length: t -> int
     (* Arguments to the function are read id, segment id, payload *)
     val iter: (int -> int -> read_t -> unit) -> t -> unit
@@ -94,38 +94,43 @@ module ReadStore:
       let res = ref 0 in
       iter (fun _ _ segm -> res := !res + String.length segm.seq) store;
       !res
-    let add_from_files orig file =
+    let add_from_files ?(verbose = false) orig file =
       let res = ref [] in
       begin match file with
       | FASTA file ->
-        Sequences.FASTA.iter
-        (fun _ tag seq ->
-          SingleEndRead { tag; seq; qua = "" } |> Tools.Misc.accum res)
-        file
+        Sequences.FASTA.iter ~verbose
+          (fun _ tag seq ->
+            SingleEndRead { tag; seq; qua = "" } |> Tools.Misc.accum res)
+          file
       | SingleEndFASTQ file ->
-        Sequences.FASTQ.iter_se
+        Sequences.FASTQ.iter_se ~verbose
           (fun _ tag seq qua ->
             SingleEndRead { tag; seq; qua } |> Tools.Misc.accum res)
           file
       | PairedEndFASTQ (file1, file2) ->
-        Sequences.FASTQ.iter_pe
+        Sequences.FASTQ.iter_pe ~verbose
           (fun _ tag1 seq1 qua1 tag2 seq2 qua2 ->
-            PairedEndRead ({ tag = tag1; seq = seq1; qua = qua1 }, { tag = tag2; seq = seq2; qua = qua2 }) |> Tools.Misc.accum res)
+            PairedEndRead ({ tag = tag1; seq = seq1; qua = qua1 }, { tag = tag2; seq = seq2; qua = qua2 })
+              |> Tools.Misc.accum res)
           file1 file2
       end;
       let res = Array.append orig (Array.of_list !res) in
-      Printf.eprintf "(%s): %d reads in store so far (total length %d)\n%!" __FUNCTION__ (Array.length res) (seq_length res);
+      if verbose then
+        Printf.eprintf "(%s): %d reads in store so far (total length %d)\n%!"
+          __FUNCTION__ (Array.length res) (seq_length res);
       res
-    let to_files store filter prefix =
+    let to_files ?(verbose = false) store filter prefix =
       let len = Array.length store in
       if Bigarray.Array1.dim filter <> len then
-        Printf.sprintf "(%s): Invalid parameters (filter length must be the same as the number of reads)" __FUNCTION__ |> failwith;
+        Printf.sprintf "(%s): Invalid parameters (filter length must be the same as the number of reads)"
+          __FUNCTION__ |> failwith;
       let print_fastq_record classification output read =
         Printf.fprintf output "@%d__%s\n%s\n+\n%s\n%!" classification read.tag read.seq read.qua
       and output0 = open_out (prefix ^ ".fasta")
       and output1 = open_out (prefix ^ "_SE.fastq")
       and output2 = [| open_out (prefix ^ "_PE_1.fastq"); open_out (prefix ^ "_PE_2.fastq") |] in
-      Printf.eprintf "(%s): Writing %d reads...%!" __FUNCTION__ len;
+      if verbose then
+        Printf.eprintf "(%s): Writing %d reads...%!" __FUNCTION__ len;
       Array.iteri
         (fun i -> function
           | SingleEndRead segm ->
@@ -141,7 +146,8 @@ module ReadStore:
       close_out output1;
       close_out output2.(0);
       close_out output2.(1);
-      Printf.eprintf " done.\n%!"
+      if verbose then
+        Printf.eprintf " done.\n%!"
   end
 
 module type KMerHash =
