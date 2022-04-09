@@ -122,9 +122,9 @@ module Misc:
     val hashtbl_map: ?random:bool -> ('a -> 'b) -> ('c, 'a) Hashtbl.t -> ('c, 'b) Hashtbl.t
     val hashtbl_mapi: ?random:bool -> ('a -> 'b -> 'c) -> ('a, 'b) Hashtbl.t -> ('a, 'c) Hashtbl.t
     (* *)
-    val pluralize: one:'a -> string -> 'a -> string
-    val pluralize_int : string -> int -> string
-    val pluralize_float : string -> float -> string
+    val pluralize: ?plural:string -> one:'a -> string -> 'a -> string
+    val pluralize_int : ?plural:string -> string -> int -> string
+    val pluralize_float : ?plural:string -> string -> float -> string
   end
 = struct
     (* General utilities *)
@@ -166,9 +166,11 @@ module Misc:
       Hashtbl.iter (fun k v -> f k v |> Hashtbl.add res k) h;
       res
     (* *)
-    let pluralize (type a) ~(one:a) s n =
+    let pluralize (type a) ?(plural = "") ~(one:a) s n =
       if n = one then
         s
+      else if plural <> "" then
+        plural
       else
         s ^ "s"
     let pluralize_int = pluralize ~one:1
