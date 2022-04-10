@@ -194,6 +194,120 @@ module Misc:
     let pluralize_float = pluralize ~one:1.
 end
 
+module Trie:
+  sig
+    type t
+    val empty: t
+    val add: t -> string -> t
+    type result_t =
+      | Not_found
+      | Partial of string
+      | Ambiguous of string list
+      | Contained of string list
+      | Unique of string
+    val find: t -> string -> result_t
+    (* Converts the result to string whenever it is possible to do so unambiguously *)
+    val find_string: t -> string -> string
+    val find_all: t -> string list
+  end
+= struct
+    module CharMap = Map.Make (Char)
+    type t = Node of t CharMap.t
+    let empty = Node CharMap.empty
+    let find_all t =
+      let res = ref [] in
+      let rec _find_all t s =
+        let Node cm = t in
+        CharMap.iter
+          (fun c tt ->
+            if c = '\000' then begin
+              Tools.Misc.accum res s;
+              assert (tt = empty)
+            end else
+              s ^ String.make 1 c |> _find_all tt)
+          cm in
+      _find_all t "";
+      List.rev !res
+    let add t s =
+      let n = String.length s in
+      let rec _add t i =
+        let Node cm = t in
+        if i = n then
+          Node (CharMap.add '\000' empty cm)
+        else
+          match CharMap.find_opt s.[i] cm with
+          | None ->
+            let tail = Node (CharMap.singleton '\000' empty) |> ref in
+            for ii = n - 1 downto i + 1 do
+              tail := Node (CharMap.singleton s.[ii] !tail)
+            done;
+            Node (CharMap.add s.[i] !tail cm)
+          | Some tt ->
+            Node (CharMap.add s.[i] (i + 1 |> _add tt) cm) in
+      _add t 0
+    type result_t =
+        | Not_found
+        | Partial of string
+        | Ambiguous of string list
+        | Contained of string list
+        | Unique of string
+    let find_all_tails p t =
+      let res = ref [] in
+      let rec _find_all_tails t s =
+        let Node cm = t in
+        CharMap.iter
+          (fun c tt ->
+            if c = '\000' then
+              (p ^ s) |> Tools.Misc.accum res
+            else
+              s ^ String.make 1 c |> _find_all_tails tt)
+          cm in
+      _find_all_tails t "";
+      List.rev !res
+    let find t s =
+      let n = String.length s in
+      let rec _find t i =
+        let Node cm = t in
+        let c = CharMap.cardinal cm in
+        if i = n then begin
+          if CharMap.mem '\000' cm then begin
+            assert (CharMap.find '\000' cm = empty);
+            match c with
+            | 1 -> (* Exact match and no other containing matches *)
+              Unique s
+            | _ -> (* Exact match, but also other longer matches containing it *)
+              Contained (find_all_tails s t)
+          end else begin
+            match c with
+            | 0 ->
+              Not_found
+            | 1 -> (* Partial match *)
+              begin match find_all_tails s t with
+              | [ ss ] ->
+                Partial ss
+              | l -> (* Multiple partial matches *)
+                Ambiguous l
+              end
+            | _ -> (* Multiple partial matches *)
+              Ambiguous (find_all_tails s t)
+          end
+        end else begin
+          match CharMap.find_opt s.[i] cm with
+          | None ->
+            Not_found
+          | Some tt ->
+            i + 1 |> _find tt
+        end in
+      _find t 0
+    let find_string t s =
+      match find t s with
+      | Not_found -> ""
+      | Partial s -> s
+      | Ambiguous _ -> ""
+      | Contained _ -> s
+      | Unique s -> s
+  end
+
 module Printf:
   sig
     type mode_t =
