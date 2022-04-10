@@ -221,7 +221,7 @@ module Trie:
         CharMap.iter
           (fun c tt ->
             if c = '\000' then begin
-              Tools.Misc.accum res s;
+              Misc.accum res s;
               assert (tt = empty)
             end else
               s ^ String.make 1 c |> _find_all tt)
@@ -258,7 +258,7 @@ module Trie:
         CharMap.iter
           (fun c tt ->
             if c = '\000' then
-              (p ^ s) |> Tools.Misc.accum res
+              (p ^ s) |> Misc.accum res
             else
               s ^ String.make 1 c |> _find_all_tails tt)
           cm in
