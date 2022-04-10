@@ -122,6 +122,12 @@ module Misc:
     val hashtbl_map: ?random:bool -> ('a -> 'b) -> ('c, 'a) Hashtbl.t -> ('c, 'b) Hashtbl.t
     val hashtbl_mapi: ?random:bool -> ('a -> 'b -> 'c) -> ('a, 'b) Hashtbl.t -> ('a, 'c) Hashtbl.t
     (* *)
+    module Map (O:Map.OrderedType):
+      sig
+        module Map: module type of Map.Make (O)
+        val iteri: (int -> Map.key -> 'a -> unit) -> 'a Map.t -> unit
+      end
+    (* *)
     val pluralize: ?plural:string -> one:'a -> string -> 'a -> string
     val pluralize_int : ?plural:string -> string -> int -> string
     val pluralize_float : ?plural:string -> string -> float -> string
@@ -165,6 +171,17 @@ module Misc:
       let res = Hashtbl.create ~random (Hashtbl.length h) in
       Hashtbl.iter (fun k v -> f k v |> Hashtbl.add res k) h;
       res
+    (* *)
+    module Map (O:Map.OrderedType) =
+      struct
+        module Map = Map.Make (O)
+        let iteri f =
+          let cntr = ref 0 in
+          Map.iter
+            (fun k v ->
+              f !cntr k v;
+              incr cntr)
+      end
     (* *)
     let pluralize (type a) ?(plural = "") ~(one:a) s n =
       if n = one then
