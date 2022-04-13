@@ -145,11 +145,11 @@ module FASTA:
                   |> failwith
                 end;
                 incr seqs;
-                Tools.Misc.accum chunk (current, seq);
+                Tools.List.accum chunk (current, seq);
                 bytes := !bytes + String.length current + String.length seq
               done;
               if verbose then
-                Tools.Printf.teprintf "%d %s read%!\n" !read (Tools.Misc.pluralize_int "line" !read);
+                Tools.Printf.teprintf "%d %s read%!\n" !read (Tools.String.pluralize_int "line" !read);
               seqs_base, !chunk
             end else
               raise End_of_file)
@@ -157,7 +157,7 @@ module FASTA:
             let res = List.rev chunk |> f seqs_base in
             if verbose then begin
               let seqs = List.length chunk in
-              Tools.Printf.teprintf "%d more %s processed%!\n" seqs (Tools.Misc.pluralize_int "sequence" seqs)
+              Tools.Printf.teprintf "%d more %s processed%!\n" seqs (Tools.String.pluralize_int "sequence" seqs)
             end;
             res)
           g threads
@@ -623,7 +623,7 @@ Printf.eprintf "!!!%s\n%!" (Buffer.contents buf);
 *)
             let contents = Buffer.contents buf in
             if String.length contents >= min_length then
-              Tools.Misc.accum results (start, contents))
+              Tools.List.accum results (start, contents))
         starts;
       Array.of_list (List.rev !results)
   end

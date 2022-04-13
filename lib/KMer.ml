@@ -100,18 +100,18 @@ module ReadStore:
       | FASTA file ->
         Sequences.FASTA.iter ~verbose
           (fun _ tag seq ->
-            SingleEndRead { tag; seq; qua = "" } |> Tools.Misc.accum res)
+            SingleEndRead { tag; seq; qua = "" } |> Tools.List.accum res)
           file
       | SingleEndFASTQ file ->
         Sequences.FASTQ.iter_se ~verbose
           (fun _ tag seq qua ->
-            SingleEndRead { tag; seq; qua } |> Tools.Misc.accum res)
+            SingleEndRead { tag; seq; qua } |> Tools.List.accum res)
           file
       | PairedEndFASTQ (file1, file2) ->
         Sequences.FASTQ.iter_pe ~verbose
           (fun _ tag1 seq1 qua1 tag2 seq2 qua2 ->
             PairedEndRead ({ tag = tag1; seq = seq1; qua = qua1 }, { tag = tag2; seq = seq2; qua = qua2 })
-              |> Tools.Misc.accum res)
+              |> Tools.List.accum res)
           file1 file2
       end;
       let res = Array.append orig (Array.of_list !res) in

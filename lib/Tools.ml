@@ -6,6 +6,202 @@
        reader-workers-writer model.
    Please do not redistribute, or contact the author before doing so *)
 
+(* We extend some stdlib types with a few additional functions *)
+
+module Option:
+  sig
+    val unbox: 'a option -> 'a
+    val unbox_def: 'a -> 'a option -> 'a
+  end
+= struct
+    let unbox = function
+      | None -> assert false
+      | Some r -> r
+    let unbox_def def = function
+      | None -> def
+      | Some r -> r
+  end
+
+module Float:
+  sig
+    include module type of Float
+    val round: float -> float
+  end
+= struct
+    include Float
+    let round x = if x >= 0. then floor (x +. 0.5) else ceil (x -. 0.5)
+  end
+
+module String:
+  sig
+    include module type of String
+    val accum: string ref -> string -> unit
+    val pluralize: ?plural:string -> one:'a -> string -> 'a -> string
+    val pluralize_int : ?plural:string -> string -> int -> string
+    val pluralize_float : ?plural:string -> string -> float -> string
+  end
+= struct
+    include String
+    let accum sr s = sr := !sr ^ s
+    let pluralize (type a) ?(plural = "") ~(one:a) s n =
+      if n = one then
+        s
+      else if plural <> "" then
+        plural
+      else
+        s ^ "s"
+    let pluralize_int = pluralize ~one:1
+    let pluralize_float = pluralize ~one:1.
+  end
+
+module List:
+  sig
+    include module type of List
+    val accum: 'a list ref -> 'a -> unit
+    val pop: 'a list ref -> 'a
+    val pop_opt: 'a list ref -> 'a option
+  end
+= struct
+    include List
+    let accum rl el = rl := el :: !rl
+    let pop rl =
+      match !rl with
+      | [] -> raise Not_found
+      | hd :: tail ->
+        rl := tail;
+        hd
+    let pop_opt rl =
+      match !rl with
+      | [] -> None
+      | hd :: tail ->
+        rl := tail;
+        Some hd
+  end
+
+module Array:
+  sig
+    include module type of Array
+    val of_rlist: 'a list -> 'a array
+    val riter: ('a -> unit) -> 'a array -> unit
+    val riteri: (int -> 'a -> unit) -> 'a array -> unit
+  end
+= struct
+    include Array
+    let of_rlist l =
+      List.rev l |> Array.of_list
+    let riter f a =
+      let l = Array.length a in
+      for i = l - 1 downto 0 do
+        f a.(i)
+      done
+    let riteri f a =
+      let l = Array.length a in
+      for i = l - 1 downto 0 do
+        f i a.(i)
+      done
+  end
+
+module Printf:
+  sig
+    include module type of Printf
+    type mode_t =
+      | Time
+      | Space
+      | Empty
+    val tfprintf: ?mode:mode_t -> out_channel -> ('a, out_channel, unit) format -> 'a
+    val tprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
+    val teprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
+    val pfprintf: out_channel -> ('a, out_channel, unit) format -> 'a
+    val pprintf: ('a, out_channel, unit) format -> 'a
+    val peprintf: ('a, out_channel, unit) format -> 'a
+    val ptfprintf: ?mode:mode_t -> out_channel -> ('a, out_channel, unit) format -> 'a
+    val ptprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
+    val pteprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
+  end
+= struct
+    include Printf
+    type mode_t =
+      | Time
+      | Space
+      | Empty
+    let tfprintf ?(mode = Time) ch =
+      let t = Unix.localtime (Unix.time ()) in
+      begin match mode with
+      | Time ->
+        Printf.fprintf ch "%s %s %2d %02d:%02d:%02d %4d -- " begin
+          match t.Unix.tm_wday with
+          | 0 -> "Sun" | 1 -> "Mon" | 2 -> "Tue" | 3 -> "Wed"
+          | 4 -> "Thu" | 5 -> "Fri" | 6 -> "Sat"
+          | _ -> assert false
+        end begin
+          match t.Unix.tm_mon with
+          | 0 -> "Jan" | 1 -> "Feb" | 2 -> "Mar" | 3 -> "Apr"
+          | 4 -> "May" | 5 -> "Jun" | 6 -> "Jul" | 7 -> "Aug"
+          | 8 -> "Sep" | 9 -> "Oct" | 10 -> "Nov" | 11 -> "Dec"
+          | _ -> assert false
+        end t.Unix.tm_mday t.Unix.tm_hour t.Unix.tm_min t.Unix.tm_sec (1900 + t.Unix.tm_year)
+      | Space -> Printf.fprintf ch "                         -- "
+      | Empty -> ()
+      end;
+      Printf.fprintf ch
+    let tprintf ?(mode = Time) = tfprintf ~mode stdout
+    let teprintf ?(mode = Time) = tfprintf ~mode stderr
+    let proto_pfprintf ?(mode = Time) f ch =
+      begin match mode with
+      | Time -> Unix.getpid () |> Printf.fprintf ch "[%07d] "
+      | Space -> Printf.fprintf ch "          "
+      | Empty -> ()
+      end;
+      f ch
+    let pfprintf ch = proto_pfprintf ~mode:Time Printf.fprintf ch
+    let pprintf w = pfprintf stdout w
+    let peprintf w = pfprintf stderr w
+    let ptfprintf ?(mode = Time) = proto_pfprintf ~mode (tfprintf ~mode)
+    let ptprintf ?(mode = Time) = ptfprintf ~mode stdout
+    let pteprintf ?(mode = Time) = ptfprintf ~mode stderr
+  end
+
+module Hashtbl:
+  sig
+    include module type of Hashtbl
+    val map: ?random:bool -> ('a -> 'b) -> ('c, 'a) Hashtbl.t -> ('c, 'b) Hashtbl.t
+    val mapi: ?random:bool -> ('a -> 'b -> 'c) -> ('a, 'b) Hashtbl.t -> ('a, 'c) Hashtbl.t
+  end
+= struct
+    include Hashtbl
+    let map ?(random = false) f h =
+      let res = Hashtbl.create ~random (Hashtbl.length h) in
+      Hashtbl.iter (fun k v -> f v |> Hashtbl.add res k) h;
+      res
+    let mapi ?(random = false) f h =
+      let res = Hashtbl.create ~random (Hashtbl.length h) in
+      Hashtbl.iter (fun k v -> f k v |> Hashtbl.add res k) h;
+      res
+  end
+
+module Map:
+  sig
+    include module type of Map
+    module Make (O:Map.OrderedType):
+      sig
+        include module type of Map.Make(O)
+        val iteri: (int -> key -> 'a -> unit) -> 'a t -> unit
+      end
+  end
+= struct
+    include Map
+    module Make (O:Map.OrderedType) =
+      struct
+        include Map.Make(O)
+        let iteri f =
+          let cntr = ref 0 in
+          iter
+            (fun k v ->
+              f !cntr k v;
+              incr cntr)
+      end
+  end
+
 (* Frequently used module idioms *)
 module type TypeContainer = sig type t end
 module MakeComparable (T: TypeContainer) =
@@ -104,96 +300,6 @@ module OrderedMultimap (OKey:Map.OrderedType) (OVal:Set.OrderedType) =
 
   end
 
-module Misc:
-  sig
-    (* General utilities *)
-    val round: float -> float
-    (* *)
-    val unbox_opt: 'a option -> 'a
-    val unbox_opt_def: 'a -> 'a option -> 'a
-    (* *)
-    val accum: 'a list ref -> 'a -> unit
-    val pop: 'a list ref -> 'a
-    (* *)
-    val array_of_rlist: 'a list -> 'a array
-    val array_riter: ('a -> unit) -> 'a array -> unit
-    val array_riteri: (int -> 'a -> unit) -> 'a array -> unit
-    (* *)
-    val hashtbl_map: ?random:bool -> ('a -> 'b) -> ('c, 'a) Hashtbl.t -> ('c, 'b) Hashtbl.t
-    val hashtbl_mapi: ?random:bool -> ('a -> 'b -> 'c) -> ('a, 'b) Hashtbl.t -> ('a, 'c) Hashtbl.t
-    (* *)
-    module Map (O:Map.OrderedType):
-      sig
-        module Map: module type of Map.Make (O)
-        val iteri: (int -> Map.key -> 'a -> unit) -> 'a Map.t -> unit
-      end
-    (* *)
-    val pluralize: ?plural:string -> one:'a -> string -> 'a -> string
-    val pluralize_int : ?plural:string -> string -> int -> string
-    val pluralize_float : ?plural:string -> string -> float -> string
-  end
-= struct
-    (* General utilities *)
-    let round x = if x >= 0. then floor (x +. 0.5) else ceil (x -. 0.5)
-    (* *)
-    let unbox_opt = function
-      | None -> assert false
-      | Some r -> r
-    let unbox_opt_def def = function
-      | None -> def
-      | Some r -> r
-    (* *)
-    let accum rl el = rl := el :: !rl
-    let pop rl =
-      match !rl with
-      | [] -> raise Not_found
-      | hd :: tail -> rl := tail; hd
-    (* *)
-    let array_of_rlist l = List.rev l |> Array.of_list
-    let array_riter f a =
-      let l = Array.length a in
-      let red_l = l - 1 in
-      for i = red_l downto 0 do
-        f a.(i)
-      done
-    let array_riteri f a =
-      let l = Array.length a in
-      let red_l = l - 1 in
-      for i = red_l downto 0 do
-        f i a.(i)
-      done
-    (* *)
-    let hashtbl_map ?(random = false) f h =
-      let res = Hashtbl.create ~random (Hashtbl.length h) in
-      Hashtbl.iter (fun k v -> f v |> Hashtbl.add res k) h;
-      res
-    let hashtbl_mapi ?(random = false) f h =
-      let res = Hashtbl.create ~random (Hashtbl.length h) in
-      Hashtbl.iter (fun k v -> f k v |> Hashtbl.add res k) h;
-      res
-    (* *)
-    module Map (O:Map.OrderedType) =
-      struct
-        module Map = Map.Make (O)
-        let iteri f =
-          let cntr = ref 0 in
-          Map.iter
-            (fun k v ->
-              f !cntr k v;
-              incr cntr)
-      end
-    (* *)
-    let pluralize (type a) ?(plural = "") ~(one:a) s n =
-      if n = one then
-        s
-      else if plural <> "" then
-        plural
-      else
-        s ^ "s"
-    let pluralize_int = pluralize ~one:1
-    let pluralize_float = pluralize ~one:1.
-end
-
 module Trie:
   sig
     type t
@@ -221,7 +327,7 @@ module Trie:
         CharMap.iter
           (fun c tt ->
             if c = '\000' then begin
-              Misc.accum res s;
+              List.accum res s;
               assert (tt = empty)
             end else
               s ^ String.make 1 c |> _find_all tt)
@@ -258,7 +364,7 @@ module Trie:
         CharMap.iter
           (fun c tt ->
             if c = '\000' then
-              (p ^ s) |> Misc.accum res
+              (p ^ s) |> List.accum res
             else
               s ^ String.make 1 c |> _find_all_tails tt)
           cm in
@@ -306,64 +412,6 @@ module Trie:
       | Ambiguous _ -> ""
       | Contained _ -> s
       | Unique s -> s
-  end
-
-module Printf:
-  sig
-    type mode_t =
-      | Time
-      | Space
-      | Empty
-    val tfprintf: ?mode:mode_t -> out_channel -> ('a, out_channel, unit) format -> 'a
-    val tprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
-    val teprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
-    val pfprintf: out_channel -> ('a, out_channel, unit) format -> 'a
-    val pprintf: ('a, out_channel, unit) format -> 'a
-    val peprintf: ('a, out_channel, unit) format -> 'a
-    val ptfprintf: ?mode:mode_t -> out_channel -> ('a, out_channel, unit) format -> 'a
-    val ptprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
-    val pteprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a  
-  end
-= struct
-    type mode_t =
-      | Time
-      | Space
-      | Empty
-    let tfprintf ?(mode = Time) ch =
-      let t = Unix.localtime (Unix.time ()) in
-      begin match mode with
-      | Time ->
-        Printf.fprintf ch "%s %s %2d %02d:%02d:%02d %4d -- " begin
-          match t.Unix.tm_wday with
-          | 0 -> "Sun" | 1 -> "Mon" | 2 -> "Tue" | 3 -> "Wed"
-          | 4 -> "Thu" | 5 -> "Fri" | 6 -> "Sat"
-          | _ -> assert false
-        end begin
-          match t.Unix.tm_mon with
-          | 0 -> "Jan" | 1 -> "Feb" | 2 -> "Mar" | 3 -> "Apr"
-          | 4 -> "May" | 5 -> "Jun" | 6 -> "Jul" | 7 -> "Aug"
-          | 8 -> "Sep" | 9 -> "Oct" | 10 -> "Nov" | 11 -> "Dec"
-          | _ -> assert false
-        end t.Unix.tm_mday t.Unix.tm_hour t.Unix.tm_min t.Unix.tm_sec (1900 + t.Unix.tm_year)
-      | Space -> Printf.fprintf ch "                         -- "
-      | Empty -> ()
-      end;
-      Printf.fprintf ch
-    let tprintf ?(mode = Time) = tfprintf ~mode stdout
-    let teprintf ?(mode = Time) = tfprintf ~mode stderr
-    let proto_pfprintf ?(mode = Time) f ch =
-      begin match mode with
-      | Time -> Unix.getpid () |> Printf.fprintf ch "[%07d] "
-      | Space -> Printf.fprintf ch "          "
-      | Empty -> ()
-      end;
-      f ch
-    let pfprintf ch = proto_pfprintf ~mode:Time Printf.fprintf ch
-    let pprintf w = pfprintf stdout w
-    let peprintf w = pfprintf stderr w
-    let ptfprintf ?(mode = Time) = proto_pfprintf ~mode (tfprintf ~mode)
-    let ptprintf ?(mode = Time) = ptfprintf ~mode stdout
-    let pteprintf ?(mode = Time) = ptfprintf ~mode stderr
   end
 
 (* General C++-style iterator *)
@@ -537,7 +585,7 @@ module Argv:
         (2) Optional explanation for the argument(s)
         (3) Help text lines.
             An empty help means the option is private and no usage will be output for it
-        (4) Mandatory/optional * default/no-default class
+        (4) Class (can be mandatory, optional, default)
         (5) Parsing action when option is encountered *)
     type spec_t = string list * string option * string list * class_t * (string -> unit)
     (* Sets the header text *)
@@ -547,6 +595,7 @@ module Argv:
     val header: ?output:out_channel -> unit -> unit
     val synopsis: ?output:out_channel -> unit -> unit
     val usage: ?output:out_channel -> unit -> unit
+    val markdown: ?output:out_channel -> unit -> unit
     val get_parameter: unit -> string
     val get_parameter_boolean: unit -> bool
     val get_parameter_int: unit -> int
@@ -574,10 +623,13 @@ module Argv:
     let set_synopsis s = _synopsis := s
     let argv = Sys.argv
     let i = ref 1
-    let _usage = ref ("Usage:\n  " ^ argv.(0)) (* It will be completed by parse () *)
+    (* Both _usage and _md will be completed by parse () *)
+    let _usage = ref ""
+    let _md = ref ""
     let header ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_header
     let synopsis ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_synopsis
     let usage ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_usage
+    let markdown ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_md
     let error ?(output = stderr) f_n msg =
       usage ~output ();
       Stdlib.Printf.fprintf output "Tools.Argv.%s: %s\n%!" f_n msg;
@@ -624,29 +676,69 @@ module Argv:
       i := len;
       res
     let parse specs =
-      _usage := !_header ^ !_usage ^ " " ^ !_synopsis ^ "\n";
-      let table = ref StringMap.empty and mandatory = ref StringSet.empty in
+      _usage := !_header ^ "Usage:\n  " ^ argv.(0) ^ " " ^ !_synopsis ^ "\n";
+      _md := "```\n" ^ !_header ^ "```\nUsage:\n```\n" ^ argv.(0) ^ " " ^ !_synopsis ^ "\n```\n";
+      let accum_md ?(escape = false) s =
+        let res = ref "" in
+        String.iter
+          (function
+            | '\\' | '`' | '*' | '_' | '{' | '}' | '[' | ']' | '(' | ')' | '#' | '+' | '-' | '.' | '!' | '~'
+                as c when escape ->
+              "\\" ^ String.make 1 c |> String.accum res
+            | '<' when escape ->
+              "&lt;" |> String.accum res
+            | '>' when escape ->
+              "&gt;" |> String.accum res
+            | '|' when escape ->
+              "&#124;" |> String.accum res
+            | c ->
+              String.make 1 c |> String.accum res)
+          s;
+        String.accum _md !res
+      and need_table_header = ref false in
+      let emit_table_header_if_needed () =
+        if !need_table_header then begin
+          need_table_header := false;
+          "| Option | Argument(s) | Effect | Note(s) |\n|-|-|-|-|\n" |> accum_md
+        end
+      and table = ref StringMap.empty and mandatory = ref StringSet.empty in
       List.iteri
         (fun i (opts, vl, help, clss, act) ->
           if opts = [] && help = [] then
             error "parse" ("Malformed initializer for option #" ^ string_of_int i);
-          if help <> [] then begin
-            _usage := !_usage ^ begin
-              if opts <> [] then
-                "  "
-              else
-                " "
-            end
-          end;
+          if opts = [] then begin
+            accum_md "\n";
+            List.iter
+              (fun line ->
+                accum_md ~escape:true line;
+                accum_md "\n")
+              help;
+            (* Section headers require a new table *)
+            need_table_header := true
+          end else
+            if help <> [] then begin
+              emit_table_header_if_needed ();
+              accum_md "| "
+            end;
+          if help <> [] then
+            begin if opts <> [] then
+              "  "
+            else
+              " "
+            end |> String.accum _usage;
           List.iteri
             (fun i opt ->
-              if help <> [] then begin
-                if i > 0 then
-                  _usage := !_usage ^ "|";
-                _usage := !_usage ^ opt
+              if help <> [] then begin (* The option might be hidden *)
+                if i > 0 then begin
+                  String.accum _usage "|";
+                  accum_md "<br>"
+                end;
+                String.accum _usage opt;
+                (* No escaping needed here, as the text is already surrounded by quotes *)
+                "`" ^ opt ^ "`" |> accum_md
               end;
               if StringMap.mem opt !table then
-                error "parse" ("Duplicate command line option '" ^ opt ^ "' in table");
+                "Duplicate command line option '" ^ opt ^ "' in table" |> error "parse";
               if clss = Mandatory then begin
                 let repr = List.fold_left (fun a b -> a ^ (if a = "" then "" else "|") ^ b) "" opts in
                 mandatory := StringSet.add repr !mandatory;
@@ -659,9 +751,19 @@ module Argv:
               end else
                 table := StringMap.add opt act !table)
             opts;
+          if opts <> [] && help <> [] then begin
+            accum_md " | ";
+            begin match vl with
+            | None -> ()
+            | Some vl ->
+              accum_md "_";
+              accum_md ~escape:true vl;
+              accum_md "_"
+            end;
+            accum_md " | "
+          end;
           if help <> [] then begin
-            _usage := !_usage ^ begin
-              match vl with
+            begin match vl with
               | None -> ""
               | Some vl ->  "\n    " ^ vl
             end ^ begin
@@ -669,19 +771,49 @@ module Argv:
                 "\n"
               else
                 ""
-            end;
-            List.iter begin
+            end |> String.accum _usage;
+            let last_char = ref "" in
+            List.iteri begin
               if opts <> [] then
-                (fun help -> _usage := !_usage ^ "   | " ^ help ^ "\n")
+                (fun i help ->
+                  "   | " ^ help ^ "\n" |> String.accum _usage;
+                  let l = String.length help in
+                  let first_char =
+                    if l > 0 then
+                      String.sub help 0 1
+                    else
+                      "" in
+                  accum_md begin
+                    if i > 0 && !last_char = "." && String.uppercase_ascii first_char = first_char then
+                      "<br>"
+                    else
+                      " "
+                  end;
+                  last_char := begin
+                    if l > 0 then
+                      String.sub help (l - 1) 1
+                    else
+                      ""
+                  end;
+                  accum_md ~escape:true help)
               else
-                (fun help -> _usage := !_usage ^ help ^ "\n")
+                (fun _ help -> help ^ "\n" |> String.accum _usage)
             end help;
-            match clss with
+            if opts <> [] && help <> [] then
+              accum_md " | ";
+            begin match clss with
             | Mandatory ->
-              _usage := !_usage ^ "   * (mandatory)\n"
+              String.accum _usage "   * (mandatory)\n";
+              accum_md "*(mandatory)*"
             | Optional -> ()
             | Default def ->
-              _usage := !_usage ^ "   | (default='" ^ def () ^ "')\n"
+              "   | (default='" ^ def () ^ "')\n" |> String.accum _usage;
+              accum_md "<ins>default=<mark>_";
+              def () |> accum_md ~escape:true;
+              accum_md "_</mark></ins>"
+            end;
+            if opts <> [] && help <> [] then
+              accum_md " |\n"
           end)
         specs;
       let len = Array.length argv in
@@ -1119,7 +1251,7 @@ module Parallel:
             begin try
               while !bytes < max_block_bytes do (* We read at least one line *)
                 let line = input_line input in
-                Misc.accum buf line;
+                List.accum buf line;
                 bytes := String.length line + !bytes;
                 incr read
               done
@@ -1127,7 +1259,7 @@ module Parallel:
               eof_reached := true
             end;
             if verbose then
-              Printf.teprintf "%d %s read\n" !read (Misc.pluralize_int "line" !read);
+              Printf.teprintf "%d %s read\n" !read (String.pluralize_int "line" !read);
             read_base, !read - read_base, !buf
           end else
             raise End_of_file)
@@ -1141,15 +1273,15 @@ module Parallel:
             (List.rev buf);
           assert (!processed = lines);
           if verbose then
-            Printf.teprintf "%d more %s processed\n" lines (Misc.pluralize_int "line" lines);
+            Printf.teprintf "%d more %s processed\n" lines (String.pluralize_int "line" lines);
           lines_base, lines, Buffer.contents processing_buffer)
         (fun (_, buf_len, buf) ->
           written := !written + buf_len;
           Stdlib.Printf.fprintf output "%s%!" buf;
           if verbose then
-            Printf.teprintf "%d %s written\n" !written (Misc.pluralize_int "line" !written))
+            Printf.teprintf "%d %s written\n" !written (String.pluralize_int "line" !written))
         threads;
       flush output;
       if verbose then
-        Printf.teprintf "%d %s out\n" !written (Misc.pluralize_int "line" !written)
+        Printf.teprintf "%d %s out\n" !written (String.pluralize_int "line" !written)
   end
