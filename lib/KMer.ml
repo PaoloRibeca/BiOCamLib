@@ -153,9 +153,6 @@ module ReadStore:
 module type KMerHash =
   sig
     type t
-    type strand_t =
-      | Forward
-      | Reverse
     val k: int
     (* Iterates a function over all hashes that can be extracted from a string
         according to the specific method being used *)
@@ -168,13 +165,81 @@ module type IntParameter =
     val value: int
   end
 
-module EncodingHash (K: IntParameter):
+module ProteinEncodingHash (K: IntParameter):
   KMerHash with type t = int
 = struct
     type t = int
-    type strand_t =
-      | Forward
-      | Reverse
+    let k =
+      if K.value > 12 then
+        Printf.sprintf "(%s): Invalid argument (k must be <= 12, found %d)" __FUNCTION__ K.value |> failwith;
+      K.value
+    (* This is not thread-safe, but hopefully more optimised than placing the filter into iter() *)
+    let filter = IntHashtbl.create 1024
+    exception Exit of int
+    let iter f s =
+      let len = String.length s
+      (* 0b--..--11..1100000 *)
+      and mask = 1 lsl (5 * k) - 32 in
+      let red_len = len - 1 in
+    (* This function is invoked to compute the first hash
+        and start processing from a given position *)
+    let rec accumulate_hashes pos =
+      let shift old_hash pos =
+        let encoded =
+          match s.[pos] with
+          | 'A' | 'a' -> 0
+          | 'C' | 'c' -> 1
+          | 'D' | 'd' -> 2
+          | 'E' | 'e' -> 3
+          | 'F' | 'f' -> 4
+          | 'G' | 'g' -> 5
+          | 'H' | 'h' -> 6
+          | 'I' | 'i' -> 7
+          | 'K' | 'k' -> 8
+          | 'L' | 'l' -> 9
+          | 'M' | 'm' -> 10
+          | 'N' | 'n' -> 11
+          | 'O' | 'o' -> 12
+          | 'P' | 'p' -> 13
+          | 'Q' | 'q' -> 14
+          | 'R' | 'r' -> 15
+          | 'S' | 's' -> 16
+          | 'T' | 't' -> 17
+          | 'U' | 'u' -> 18
+          | 'V' | 'v' -> 19
+          | 'W' | 'w' -> 20
+          | 'Y' | 'y' -> 21
+          | _ -> raise_notrace (Exit pos) in
+        ((old_hash lsl 5) land mask) lor encoded in
+        (* There must be at least k letters left *)
+        if len - pos < k then
+          ()
+        else begin
+          (* Compute the first hash(es).
+             Our k-mer over alphabet ACDEFGHIKLMNOPQRSTUVWY is encoded into base-32 numbers.
+              The first 12 letters at most are used.
+              If there are Xs or other non-AA letters, the string is split *)
+          let top = pos + k - 2 and hash = ref 0 in
+          try
+            for i = pos to top do
+              hash := shift !hash i
+            done;
+            for i = pos + k - 1 to red_len do
+              hash := shift !hash i;
+              let hash = !hash in
+              add_to_kmer_counter filter hash 1
+            done
+          with Exit p -> accumulate_hashes (p + 1)
+        end in
+      IntHashtbl.clear filter;
+      accumulate_hashes 0;
+      IntHashtbl.iter (fun hash cntr -> f hash !cntr) filter
+  end
+
+module DNAEncodingHash (K: IntParameter):
+  KMerHash with type t = int
+= struct
+    type t = int
     let k =
       if K.value > 30 then
         Printf.sprintf "(%s): Invalid argument (k must be <= 30, found %d)" __FUNCTION__ K.value |> failwith;
@@ -192,7 +257,7 @@ module EncodingHash (K: IntParameter):
       and mask_r = 1 lsl (2 * k - 2) - 1 in
       let red_len = len - 1 in
       (* This function is invoked to compute the first hash
-          and start processing starting from a given position *)
+          and start processing from a given position *)
       let rec accumulate_hashes pos =
         let shift (old_hash_f, old_hash_r) pos =
           let encoded_f, encoded_r =
@@ -209,7 +274,7 @@ module EncodingHash (K: IntParameter):
           ()
         else begin
           (* Compute the first hash(es).
-             Our k-mer over alphabet ACGT, and its reverse complement,
+             Our k-mer over alphabet ACGT and its reverse complement
               are encoded into base-4 numbers.
               The first 30 letters at most are used.
               If there are Ns or other non-base letters, the string is split *)
@@ -231,5 +296,5 @@ module EncodingHash (K: IntParameter):
       IntHashtbl.clear filter;
       accumulate_hashes 0;
       IntHashtbl.iter (fun hash cntr -> f hash !cntr) filter
-
   end
+
