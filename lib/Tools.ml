@@ -299,7 +299,8 @@ module Multimap (OKey:Map.OrderedType) (OVal:Set.OrderedType) =
             s)
     let max_binding = KeyMap.max_binding
     let min_binding = KeyMap.min_binding
-
+    let find_next lo = KeyMap.find_first (fun k -> KeyOrd.compare k lo > 0)
+    let find_next_opt lo = KeyMap.find_first_opt (fun k -> KeyOrd.compare k lo > 0)
   end
 
 module Trie:
