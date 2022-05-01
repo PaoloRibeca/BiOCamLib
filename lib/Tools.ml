@@ -245,8 +245,10 @@ module StringRSet: module type of Set.Make (RComparableString) = Set.Make (RComp
 module StringRMap: module type of Map.Make (RComparableString) = Map.Make (RComparableString)
 
 (* An ordered multimap is a map 'key -> 'val Set (no duplications allowed) *)
-module OrderedMultimap (OKey:Map.OrderedType) (OVal:Set.OrderedType) =
+module Multimap (OKey:Map.OrderedType) (OVal:Set.OrderedType) =
   struct
+    module KeyOrd = OKey
+    module ValOrd = OVal
     (* Keys have type OKey.t, values OVal.t *)
     module KeyMap = Map.Make (OKey)
     module ValSet = Set.Make (OVal)
