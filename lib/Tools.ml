@@ -179,6 +179,33 @@ module Hashtbl:
       res
   end
 
+module Set:
+  sig
+    include module type of Set
+    module Make (O:Set.OrderedType):
+      sig
+        include module type of Set.Make(O)
+        val iteri: (int -> elt -> unit) -> t -> unit
+        val find_next: elt -> t -> elt
+        val find_next_opt: elt -> t -> elt option
+      end
+  end
+= struct
+    include Set
+    module Make (O:Set.OrderedType) =
+      struct
+        include Set.Make(O)
+        let iteri f =
+          let cntr = ref 0 in
+          iter
+            (fun el ->
+              f !cntr el;
+              incr cntr)
+        let find_next lo = find_first (fun k -> O.compare k lo > 0)
+        let find_next_opt lo = find_first_opt (fun k -> O.compare k lo > 0)
+      end
+  end
+
 module Map:
   sig
     include module type of Map
@@ -186,6 +213,8 @@ module Map:
       sig
         include module type of Map.Make(O)
         val iteri: (int -> key -> 'a -> unit) -> 'a t -> unit
+        val find_next: key -> 'a t -> key * 'a
+        val find_next_opt: key -> 'a t -> (key * 'a) option
       end
   end
 = struct
@@ -199,6 +228,8 @@ module Map:
             (fun k v ->
               f !cntr k v;
               incr cntr)
+        let find_next lo = find_first (fun k -> O.compare k lo > 0)
+        let find_next_opt lo = find_first_opt (fun k -> O.compare k lo > 0)
       end
   end
 
@@ -299,8 +330,6 @@ module Multimap (OKey:Map.OrderedType) (OVal:Set.OrderedType) =
             s)
     let max_binding = KeyMap.max_binding
     let min_binding = KeyMap.min_binding
-    let find_next lo = KeyMap.find_first (fun k -> KeyOrd.compare k lo > 0)
-    let find_next_opt lo = KeyMap.find_first_opt (fun k -> KeyOrd.compare k lo > 0)
   end
 
 module Trie:
