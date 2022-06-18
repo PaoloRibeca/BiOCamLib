@@ -1,3 +1,5 @@
+#!/bin/sh
+
 dune build test/PELT.exe
 dune build bin/Parallel.exe
 dune build bin/KPopCount.exe
@@ -6,7 +8,7 @@ dune build bin/kPopTwist.exe
 dune build bin/KPopTwistDB.exe
 dune build bin/CovidDB.exe
 
-chmod u+w _build/default/bin/{Parallel.exe,KPopCount.exe,KPopCountDB.exe,kPopTwist.exe,KPopTwistDB.exe,CovidDB.exe} _build/default/test/PELT.exe
+chmod 755 _build/default/bin/Parallel.exe _build/default/bin/KPopCount.exe _build/default/bin/KPopCountDB.exe _build/default/bin/kPopTwist.exe _build/default/bin/KPopTwistDB.exe _build/default/bin/CovidDB.exe _build/default/test/PELT.exe
 
 rm PELT Parallel KPopCount KPopCountDB kPopTwist KPopTwistDB CovidDB
 ln -s _build/default/test/PELT.exe PELT

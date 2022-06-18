@@ -32,8 +32,9 @@ let add_to_kmer_counter counter hash occs =
   with Not_found ->
     IntHashtbl.add counter hash (ref occs)
 
-module ReadStore:
+module ReadFiles:
   sig
+    type t
     type file_t =
       | FASTA of string
       | SingleEndFASTQ of string
@@ -43,10 +44,60 @@ module ReadStore:
       seq: string;
       qua: string (* Reads from FASTA files have empty qualities *)
     }
-    type template_t =
-      | SingleEndRead of read_t
-      | PairedEndRead of read_t * read_t
-    type t = template_t array
+    val empty: t
+    val length: t -> int
+    val add_from_files: t -> file_t -> t
+    (* Arguments to the function are read id, segment id, payload *)
+    val iter: ?verbose:bool -> (int -> int -> read_t -> unit) -> t -> unit
+  end
+= struct
+    type file_t =
+      | FASTA of string
+      | SingleEndFASTQ of string
+      | PairedEndFASTQ of string * string
+    type read_t = {
+      tag: string;
+      seq: string;
+      qua: string (* Reads from FASTA files have empty qualities *)
+    }
+    type t = file_t array
+    let empty = [||]
+    let length = Array.length
+    let add_from_files files file =
+      Array.append files [| file |]
+    let iter ?(verbose = false) f =
+      Array.iter
+        (function
+          | FASTA file ->
+            Sequences.FASTA.iter ~verbose
+              (fun i tag seq ->
+                f i 0 { tag; seq; qua = "" })
+              file
+          | SingleEndFASTQ file ->
+            Sequences.FASTQ.iter_se ~verbose
+              (fun i tag seq qua ->
+                f i 0 { tag; seq; qua })
+              file
+          | PairedEndFASTQ (file1, file2) ->
+            Sequences.FASTQ.iter_pe ~verbose
+              (fun i tag1 seq1 qua1 tag2 seq2 qua2 ->
+                f i 0 { tag = tag1; seq = seq1; qua = qua1 };
+                f i 1 { tag = tag2; seq = seq2; qua = qua2 })
+              file1 file2)
+  end
+
+module ReadStore:
+  sig
+    type t
+    type file_t =
+      | FASTA of string
+      | SingleEndFASTQ of string
+      | PairedEndFASTQ of string * string
+    type read_t = {
+      tag: string;
+      seq: string;
+      qua: string (* Reads from FASTA files have empty qualities *)
+    }
     (* A filter is something that separates reads into (singletons, selected, leftovers) *)
     val singleton: int
     val selected: int
