@@ -5,7 +5,7 @@ if [ -z "$PROFILE" ]; then
   PROFILE="dev"
 fi
 
-dune --profile="$PROFILE" build bin/Parallel.exe
+dune build --profile="$PROFILE" bin/Parallel.exe
 
 chmod 755 _build/default/bin/Parallel.exe
 

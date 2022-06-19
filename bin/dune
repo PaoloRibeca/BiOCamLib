@@ -1,8 +1,13 @@
+(env
+  (dev
+    (ocamlopt_flags (:standard -O3 -ccopt -O3)))
+  (release
+    (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static))))
+
 (executables
  (public_names Parallel)
  (names Parallel)
- (libraries str unix BiOCamLib)
- (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static)))
+ (libraries str unix BiOCamLib))
 
 (install
  (section bin)
