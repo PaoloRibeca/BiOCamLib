@@ -1,4 +1,15 @@
 (*
+    Sequences.ml -- (c) 2018-2022 Paolo Ribeca, <paolo.ribeca@gmail.com>
+
+    This file is part of BiOCamLib, the OCaml foundations upon which
+    a number of the bioinformatics tools I developed are built.
+
+    Sequences.ml implements tools to iterate over sequences present
+    in FASTA and SE/PE FASTQ files. One can also reverse, complement,
+    or translate them. Support for intervals over a sequence (as in
+    exons or transcripts) and a set of reference sequences is also
+    provided.
+
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
@@ -61,7 +72,6 @@ module Misc:
     let rc ?(keep_dashes = false) s =
       Bytes.to_string (rc_bytes ~keep_dashes (Bytes.of_string s))
 
-
   end
 
 module FASTA:
@@ -70,7 +80,6 @@ module FASTA:
     val parallel_iter: ?linter:(string -> string) -> ?buffered_chunks_per_thread:int ->
                        ?max_memory:int -> ?verbose:bool ->
       string -> (int -> (string * string) list -> 'a) -> ('a -> unit) -> int -> unit
-  
   end
 = struct
     let iter ?(linter = Misc.dnaize ~keep_dashes:false) ?(verbose = false) f filename =
@@ -161,7 +170,6 @@ module FASTA:
             end;
             res)
           g threads
-
   end
 
 module FASTQ:
@@ -169,7 +177,6 @@ module FASTQ:
     val iter_se: ?linter:(string -> string) -> ?verbose:bool -> (int -> string -> string -> string -> unit) -> string -> unit
     val iter_pe: ?linter:(string -> string) -> ?verbose:bool ->
       (int -> string -> string -> string -> string -> string -> string -> unit) -> string -> string -> unit
-
   end
 = struct
     let iter_se ?(linter = Misc.dnaize ~keep_dashes:false) ?(verbose = false) f file =
@@ -219,7 +226,6 @@ module FASTQ:
       close_in input2;
       if verbose then
         Printf.eprintf " done.\n%!"
-
   end
 
 module Types =
@@ -301,7 +307,6 @@ module Types =
         name (string_of_strand str) (string_of_coord str_ivl.low.position) str_ivl.length
     (* The module of things associated with a set of stranded sequence names *)
     module StrandedStringMap = Map.Make (Tools.MakeComparable (struct type t = string stranded_t end))
-
   end
 
 module Junctions:
@@ -333,7 +338,7 @@ module Junctions:
                     float_of_string line.(4)
                   else
                     default_coverage in
-                (Types.stranded_of_split dir line.(0)), pos_don, pos_acc, cov            
+                (Types.stranded_of_split dir line.(0)), pos_don, pos_acc, cov
               with _ ->
                 error "Incorrect syntax"
               end
@@ -362,7 +367,7 @@ module Junctions:
         done
       with End_of_file -> close_in introns
   end
-  
+
 module Translation:
   sig
     type t =
@@ -751,3 +756,4 @@ module Reference:
     let get_sequence_and_table obj str_ivl =
       get_sequence obj str_ivl, get_table obj str_ivl
   end
+

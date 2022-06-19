@@ -1,10 +1,29 @@
-(* This library is
-    (C) 2015-2022 Paolo Ribeca, <paolo.ribeca@gmail.com>.
-   It contains several general-purpose utilities, in particular:
-    * a module to parse command-line options
-    * a module to arbitrarily parallelize streams following a
-       reader-workers-writer model.
-   Please do not redistribute, or contact the author before doing so *)
+(*
+    Tools.ml -- (c) 2015-2022 Paolo Ribeca, <paolo.ribeca@gmail.com>
+
+    This file is part of BiOCamLib, the OCaml foundations upon which
+    a number of the bioinformatics tools I developed are built.
+
+    Tools.ml implements a number of general-purpose tools useful
+    to implement OCaml programs. In particular, it contains:
+     * several useful additions to the OCaml standard library
+     * a module to parse command-line options
+     * a module to arbitrarily parallelize streams following a
+        reader-workers-writer model.
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*)
 
 (* We extend some stdlib types with a few additional functions *)
 

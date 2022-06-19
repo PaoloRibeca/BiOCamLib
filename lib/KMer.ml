@@ -1,4 +1,13 @@
 (*
+    KMer.ml -- (c) 2020-2022 Paolo Ribeca, <paolo.ribeca@gmail.com>
+
+    This file is part of BiOCamLib, the OCaml foundations upon which
+    a number of the bioinformatics tools I developed are built.
+
+    KMer.ml implements tools to iterate over, and hash, k-mers present
+    in FASTA and SE/PE FASTQ files. Reads can be processed immediately
+    or stored for future use when needed.
+
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or

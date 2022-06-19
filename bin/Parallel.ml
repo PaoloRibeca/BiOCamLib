@@ -1,4 +1,10 @@
 (*
+    Parallel.ml -- (c) 2019-2022 Paolo Ribeca, <paolo.ribeca@gmail.com>
+
+    Parallel allows to split and process an input file chunk-wise,
+    using the reader/workers/writer model implemented in
+    BiOCamLib.Tools.Parallel.
+
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
