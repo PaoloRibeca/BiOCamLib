@@ -5,11 +5,11 @@
 (generate_opam_files true)
 
 (source
- (github username/reponame))
+ (github PaoloRibeca/BiOCamLib))
 
-(authors "Author Name")
+(authors "Paolo Ribeca")
 
-(maintainers "Maintainer Name")
+(maintainers "Paolo Ribeca")
 
 (license LICENSE)
 
