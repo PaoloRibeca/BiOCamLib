@@ -1,5 +1,5 @@
 # BiOCamLib
-The OCaml foundations upon which a number of the bioinformatics tools I developed are built
+BiOCamLib is the OCaml foundation upon which a number of the bioinformatics tools I developed are built.
 
 ## `Parallel`
 
