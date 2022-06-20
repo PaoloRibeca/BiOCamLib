@@ -54,12 +54,12 @@ module Parameters =
     let debug = ref Defaults.debug
   end
 
-let version = "0.3"
+let version = "0.4"
 
 let header =
   Printf.sprintf begin
-    "This is the Parallel program (version %s)\n%!" ^^
-    " (c) 2019-2022 Paolo Ribeca, <paolo.ribeca@gmail.com>\n%!"
+    "This is the Parallel program (version %s)\n" ^^
+    " (c) 2019-2022 Paolo Ribeca, <paolo.ribeca@gmail.com>\n"
   end version
 
 let () =
@@ -67,7 +67,7 @@ let () =
   TA.set_header header;
   TA.set_synopsis "[OPTIONS] -- [COMMAND TO PARALLELIZE AND ITS OPTIONS]";
   TA.parse [
-    [], None, [ "Command to parallelize" ], TA.Optional, (fun _ -> ());
+    TA.make_separator "Command to parallelize";
     [ "--" ],
       None,
       [ "consider all the subsequent parameters";
@@ -77,7 +77,7 @@ let () =
       (fun _ ->
         Parameters.command := TA.get_parameter ();
         Parameters.args := Array.append [| !Parameters.command |] (TA.get_remaining_parameters ()));
-    [], None, [ "Input/Output" ], TA.Optional, (fun _ -> ());
+    TA.make_separator "Input/Output";
     [ "-l"; "--lines-per-block" ],
       Some "<positive_integer>",
       [ "number of lines to be processed per block" ],
@@ -93,7 +93,7 @@ let () =
       [ "name of output file" ],
       TA.Default (fun () -> "stdout"),
       (fun _ -> Parameters.output := TA.get_parameter ());
-    [], None, [ "Miscellaneous" ], TA.Optional, (fun _ -> ());
+    TA.make_separator "Miscellaneous";
     [ "-t"; "--threads" ],
       Some "<positive_integer>",
       [ "number of concurrent computing threads to be spawned";

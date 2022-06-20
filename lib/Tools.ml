@@ -403,11 +403,11 @@ module Trie:
             Node (CharMap.add s.[i] (i + 1 |> _add tt) cm) in
       _add t 0
     type result_t =
-        | Not_found
-        | Partial of string
-        | Ambiguous of string list
-        | Contained of string list
-        | Unique of string
+      | Not_found
+      | Partial of string
+      | Ambiguous of string list
+      | Contained of string list
+      | Unique of string
     let find_all_tails p t =
       let res = ref [] in
       let rec _find_all_tails t s =
@@ -661,6 +661,8 @@ module Argv:
     val parse: spec_t list -> unit
     (* Can be invoked from within the actions given as argument to parse() *)
     val parse_error: ?output:out_channel -> string -> unit
+    (* Makes a textual separator between groups of options *)
+    val make_separator: string -> spec_t
   end
 = struct
     type class_t =
@@ -727,9 +729,10 @@ module Argv:
       i := len;
       res
     let parse specs =
-      _usage := !_header ^ "Usage:\n  " ^ argv.(0) ^ " " ^ !_synopsis ^ "\n";
+      _usage := !_header ^ "Usage:\n  \027[1m" ^ argv.(0) ^ "\027[0m " ^ !_synopsis ^ "\n";
       _md := "```\n" ^ !_header ^ "```\nUsage:\n```\n" ^ argv.(0) ^ " " ^ !_synopsis ^ "\n```\n";
-      let accum_md ?(escape = false) s =
+      let accum_usage = String.accum _usage
+      and accum_md ?(escape = false) s =
         let res = ref "" in
         String.iter
           (function
@@ -769,22 +772,17 @@ module Argv:
           end else
             if help <> [] then begin
               emit_table_header_if_needed ();
-              accum_md "| "
+              accum_md "| ";
+              accum_usage "  "
             end;
-          if help <> [] then
-            begin if opts <> [] then
-              "  "
-            else
-              " "
-            end |> String.accum _usage;
           List.iteri
             (fun i opt ->
               if help <> [] then begin (* The option might be hidden *)
                 if i > 0 then begin
-                  String.accum _usage "|";
+                  accum_usage "\027[2m|\027[0m";
                   accum_md "<br>"
                 end;
-                String.accum _usage opt;
+                "\027[1m" ^ opt ^ "\027[0m" |> accum_usage;
                 (* No escaping needed here, as the text is already surrounded by quotes *)
                 "`" ^ opt ^ "`" |> accum_md
               end;
@@ -816,18 +814,18 @@ module Argv:
           if help <> [] then begin
             begin match vl with
               | None -> ""
-              | Some vl ->  "\n    " ^ vl
+              | Some vl -> "\n    \027[3m" ^ vl ^ "\027[0m"
             end ^ begin
               if opts <> [] then
                 "\n"
               else
                 ""
-            end |> String.accum _usage;
+            end |> accum_usage;
             let last_char = ref "" in
             List.iteri begin
               if opts <> [] then
                 (fun i help ->
-                  "   | " ^ help ^ "\n" |> String.accum _usage;
+                  "   \027[38;5;7m|\027[0m " ^ help ^ "\n" |> accum_usage;
                   let l = String.length help in
                   let first_char =
                     if l > 0 then
@@ -848,17 +846,17 @@ module Argv:
                   end;
                   accum_md ~escape:true help)
               else
-                (fun _ help -> help ^ "\n" |> String.accum _usage)
+                (fun _ help -> " \027[4m" ^ help ^ "\027[0m\n" |> accum_usage)
             end help;
             if opts <> [] && help <> [] then
               accum_md " | ";
             begin match clss with
             | Mandatory ->
-              String.accum _usage "   * (mandatory)\n";
+              accum_usage "   \027[38;5;7m*\027[0m (\027[4mmandatory\027[0m)\n";
               accum_md "*(mandatory)*"
             | Optional -> ()
             | Default def ->
-              "   | (default='" ^ def () ^ "')\n" |> String.accum _usage;
+              "   \027[38;5;7m|\027[0m (default='\027[4m" ^ def () ^ "\027[0m')\n" |> accum_usage;
               accum_md "<ins>default=<mark>_";
               def () |> accum_md ~escape:true;
               accum_md "_</mark></ins>"
@@ -883,6 +881,8 @@ module Argv:
             error "parse" ("Option '" ^ opt ^ "' is mandatory"))
           !mandatory
     let parse_error ?(output = stderr) = error ~output "parse"
+    let make_separator s =
+      [], None, [ s ], Optional, (fun _ -> ())
   end
 
 (* Simple wrapper around Unix sub-processes *)
@@ -992,7 +992,7 @@ module QuotedFilename:
     val get_in_directory : t -> string -> string -> t
   end
 = struct
-    (* PUBLIC *)      
+    (* PUBLIC *)
     type t = {
       unquoted: string;
       quoted: string
