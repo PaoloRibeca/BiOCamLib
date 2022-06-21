@@ -1,13 +1,21 @@
 # BiOCamLib
+
 BiOCamLib is the OCaml foundation upon which a number of the bioinformatics tools I developed are built.
+
+It consists of a library &mdash; you will need to clone this repository if you want to manually compile programs from other repositories I maintain, notably (SiNPle)[https://github.com/PaoloRibeca/SiNPle] and (KPop)[https://github.com/PaoloRibeca/KPop]. As a bonus, BiOCamLib comes with a program called `Parallel`, which allows you to 
 
 ## `Parallel`
 
+This is the full list of command line options available for the program `Parallel`. You can visualise the list by typing
+```bash
+$ Parallel -h
+```
+in your terminal. You will see a header containing information about the version:
 ```
 This is the Parallel program (version 0.4)
  (c) 2019-2022 Paolo Ribeca, <paolo.ribeca@gmail.com>
 ```
-Usage:
+followed by detailed information. The general form(s) the command can be used is:
 ```
 ./Parallel [OPTIONS] -- [COMMAND TO PARALLELIZE AND ITS OPTIONS]
 ```
