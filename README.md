@@ -2,7 +2,9 @@
 
 BiOCamLib is the OCaml foundation upon which a number of the bioinformatics tools I developed are built.
 
-It consists of a library &mdash; you will need to clone this repository if you want to manually compile programs from other repositories I maintain, notably (SiNPle)[https://github.com/PaoloRibeca/SiNPle] and (KPop)[https://github.com/PaoloRibeca/KPop]. As a bonus, BiOCamLib comes with a program called `Parallel`, which allows you to 
+It mostly consists of a library &mdash; you will need to clone this repository if you want to manually compile other programs I've developed, notably from the repositories [SiNPle](https://github.com/PaoloRibeca/SiNPle) and [KPop](https://github.com/PaoloRibeca/KPop). You might also use the library for your own programs.
+
+As a bonus, BiOCamLib comes bundled with a program called `Parallel`, which allows you to split and process an input file chunk-wise using the reader/workers/writer model implemented in `BiOCamLib.Tools.Parallel`. You can see it as a demonstration of the capabilities of the library, but I also often use it as a useful tool to solve real-life problems.
 
 ## `Parallel`
 
