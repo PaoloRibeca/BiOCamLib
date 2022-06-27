@@ -24,16 +24,20 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 *)
 
-module Misc:
+module Lint:
   sig
+    val none: 'a -> 'a
+    (* *)
     val dnaize_bytes: ?keep_dashes:bool -> bytes -> bytes
     val rc_bytes: ?keep_dashes:bool -> bytes -> bytes
-
+    val proteinize_bytes: ?keep_dashes:bool -> bytes -> bytes
+    (* *)
     val dnaize: ?keep_dashes:bool -> string -> string
     val rc: ?keep_dashes:bool -> string -> string
-
+    val proteinize: ?keep_dashes:bool -> string -> string
   end
 = struct
+    let none w = w
     let dnaize_bytes ?(keep_dashes = false) b =
       let len = Bytes.length b in
       let red_len = len - 1 in
@@ -71,7 +75,42 @@ module Misc:
       b
     let rc ?(keep_dashes = false) s =
       Bytes.to_string (rc_bytes ~keep_dashes (Bytes.of_string s))
-
+    let proteinize_bytes ?(keep_dashes = false) b =
+      let len = Bytes.length b in
+      let red_len = len - 1 in
+      for i = 0 to red_len do
+        Bytes.set b i begin
+          match Bytes.get b i with
+          | 'A' | 'a' -> 'A'
+          | 'C' | 'c' -> 'C'
+          | 'D' | 'd' -> 'D'
+          | 'E' | 'e' -> 'E'
+          | 'F' | 'f' -> 'F'
+          | 'G' | 'g' -> 'G'
+          | 'H' | 'h' -> 'H'
+          | 'I' | 'i' -> 'I'
+          | 'K' | 'k' -> 'K'
+          | 'L' | 'l' -> 'L'
+          | 'M' | 'm' -> 'M'
+          | 'N' | 'n' -> 'N'
+          | 'O' | 'o' -> 'O'
+          | 'P' | 'p' -> 'P'
+          | 'Q' | 'q' -> 'Q'
+          | 'R' | 'r' -> 'R'
+          | 'S' | 's' -> 'S'
+          | 'T' | 't' -> 'T'
+          | 'U' | 'u' -> 'U'
+          | 'V' | 'v' -> 'V'
+          | 'W' | 'w' -> 'W'
+          | 'Y' | 'y' -> 'Y'
+          | '*' -> '*'
+          | '-' when keep_dashes -> '-'
+          | _ -> 'X'
+        end
+      done;
+      b
+    let proteinize ?(keep_dashes = false) s =
+      Bytes.to_string (proteinize_bytes ~keep_dashes (Bytes.of_string s))
   end
 
 module FASTA:
@@ -82,7 +121,7 @@ module FASTA:
       string -> (int -> (string * string) list -> 'a) -> ('a -> unit) -> int -> unit
   end
 = struct
-    let iter ?(linter = Misc.dnaize ~keep_dashes:false) ?(verbose = false) f filename =
+    let iter ?(linter = Lint.dnaize ~keep_dashes:false) ?(verbose = false) f filename =
       let file = open_in filename and progr = ref 0 and current = ref "" and seq = Buffer.create 1048576 in
       if verbose then
         Printf.eprintf "(%s): Reading FASTA file '%s'...%!" __FUNCTION__ filename;
@@ -106,9 +145,9 @@ module FASTA:
         close_in file;
         if verbose then
           Printf.eprintf " done.\n%!"
-      let parallel_iter ?(linter = Misc.dnaize ~keep_dashes:false) ?(buffered_chunks_per_thread = 10)
-                        ?(max_memory = 1000000000) ?(verbose = false)
-        filename (f:int -> (string * string) list -> 'a) (g:'a -> unit) threads =
+    let parallel_iter ?(linter = Lint.dnaize ~keep_dashes:false) ?(buffered_chunks_per_thread = 10)
+                      ?(max_memory = 1000000000) ?(verbose = false)
+                      filename (f:int -> (string * string) list -> 'a) (g:'a -> unit) threads =
       let max_block_bytes = max_memory / (buffered_chunks_per_thread * threads) in
       (* Parallel section *)
       let file = open_in filename and current = ref "" and seq = Buffer.create 1048576
@@ -136,7 +175,8 @@ module FASTA:
       read_up_to_next_sequence_name ();
       if Buffer.contents seq <> "" then
         Buffer.contents seq |>
-          Printf.sprintf "(%s): On line %d: Malformed FASTA file (found content '%s' before sequence name)" __FUNCTION__ !read
+          Printf.sprintf "(%s): On line %d: Malformed FASTA file '%s' (found content '%s' before sequence name)"
+            __FUNCTION__ !read filename
           |> failwith;
       if not !eof_reached then
         Tools.Parallel.process_stream_chunkwise ~buffered_chunks_per_thread:buffered_chunks_per_thread
@@ -150,7 +190,8 @@ module FASTA:
                 read_up_to_next_sequence_name ();
                 let seq = Buffer.contents seq in
                 if seq = "" then begin
-                  Printf.sprintf "(%s): On line %d: Malformed FASTA file (sequence '%s' is empty)" __FUNCTION__ !read current
+                  Printf.sprintf "(%s): On line %d: Malformed FASTA file '%s' (sequence '%s' is empty)"
+                    __FUNCTION__ !read current filename
                   |> failwith
                 end;
                 incr seqs;
@@ -179,7 +220,7 @@ module FASTQ:
       (int -> string -> string -> string -> string -> string -> string -> unit) -> string -> string -> unit
   end
 = struct
-    let iter_se ?(linter = Misc.dnaize ~keep_dashes:false) ?(verbose = false) f file =
+    let iter_se ?(linter = Lint.dnaize ~keep_dashes:false) ?(verbose = false) f file =
       let read = ref 0 and input = open_in file in
       if verbose then
         Printf.eprintf "(%s): Reading SE FASTQ file '%s'...%!" __FUNCTION__ file;
@@ -191,7 +232,7 @@ module FASTQ:
           let qua = input_line input in
           read := !read + 4;
           if tag.[0] <> '@' || tmp.[0] <> '+' then
-            Printf.sprintf "(%s): On line %d: Malformed FASTQ file" __FUNCTION__ !read |> failwith;
+            Printf.sprintf "(%s): On line %d: Malformed FASTQ file '%s'" __FUNCTION__ !read file |> failwith;
           f (!read / 4) (String.sub tag 1 (String.length tag - 1)) (linter seq) qua
         done
       with End_of_file -> ()
@@ -199,7 +240,7 @@ module FASTQ:
       close_in input;
       if verbose then
         Printf.eprintf " done.\n%!"
-    let iter_pe ?(linter = Misc.dnaize ~keep_dashes:false) ?(verbose = false) f file1 file2 =
+    let iter_pe ?(linter = Lint.dnaize ~keep_dashes:false) ?(verbose = false) f file1 file2 =
       let read = ref 0 and input1 = open_in file1 and input2 = open_in file2 in
       if verbose then
         Printf.eprintf "(%s): Reading PE FASTQ files '%s' and '%s'...%!" __FUNCTION__ file1 file2;
@@ -215,7 +256,8 @@ module FASTQ:
           let qua2 = input_line input2 in
           read := !read + 4;
           if tag1.[0] <> '@' || tmp1.[0] <> '+' || tag2.[0] <> '@' || tmp2.[0] <> '+' then
-            Printf.sprintf "(%s): On line %d: Malformed FASTQ file" __FUNCTION__ !read |> failwith;
+            Printf.sprintf "(%s): On line %d: Malformed FASTQ file(s) '%s' and/or '%s'"
+              __FUNCTION__ !read file1 file2 |> failwith;
           f (!read / 4)
             (String.sub tag1 1 (String.length tag1 - 1)) (linter seq1) qua1
             (String.sub tag2 1 (String.length tag2 - 1)) (linter seq2) qua2
@@ -226,6 +268,40 @@ module FASTQ:
       close_in input2;
       if verbose then
         Printf.eprintf " done.\n%!"
+  end
+
+module Tabular:
+  sig
+    val iter:
+      ?linter:(string -> string) -> ?verbose:bool ->
+      (int -> string -> string -> string -> unit) ->
+      (int -> string -> string -> string -> string -> string -> string -> unit) -> string -> unit
+  end
+= struct
+    let iter ?(linter = Lint.dnaize ~keep_dashes:false) ?(verbose = false) f g filename =
+      let file = open_in filename and progr = ref 0 in
+      if verbose then
+        Printf.eprintf "(%s): Reading tabular file '%s'...%!" __FUNCTION__ filename;
+      try
+        while true do
+          let line = input_line file |> Tools.Split.on_char_as_array '\t' in
+          incr progr;
+          match Array.length line with
+          | 2 -> (* FASTA *)
+            f !progr line.(0) (linter line.(1)) ""
+          | 3 -> (* SE FASTQ *)
+            f !progr line.(0) (linter line.(1)) line.(2)
+          | 6 -> (* PE FASTQ *)
+            g !progr line.(0) (linter line.(1)) line.(2) line.(3) (linter line.(4)) line.(5)
+          | n ->
+            Printf.sprintf "(%s): On line %d: Malformed tabular file '%s' (found %d fields, expected 2, 3, or 6)"
+                __FUNCTION__ !progr filename n
+              |> failwith;
+        done
+      with End_of_file ->
+        close_in file;
+        if verbose then
+          Printf.eprintf " done.\n%!"
   end
 
 module Types =
@@ -698,7 +774,7 @@ module Reference:
                 end in
           let seq = Buffer.contents seq in
           res := StrandedStringMap.add (Types.Forward !name) (seq, table) !res;
-          res := StrandedStringMap.add (Types.Reverse !name) (Misc.rc seq, table) !res
+          res := StrandedStringMap.add (Types.Reverse !name) (Lint.rc seq, table) !res
         end in
       begin try
         while true do
@@ -714,7 +790,7 @@ module Reference:
             name := String.sub line 1 (String.length line - 1);
             Buffer.clear seq
           end else
-            Buffer.add_bytes seq (Misc.dnaize_bytes (Bytes.of_string line))
+            Buffer.add_bytes seq (Lint.dnaize_bytes (Bytes.of_string line))
         done
       with End_of_file ->
         process_seq ();

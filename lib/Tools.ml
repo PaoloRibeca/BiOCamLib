@@ -358,10 +358,10 @@ module Trie:
     val add: t -> string -> t
     type result_t =
       | Not_found
-      | Partial of string
-      | Ambiguous of string list
-      | Contained of string list
-      | Unique of string
+      | Partial of string (* Partial match *)
+      | Ambiguous of string list (* Multiple partial matches *)
+      | Contained of string list (* Exact match, but also other longer matches containing it *)
+      | Unique of string (* Exact match and no other containing matches *)
     val find: t -> string -> result_t
     (* Converts the result to string whenever it is possible to do so unambiguously *)
     val find_string: t -> string -> string
@@ -755,7 +755,7 @@ module Argv:
           need_table_header := false;
           "| Option | Argument(s) | Effect | Note(s) |\n|-|-|-|-|\n" |> accum_md
         end
-      and table = ref StringMap.empty and mandatory = ref StringSet.empty in
+      and trie = ref Trie.empty and table = ref StringMap.empty and mandatory = ref StringSet.empty in
       List.iteri
         (fun i (opts, vl, help, clss, act) ->
           if opts = [] && help = [] then
@@ -786,8 +786,9 @@ module Argv:
                 (* No escaping needed here, as the text is already surrounded by quotes *)
                 "`" ^ opt ^ "`" |> accum_md
               end;
-              if StringMap.mem opt !table then
-                "Duplicate command line option '" ^ opt ^ "' in table" |> error "parse";
+              if Trie.find_string !trie opt <> "" then
+                "Clashing command line option '" ^ opt ^ "' in table" |> error "parse";
+              trie := Trie.add !trie opt;
               if clss = Mandatory then begin
                 let repr = List.fold_left (fun a b -> a ^ (if a = "" then "" else "|") ^ b) "" opts in
                 mandatory := StringSet.add repr !mandatory;
@@ -865,11 +866,12 @@ module Argv:
               accum_md " |\n"
           end)
         specs;
-      let len = Array.length argv in
+      (* The actual parsing :) *)
+      let trie = !trie and table = !table and len = Array.length argv in
       while !i < len do
         let arg = argv.(!i) in
         begin try
-          StringMap.find arg !table
+          StringMap.find (Trie.find_string trie arg) table
         with Not_found ->
           error "parse" ("Unknown option '" ^ argv.(!i) ^ "'")
         end arg;

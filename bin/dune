@@ -5,11 +5,12 @@
     (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static))))
 
 (executables
- (public_names Parallel)
- (names Parallel)
+ (public_names Parallel FASTools)
+ (names Parallel FASTools)
  (libraries str unix BiOCamLib))
 
 (install
  (section bin)
  (files
-  (Parallel.exe as Parallel)))
+  (Parallel.exe as Parallel)
+  (FASTools.exe as FASTools)))
