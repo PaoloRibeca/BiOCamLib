@@ -67,7 +67,7 @@ followed by detailed information. The general form(s) the command can be used is
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-t`<br>`--threads` | _&lt;positive\_integer&gt;_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_4_</mark></ins> |
+| `-t`<br>`--threads` | _&lt;positive\_integer&gt;_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_nproc_</mark></ins> |
 | `-v`<br>`--verbose` |  |  set verbose execution | <ins>default=<mark>_false_</mark></ins> |
 | `-d`<br>`--debug` |  |  output debugging information | <ins>default=<mark>_false_</mark></ins> |
 | `-h`<br>`--help` |  |  print syntax and exit |  |
