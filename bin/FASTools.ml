@@ -69,7 +69,7 @@ let _ =
   TA.set_header header;
   TA.set_synopsis "[OPTIONS]";
   TA.parse [
-    TA.make_separator_multiline [ "Working mode"; "Executed delayed in order of specification, default='compact'." ];
+    TA.make_separator_multiline [ "Working mode."; "Executed delayed in order of specification, default='compact'." ];
     [ "compact"; "-c"; "--compact" ],
       None,
       [ "put each FASTA/FASTQ record on one tab-separated line" ],
@@ -91,7 +91,7 @@ let _ =
         "For paired-end files, the pair matches when at least one name matches" ],
       TA.Optional,
       (fun _ -> SetWorkingMode (Match (TA.get_parameter () |> Str.regexp)) |> Tools.List.accum Parameters.program);
-    TA.make_separator_multiline [ "Input/Output"; "Executed delayed in order of specification, default='-F'." ];
+    TA.make_separator_multiline [ "Input/Output."; "Executed delayed in order of specification, default='-F'." ];
     [ "-f"; "--fasta" ],
       Some "<fasta_file_name>",
       [ "process FASTA input file containing sequences" ],

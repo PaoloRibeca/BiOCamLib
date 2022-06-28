@@ -2,25 +2,31 @@
 
 BiOCamLib is the [OCaml](https://ocaml.org) foundation upon which a number of the bioinformatics tools I developed are built.
 
-It mostly consists of a library &mdash; you will need to clone this repository if you want to manually compile other programs I've developed, notably [SiNPle](https://github.com/PaoloRibeca/SiNPle) or [KPop](https://github.com/PaoloRibeca/KPop). You might also use the library for your own programs, if you are familiar with OCaml and patient enough to read the code.
+It mostly consists of a library &mdash; you'll need to clone this repository if you want to manually compile other programs I've developed, notably [SiNPle](https://github.com/PaoloRibeca/SiNPle) or [KPop](https://github.com/PaoloRibeca/KPop). You might also use the library for your own programs, if you are familiar with OCaml and patient enough to read the code.
 
 As a bonus, BiOCamLib comes bundled with a couple of programs:
 * `Parallel`, which allows you to split and process an input file chunk-wise using the reader/workers/writer model implemented in `BiOCamLib.Tools.Parallel`. You can see it as a demonstration of the capabilities of the library, but I also often use it as a useful tool to solve real-life problems.
-* `FASTools`, which is a Swiss-knife tool for the manipulation of FASTA/FASTQ files. It supports all formats (FASTA, single- and paired-end FASTQ, interleaved FASTQ) plus a tabular format whereby FASTA/FASTQ records are represented as tab-separated lines, and facilitates format interconversions and othr manipulations.
+* `FASTools`, which is a Swiss-knife tool for the manipulation of FASTA/FASTQ files. It supports all formats (FASTA, single- and paired-end FASTQ, interleaved FASTQ) and a simpler tabular format whereby FASTA/FASTQ records are represented as tab-separated lines. It facilitates format interconversions and other manipulations.
 
 ## Installing `Parallel` and `FASTools`
 
-> :warning: Note that the only operating system we support is Linux. :warning:
+> :warning: Note that the only operating systems we officially support are Linux and MacOS. :warning:
 >
-> OCaml is highly portable and you might be able to manually compile/install everything successfully on other platforms (for instance, Mac) but you will have to do it yourself. 
+> OCaml is highly portable and you might be able to manually compile/install everything successfully on other platforms (for instance, Windows) but you will have to do it yourself. 
 
-There are several possible ways of installing the software on your machine: by downloading pre-compiled binaries (Linux x86_64 only); or manually.
+There are several possible ways of installing the software on your machine: through `conda`; by downloading pre-compiled binaries (Linux and MacOS x86_64 only); or manually.
 
-### Pre-compiled binaries 
+### Conda channel
+
+> :construction: Coming soon! :construction:
+
+### Pre-compiled binaries
+
+You can download pre-compiled binaries for Linux and MacOS x86_64 from our [releases](https://github.com/PaoloRibeca/BiOCamLib/releases).
 
 ### Manual install
 
-Alternatively, you can install `Parallel` manually by cloning and compiling its sources. You'll need an up-to-date distribution of the OCaml compiler and the [Dune package manager](https://github.com/ocaml/dune) for that. Both can be installed through [OPAM](https://opam.ocaml.org/), the official OCaml distribution system. Once you have a working OPAM distribution you'll also have a working OCaml compiler, and Dune can be installed with the command
+Alternatively, you can install `Parallel` and `FASTools` manually by cloning and compiling its sources. You'll need an up-to-date distribution of the OCaml compiler and the [Dune package manager](https://github.com/ocaml/dune) for that. Both can be installed through [OPAM](https://opam.ocaml.org/), the official OCaml distribution system. Once you have a working OPAM distribution you'll also have a working OCaml compiler, and Dune can be installed with the command
 ```
 $ opam install dune
 ```
@@ -31,7 +37,7 @@ Then go to the directory into which you have downloaded the latest BiOCamLib sou
 $ ./BUILD
 ```
 
-That should generate the executable `Parallel`. Copy it to some favourite location in your PATH, for instance `~/.local/bin`.
+That should generate the executables `Parallel` and `FASTools`. Copy them to some favourite location in your PATH, for instance `~/.local/bin`.
 
 ## Command line options for `Parallel`
 
@@ -88,7 +94,7 @@ followed by detailed information. The general form(s) the command can be used is
 ./FASTools [OPTIONS]
 ```
 
-**Working mode**
+**Working mode.**
 Executed delayed in order of specification, default=<mark>_compact_</mark>.
 
 | Option | Argument(s) | Effect | Note(s) |
@@ -98,7 +104,7 @@ Executed delayed in order of specification, default=<mark>_compact_</mark>.
 | `revcom`<br>`-r`<br>`--revcom` |  |  reverse\-complement sequences in FASTA/FASTQ records or tab\-separated lines |  |
 | `match`<br>`-m`<br>`--match` | _&lt;regexp&gt;_ |  select matching sequence names in FASTA/FASTQ records or tab\-separated lines\.<br>For paired\-end files, the pair matches when at least one name matches |  |
 
-**Input/Output**
+**Input/Output.**
 Executed delayed in order of specification, default=<mark>_-F_</mark>.
 
 | Option | Argument(s) | Effect | Note(s) |
