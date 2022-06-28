@@ -674,6 +674,7 @@ module Argv:
     val parse_error: ?output:out_channel -> string -> unit
     (* Makes a textual separator between groups of options *)
     val make_separator: string -> spec_t
+    val make_separator_multiline: string list -> spec_t
   end
 = struct
     type class_t =
@@ -764,7 +765,7 @@ module Argv:
       let emit_table_header_if_needed () =
         if !need_table_header then begin
           need_table_header := false;
-          "| Option | Argument(s) | Effect | Note(s) |\n|-|-|-|-|\n" |> accum_md
+          "\n| Option | Argument(s) | Effect | Note(s) |\n|-|-|-|-|\n" |> accum_md
         end
       and trie = ref Trie.empty and table = ref StringMap.empty and mandatory = ref StringSet.empty in
       List.iteri
@@ -773,9 +774,13 @@ module Argv:
             error "parse" ("Malformed initializer for option #" ^ string_of_int i);
           if opts = [] then begin
             accum_md "\n";
-            List.iter
-              (fun line ->
+            List.iteri
+              (fun i line ->
+                if i = 0 then
+                  accum_md "**";
                 accum_md ~escape:true line;
+                if i = 0 then
+                  accum_md "**";
                 accum_md "\n")
               help;
             (* Section headers require a new table *)
@@ -858,7 +863,12 @@ module Argv:
                   end;
                   accum_md ~escape:true help)
               else
-                (fun _ help -> " \027[4m" ^ help ^ "\027[0m\n" |> accum_usage)
+                (fun i help ->
+                  begin if i = 0 then
+                    " \027[4m" ^ help ^ "\027[0m\n"
+                  else
+                    "   \027[4m" ^ help ^ "\027[0m\n"
+                  end |> accum_usage)
             end help;
             if opts <> [] && help <> [] then
               accum_md " | ";
@@ -896,6 +906,8 @@ module Argv:
     let parse_error ?(output = stderr) = error ~output "parse"
     let make_separator s =
       [], None, [ s ], Optional, (fun _ -> ())
+    let make_separator_multiline a =
+      [], None, a, Optional, (fun _ -> ())
   end
 
 (* Simple wrapper around Unix sub-processes *)

@@ -49,19 +49,22 @@ followed by detailed information. The general form(s) the command can be used is
 ./Parallel [OPTIONS] -- [COMMAND TO PARALLELIZE AND ITS OPTIONS]
 ```
 
-Command to parallelize
+**Command to parallelize**
+
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
 | `--` |  |  consider all the subsequent parameters as the command to be executed in parallel\.<br>At least one command must be specified | *(mandatory)* |
 
-Input/Output
+**Input/Output**
+
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
 | `-l`<br>`--lines-per-block` | _&lt;positive\_integer&gt;_ |  number of lines to be processed per block | <ins>default=<mark>_10000_</mark></ins> |
 | `-i`<br>`--input` | _&lt;input\_file&gt;_ |  name of input file | <ins>default=<mark>_stdin_</mark></ins> |
 | `-o`<br>`--output` | _&lt;output\_file&gt;_ |  name of output file | <ins>default=<mark>_stdout_</mark></ins> |
 
-Miscellaneous
+**Miscellaneous**
+
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
 | `-t`<br>`--threads` | _&lt;positive\_integer&gt;_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_4_</mark></ins> |
@@ -85,7 +88,9 @@ followed by detailed information. The general form(s) the command can be used is
 ./FASTools [OPTIONS]
 ```
 
-Working mode \(executed delayed in order of specification, default='compact'\)
+**Working mode**
+Executed delayed in order of specification, default=<mark>_compact_</mark>.
+
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
 | `compact`<br>`-c`<br>`--compact` |  |  put each FASTA/FASTQ record on one tab\-separated line |  |
@@ -93,7 +98,9 @@ Working mode \(executed delayed in order of specification, default='compact'\)
 | `revcom`<br>`-r`<br>`--revcom` |  |  reverse\-complement sequences in FASTA/FASTQ records or tab\-separated lines |  |
 | `match`<br>`-m`<br>`--match` | _&lt;regexp&gt;_ |  select matching sequence names in FASTA/FASTQ records or tab\-separated lines\.<br>For paired\-end files, the pair matches when at least one name matches |  |
 
-Input/Output \(executed delayed in order of specification, default='\-F'\)
+**Input/Output**
+Executed delayed in order of specification, default=<mark>_-F_</mark>.
+
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
 | `-f`<br>`--fasta` | _&lt;fasta\_file\_name&gt;_ |  process FASTA input file containing sequences |  |
@@ -110,7 +117,8 @@ Input/Output \(executed delayed in order of specification, default='\-F'\)
 | `-O`<br>`--paired-end-output` | _&lt;output\_file\_name\_1&gt; &lt;output\_file\_name\_2&gt;_ |  set the names of paired\-end FASTQ output files\.<br>Files are kept open, and it is possible to switch between them  by repeatedly using this option\.<br>Use &lt;stdout&gt; for standard output | <ins>default=<mark>_&lt;stdout&gt;_</mark></ins> |
 | `--flush`<br>`--flush-output` |  |  flush output after each record \(global option\) | <ins>default=<mark>_do not flush_</mark></ins> |
 
-Miscellaneous
+**Miscellaneous**
+
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
 | `-v`<br>`--verbose` |  |  set verbose execution \(global option\) | <ins>default=<mark>_false_</mark></ins> |
