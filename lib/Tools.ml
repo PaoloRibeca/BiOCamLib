@@ -502,6 +502,17 @@ module Seq:Sequable with type 'a init_t := 'a Seq.t and type 'a ret_t := 'a =
       | Cons (_, next) -> it := next
   end
 
+module Str =
+  struct
+    include Str
+    let matches re s =
+      try
+        ignore (Str.search_forward re s 0);
+        true
+      with Not_found ->
+        false
+  end
+
 module Split =
   struct
     let fasta_name_re = Str.regexp "^>"
@@ -1338,3 +1349,4 @@ module Parallel:
       if verbose then
         Printf.teprintf "%d %s out\n" !written (String.pluralize_int "line" !written)
   end
+

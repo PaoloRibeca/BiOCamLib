@@ -35,12 +35,13 @@ and to_do_t =
   | SetWorkingMode of working_mode_t
   | SetLinter of linter_t
   | SetLinterKeepDashes of bool
-  | ProcessInput of KMer.ReadFiles.file_t
+  | ProcessInput of KMer.FileType.t
   | SetOutput of string
   | SetOutputPE of string * string
 
 module Defaults =
   struct
+    let flush = false
 (*
     let threads = Tools.Parallel.get_nproc ()
 *)
@@ -50,11 +51,12 @@ module Defaults =
 module Parameters =
   struct
     let program = ref []
+    let flush = ref Defaults.flush
     (*let threads = ref Defaults.threads*)
     let verbose = ref Defaults.verbose
   end
 
-let version = "0.2"
+let version = "0.3"
 
 let header =
   Printf.sprintf begin
@@ -67,7 +69,7 @@ let _ =
   TA.set_header header;
   TA.set_synopsis "[OPTIONS]";
   TA.parse [
-    TA.make_separator "Working mode (paired-end files are automatically interleaved, default='compact')";
+    TA.make_separator "Working mode (executed delayed in order of specification, default='compact')";
     [ "compact"; "-c"; "--compact" ],
       None,
       [ "put each FASTA/FASTQ record on one tab-separated line" ],
@@ -89,7 +91,50 @@ let _ =
         "For paired-end files, the pair matches when at least one name matches" ],
       TA.Optional,
       (fun _ -> SetWorkingMode (Match (TA.get_parameter () |> Str.regexp)) |> Tools.List.accum Parameters.program);
-    TA.make_separator "Input/Output";
+    TA.make_separator "Input/Output (executed delayed in order of specification, default='-F')";
+    [ "-f"; "--fasta" ],
+      Some "<fasta_file_name>",
+      [ "process FASTA input file containing sequences" ],
+      TA.Optional,
+      (fun _ -> ProcessInput (FASTA (TA.get_parameter ())) |> Tools.List.accum Parameters.program);
+    [ "-F" ],
+      None,
+      [ "process FASTA sequences from standard input" ],
+      TA.Optional,
+      (fun _ -> ProcessInput (FASTA "/dev/stdin") |> Tools.List.accum Parameters.program);
+    [ "-s"; "--single-end" ],
+      Some "<fastq_file_name>",
+      [ "process FASTQ input file containing single-end sequencing reads" ],
+      TA.Optional,
+      (fun _ -> ProcessInput (SingleEndFASTQ (TA.get_parameter ())) |> Tools.List.accum Parameters.program);
+    [ "-S" ],
+      None,
+      [ "process single-end FASTQ sequencing reads from standard input" ],
+      TA.Optional,
+      (fun _ -> ProcessInput (SingleEndFASTQ "/dev/stdin") |> Tools.List.accum Parameters.program);
+    [ "-p"; "--paired-end" ],
+      Some "<fastq_file_name1> <fastq_file_name2>",
+      [ "process FASTQ input files containing paired-end sequencing reads" ],
+      TA.Optional,
+      (fun _ ->
+        let name1 = TA.get_parameter () in
+        let name2 = TA.get_parameter () in
+        ProcessInput (PairedEndFASTQ (name1, name2)) |> Tools.List.accum Parameters.program);
+    [ "-P" ],
+      None,
+      [ "process interleaved FASTQ sequencing reads from standard input" ],
+      TA.Optional,
+      (fun _ -> ProcessInput (InterleavedFASTQ "/dev/stdin") |> Tools.List.accum Parameters.program);
+    [ "-t"; "--tabular" ],
+      Some "<tabular_file_name>",
+      [ "process input file containing FAST[A|Q] records as tab-separated lines" ],
+      TA.Optional,
+      (fun _ -> ProcessInput (Tabular (TA.get_parameter ())) |> Tools.List.accum Parameters.program);
+    [ "-T" ],
+      None,
+      [ "process FAST[A|Q] records in tabular form from standard input" ],
+      TA.Optional,
+      (fun _ -> ProcessInput (Tabular "/dev/stdin") |> Tools.List.accum Parameters.program);
     [ "-l"; "--linter" ],
       Some "'none'|'DNA'|'dna'|'protein'",
       [ "sets linter for sequence.";
@@ -112,30 +157,6 @@ let _ =
         " or convert them to unknowns" ],
       TA.Default (fun () -> "false"),
       (fun _ -> SetLinterKeepDashes (TA.get_parameter_boolean ()) |> Tools.List.accum Parameters.program);
-    [ "-f"; "--fasta" ],
-      Some "<fasta_file_name>",
-      [ "FASTA input file containing sequences" ],
-      TA.Optional,
-      (fun _ -> ProcessInput (KMer.ReadFiles.FASTA (TA.get_parameter ())) |> Tools.List.accum Parameters.program);
-    [ "-s"; "--single-end" ],
-      Some "<fastq_file_name>",
-      [ "FASTQ input file containing single-end sequencing reads" ],
-      TA.Optional,
-      (fun _ ->
-        ProcessInput (KMer.ReadFiles.SingleEndFASTQ (TA.get_parameter ())) |> Tools.List.accum Parameters.program);
-    [ "-p"; "--paired-end" ],
-      Some "<fastq_file_name1> <fastq_file_name2>",
-      [ "FASTQ input files containing paired-end sequencing reads" ],
-      TA.Optional,
-      (fun _ ->
-        let name1 = TA.get_parameter () in
-        let name2 = TA.get_parameter () in
-        ProcessInput (KMer.ReadFiles.PairedEndFASTQ (name1, name2)) |> Tools.List.accum Parameters.program);
-    [ "-t"; "--tabular" ],
-      Some "<tabular_file_name>",
-      [ "tabular input file containing FASTA/FASTQ records as tab-separated lines" ],
-      TA.Optional,
-      (fun _ -> ProcessInput (KMer.ReadFiles.Tabular (TA.get_parameter ())) |> Tools.List.accum Parameters.program);
     [ "-o"; "--output" ],
       Some "<output_file_name>",
       [ "set the name of the output file.";
@@ -155,6 +176,11 @@ let _ =
         let output_1 = TA.get_parameter () in
         let output_2 = TA.get_parameter () in
         SetOutputPE (output_1, output_2) |> Tools.List.accum Parameters.program);
+    [ "--flush"; "--flush-output" ],
+      None,
+      [ "flush output after each record (global option)" ],
+      TA.Default (fun () -> "do not flush"),
+      (fun _ -> Parameters.flush := true);
     TA.make_separator "Miscellaneous";
 (*
     [ "-t"; "-T"; "--threads" ],
@@ -166,7 +192,7 @@ let _ =
 *)
     [ "-v"; "--verbose" ],
       None,
-      [ "set verbose execution" ],
+      [ "set verbose execution (global option)" ],
       TA.Default (fun () -> string_of_bool !Parameters.verbose),
       (fun _ -> Parameters.verbose := true);
     (* Hidden option to emit help in markdown format *)
@@ -219,7 +245,9 @@ let _ =
       output_string output "\n+\n";
       output_string output qua;
       output_char output '\n'
-    end
+    end;
+    if !Parameters.flush then
+      flush output
   and output_tabular_record ?(pe = false) ?(rc = false) _ segm { KMer.ReadFiles.tag; seq; qua } =
     let seq =
       if rc then
@@ -228,20 +256,33 @@ let _ =
         seq
     and output =
       match segm with
-      | 0 -> output_1
-      | 1 -> output_2
+      | 0 -> !output_1
+      | 1 -> !output_2
       | _ -> assert false in
-    output_string !output tag;
-    output_char !output '\t';
-    output_string !output seq;
+    output_string output tag;
+    output_char output '\t';
+    output_string output seq;
     if qua <> "" then begin
-      output_char !output '\t';
-      output_string !output qua
+      output_char output '\t';
+      output_string output qua
     end;
-    if not pe || segm = 1 then
-      output_char !output '\n'
-    else
-      output_char !output '\t' in
+    if pe && segm = 0 then
+      output_char output '\t'
+    else begin
+      output_char output '\n';
+      if !Parameters.flush then
+        flush output
+    end in
+  let has_at_least_one_input = ref false in
+  List.iter
+    (function
+      | ProcessInput _ ->
+        has_at_least_one_input := true
+      | _ ->
+        ())
+    !Parameters.program;
+  if not !has_at_least_one_input then
+    ProcessInput (FASTA "/dev/stdin") |> Tools.List.accum Parameters.program;
   List.iter
     (function
       | SetWorkingMode mode ->
@@ -254,7 +295,7 @@ let _ =
         set_linter_f ()
       | ProcessInput input ->
         begin match !working_mode, input with
-        | Compact, KMer.ReadFiles.PairedEndFASTQ _ ->
+        | Compact, PairedEndFASTQ _ | Compact, InterleavedFASTQ _ ->
           KMer.ReadFiles.add_from_files KMer.ReadFiles.empty input |>
             KMer.ReadFiles.iter ~linter:!linter_f ~verbose:!Parameters.verbose (output_tabular_record ~pe:true)
         | Compact, _ ->
@@ -263,36 +304,45 @@ let _ =
         | Expand, _ ->
           KMer.ReadFiles.add_from_files KMer.ReadFiles.empty input |>
             KMer.ReadFiles.iter ~linter:!linter_f ~verbose:!Parameters.verbose output_fast_record
-        | RevCom, KMer.ReadFiles.FASTA _
-        | RevCom, KMer.ReadFiles.SingleEndFASTQ _
-        | RevCom, KMer.ReadFiles.PairedEndFASTQ _ ->
+        | RevCom, FASTA _
+        | RevCom, SingleEndFASTQ _
+        | RevCom, PairedEndFASTQ _
+        | RevCom, InterleavedFASTQ _ ->
           KMer.ReadFiles.add_from_files KMer.ReadFiles.empty input |>
             KMer.ReadFiles.iter ~linter:!linter_f ~verbose:!Parameters.verbose (output_fast_record ~rc:true)
-        | RevCom, KMer.ReadFiles.Tabular _ ->
+        | RevCom, Tabular _ ->
           KMer.ReadFiles.add_from_files KMer.ReadFiles.empty input |>
             KMer.ReadFiles.iter ~linter:!linter_f ~verbose:!Parameters.verbose (output_tabular_record ~rc:true)
-        | Match regexp, KMer.ReadFiles.FASTA _
-        | Match regexp, KMer.ReadFiles.SingleEndFASTQ _ ->
+        | Match regexp, FASTA _
+        | Match regexp, SingleEndFASTQ _ ->
           KMer.ReadFiles.add_from_files KMer.ReadFiles.empty input |>
             KMer.ReadFiles.iter ~linter:!linter_f ~verbose:!Parameters.verbose
               (fun i segm ({ tag; _ } as record) ->
-                if Str.string_match regexp tag 0 then
+                if Tools.Str.matches regexp tag then
                   output_fast_record i segm record)
-        | Match regexp, KMer.ReadFiles.PairedEndFASTQ (file_1, file_2) ->
+        | Match regexp, PairedEndFASTQ (file_1, file_2) ->
           Sequences.FASTQ.iter_pe ~linter:!linter_f ~verbose:!Parameters.verbose
             (fun i tag_1 seq_1 qua_1 tag_2 seq_2 qua_2 ->
-              if Str.string_match regexp tag_1 0 || Str.string_match regexp tag_2 0 then begin
+              if Tools.Str.matches regexp tag_1 || Tools.Str.matches regexp tag_2 then begin
                 output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = qua_1 };
                 output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = qua_2 }
               end)
             file_1 file_2
-        | Match regexp, KMer.ReadFiles.Tabular file ->
+        | Match regexp, InterleavedFASTQ file ->
+          Sequences.FASTQ.iter_il ~linter:!linter_f ~verbose:!Parameters.verbose
+            (fun i tag_1 seq_1 qua_1 tag_2 seq_2 qua_2 ->
+              if Tools.Str.matches regexp tag_1 || Tools.Str.matches regexp tag_2 then begin
+                output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = qua_1 };
+                output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = qua_2 }
+              end)
+            file
+        | Match regexp, Tabular file ->
           Sequences.Tabular.iter ~linter:!linter_f ~verbose:!Parameters.verbose
             (fun i tag seq qua ->
-              if Str.string_match regexp tag 0 then
+              if Tools.Str.matches regexp tag then
                 output_fast_record i 0 { tag; seq; qua })
             (fun i tag_1 seq_1 qua_1 tag_2 seq_2 qua_2 ->
-              if Str.string_match regexp tag_1 0 || Str.string_match regexp tag_2 0 then begin
+              if Tools.Str.matches regexp tag_1 || Tools.Str.matches regexp tag_2 then begin
                 output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = qua_1 };
                 output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = qua_2 }
               end)

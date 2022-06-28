@@ -41,14 +41,19 @@ let add_to_kmer_counter counter hash occs =
   with Not_found ->
     IntHashtbl.add counter hash (ref occs)
 
-module ReadFiles:
-  sig
-    type t
-    type file_t =
+module FileType =
+  struct
+    type t =
       | FASTA of string
       | SingleEndFASTQ of string
       | PairedEndFASTQ of string * string
+      | InterleavedFASTQ of string
       | Tabular of string
+  end
+
+module ReadFiles:
+  sig
+    type t
     type read_t = {
       tag: string;
       seq: string;
@@ -56,22 +61,17 @@ module ReadFiles:
     }
     val empty: t
     val length: t -> int
-    val add_from_files: t -> file_t -> t
+    val add_from_files: t -> FileType.t -> t
     (* Arguments to the function are read id, segment id, payload *)
     val iter: ?linter:(string -> string) -> ?verbose:bool -> (int -> int -> read_t -> unit) -> t -> unit
   end
 = struct
-    type file_t =
-      | FASTA of string
-      | SingleEndFASTQ of string
-      | PairedEndFASTQ of string * string
-      | Tabular of string
     type read_t = {
       tag: string;
       seq: string;
       qua: string (* Reads from FASTA files have empty qualities *)
     }
-    type t = file_t array
+    type t = FileType.t array
     let empty = [||]
     let length = Array.length
     let add_from_files files file =
@@ -79,7 +79,7 @@ module ReadFiles:
     let iter ?(linter = Sequences.Lint.dnaize ~keep_dashes:false) ?(verbose = false) f =
       Array.iter
         (function
-          | FASTA file ->
+          | FileType.FASTA file ->
             Sequences.FASTA.iter ~linter ~verbose
               (fun i tag seq ->
                 f i 0 { tag; seq; qua = "" })
@@ -95,6 +95,12 @@ module ReadFiles:
                 f i 0 { tag = tag1; seq = seq1; qua = qua1 };
                 f i 1 { tag = tag2; seq = seq2; qua = qua2 })
               file1 file2
+          | InterleavedFASTQ file ->
+            Sequences.FASTQ.iter_il ~linter ~verbose
+              (fun i tag1 seq1 qua1 tag2 seq2 qua2 ->
+                f i 0 { tag = tag1; seq = seq1; qua = qua1 };
+                f i 1 { tag = tag2; seq = seq2; qua = qua2 })
+              file
           | Tabular file ->
             Sequences.Tabular.iter ~linter ~verbose
               (fun i tag seq qua ->
@@ -108,11 +114,6 @@ module ReadFiles:
 module ReadStore:
   sig
     type t
-    type file_t =
-      | FASTA of string
-      | SingleEndFASTQ of string
-      | PairedEndFASTQ of string * string
-      | Tabular of string
     type read_t = {
       tag: string;
       seq: string;
@@ -125,7 +126,7 @@ module ReadStore:
     type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
     val empty: t
     val length: t -> int
-    val add_from_files: ?linter:(string -> string) -> ?verbose:bool -> t -> file_t -> t
+    val add_from_files: ?linter:(string -> string) -> ?verbose:bool -> t -> FileType.t -> t
     (* Arguments to the function are store, optional filter (can be empty), name of output prefix
         (output reads can be FASTA and/or FASTQ SE and/or FASTQ PE) *)
     val to_fast: ?verbose:bool -> t -> filter_t -> string -> unit
@@ -135,11 +136,6 @@ module ReadStore:
     val iter: (int -> int -> read_t -> unit) -> t -> unit
   end
 = struct
-    type file_t =
-      | FASTA of string
-      | SingleEndFASTQ of string
-      | PairedEndFASTQ of string * string
-      | Tabular of string
     type read_t = {
       tag: string;
       seq: string;
@@ -170,7 +166,7 @@ module ReadStore:
     let add_from_files ?(linter = Sequences.Lint.dnaize ~keep_dashes:false) ?(verbose = false) orig file =
       let res = ref [] in
       begin match file with
-      | FASTA file ->
+      | FileType.FASTA file ->
         Sequences.FASTA.iter ~linter ~verbose
           (fun _ tag seq ->
             SingleEndRead { tag; seq; qua = "" } |> Tools.List.accum res)
@@ -186,6 +182,12 @@ module ReadStore:
             PairedEndRead ({ tag = tag1; seq = seq1; qua = qua1 }, { tag = tag2; seq = seq2; qua = qua2 })
               |> Tools.List.accum res)
           file1 file2
+      | InterleavedFASTQ file ->
+        Sequences.FASTQ.iter_il ~linter ~verbose
+          (fun _ tag1 seq1 qua1 tag2 seq2 qua2 ->
+            PairedEndRead ({ tag = tag1; seq = seq1; qua = qua1 }, { tag = tag2; seq = seq2; qua = qua2 })
+              |> Tools.List.accum res)
+          file
       | Tabular file ->
         Sequences.Tabular.iter ~linter ~verbose
           (fun _ tag seq qua ->

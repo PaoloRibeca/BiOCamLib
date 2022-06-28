@@ -218,6 +218,9 @@ module FASTQ:
     val iter_se: ?linter:(string -> string) -> ?verbose:bool -> (int -> string -> string -> string -> unit) -> string -> unit
     val iter_pe: ?linter:(string -> string) -> ?verbose:bool ->
       (int -> string -> string -> string -> string -> string -> string -> unit) -> string -> string -> unit
+    (* Interleaved file *)
+    val iter_il: ?linter:(string -> string) -> ?verbose:bool ->
+      (int -> string -> string -> string -> string -> string -> string -> unit) -> string -> unit
   end
 = struct
     let iter_se ?(linter = Lint.dnaize ~keep_dashes:false) ?(verbose = false) f file =
@@ -254,11 +257,11 @@ module FASTQ:
           let seq2 = input_line input2 in
           let tmp2 = input_line input2 in
           let qua2 = input_line input2 in
-          read := !read + 4;
+          read := !read + 8;
           if tag1.[0] <> '@' || tmp1.[0] <> '+' || tag2.[0] <> '@' || tmp2.[0] <> '+' then
             Printf.sprintf "(%s): On line %d: Malformed FASTQ file(s) '%s' and/or '%s'"
               __FUNCTION__ !read file1 file2 |> failwith;
-          f (!read / 4)
+          f (!read / 8)
             (String.sub tag1 1 (String.length tag1 - 1)) (linter seq1) qua1
             (String.sub tag2 1 (String.length tag2 - 1)) (linter seq2) qua2
         done
@@ -266,6 +269,32 @@ module FASTQ:
       end;
       close_in input1;
       close_in input2;
+      if verbose then
+        Printf.eprintf " done.\n%!"
+    let iter_il ?(linter = Lint.dnaize ~keep_dashes:false) ?(verbose = false) f file =
+      let read = ref 0 and input = open_in file in
+      if verbose then
+        Printf.eprintf "(%s): Reading interleaved PE FASTQ file '%s'...%!" __FUNCTION__ file;
+      begin try
+        while true do
+          let tag1 = input_line input in
+          let seq1 = input_line input in
+          let tmp1 = input_line input in
+          let qua1 = input_line input in
+          let tag2 = input_line input in
+          let seq2 = input_line input in
+          let tmp2 = input_line input in
+          let qua2 = input_line input in
+          read := !read + 8;
+          if tag1.[0] <> '@' || tmp1.[0] <> '+' || tag2.[0] <> '@' || tmp2.[0] <> '+' then
+            Printf.sprintf "(%s): On line %d: Malformed FASTQ file '%s'" __FUNCTION__ !read file |> failwith;
+          f (!read / 8)
+            (String.sub tag1 1 (String.length tag1 - 1)) (linter seq1) qua1
+            (String.sub tag2 1 (String.length tag2 - 1)) (linter seq2) qua2
+        done
+      with End_of_file -> ()
+      end;
+      close_in input;
       if verbose then
         Printf.eprintf " done.\n%!"
   end
