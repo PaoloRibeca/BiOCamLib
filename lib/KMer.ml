@@ -230,7 +230,7 @@ module ReadStore:
               print_fastq_record_filtered filter.{i} output2.(0) segm1;
               print_fastq_record_filtered filter.{i} output2.(1) segm2)
         else
-          (fun i -> function
+          (fun _ -> function
             | SingleEndRead segm ->
               if segm.qua = "" then
                 Printf.fprintf output0 ">%s\n%s\n" segm.tag segm.seq
@@ -268,7 +268,7 @@ module ReadStore:
               Printf.fprintf output "%d__%s\t%s\t%s\t%d__%s\t%s\t%s\n"
                 filter.{i} segm1.tag segm1.seq segm1.qua filter.{i} segm2.tag segm2.seq segm2.qua)
         else
-          (fun i -> function
+          (fun _ -> function
             | SingleEndRead segm ->
               if segm.qua = "" then
                 Printf.fprintf output "%s\t%s\n" segm.tag segm.seq
