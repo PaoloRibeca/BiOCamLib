@@ -13,14 +13,14 @@
 
 (license LICENSE)
 
-(documentation https://url/to/documentation)
+(documentation https://github.com/PaoloRibeca/BiOCamLib#readme)
 
 (package
  (name BiOCamLib)
- (synopsis "A short synopsis")
- (description "A longer description")
+ (synopsis "A foundational OCaml library for bioinformatics")
+ (description "The OCaml foundations upon which a number of the bioinformatics tools I developed are built")
  (depends ocaml dune)
  (tags
-  (topics "to describe" your project)))
+  (topics bioinformatics OCaml)))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/dune-files.html#dune-project
