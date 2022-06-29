@@ -77,7 +77,7 @@ let _ =
       (fun _ -> SetWorkingMode Compact |> Tools.List.accum Parameters.program);
     [ "expand"; "-e"; "--expand" ],
       None,
-      [ "split each tab-separated line into a FASTA/FASTQ record" ],
+      [ "split each tab-separated line into one or more FASTA/FASTQ records" ],
       TA.Optional,
       (fun _ -> SetWorkingMode Expand |> Tools.List.accum Parameters.program);
     [ "revcom"; "-r"; "--revcom" ],
@@ -162,16 +162,16 @@ let _ =
       [ "set the name of the output file.";
         "Files are kept open, and it is possible to switch between them";
         " by repeatedly using this option.";
-        "Use <stdout> for standard output" ],
-      TA.Default (fun () -> "<stdout>"),
+        "Use '/dev/stdout' for standard output" ],
+      TA.Default (fun () -> "/dev/stdout"),
       (fun _ -> SetOutput (TA.get_parameter ()) |> Tools.List.accum Parameters.program);
     [ "-O"; "--paired-end-output" ],
       Some "<output_file_name_1> <output_file_name_2>",
       [ "set the names of paired-end FASTQ output files.";
         "Files are kept open, and it is possible to switch between them";
         " by repeatedly using this option.";
-        "Use <stdout> for standard output" ],
-      TA.Default (fun () -> "<stdout>"),
+        "Use '/dev/stdout' for standard output" ],
+      TA.Default (fun () -> "/dev/stdout /dev/stdout"),
       (fun _ ->
         let output_1 = TA.get_parameter () in
         let output_2 = TA.get_parameter () in
@@ -205,7 +205,7 @@ let _ =
   ];
   let working_mode = ref Compact
   and linter = ref None and linter_keep_dashes = ref false and linter_f = ref Sequences.Lint.none
-  and outputs = StringMap.singleton "<stdout>" stdout |> ref in
+  and outputs = StringMap.singleton "/dev/stdout" stdout |> ref in
   let [@warning "-5"] set_linter_f () =
     match !linter with
     | None -> linter_f := Sequences.Lint.none
@@ -266,7 +266,7 @@ let _ =
       output_char output '\t';
       output_string output qua
     end;
-    if pe && segm = 0 then
+    if pe && !output_1 = !output_2 && segm = 0 then
       output_char output '\t'
     else begin
       output_char output '\n';
@@ -295,7 +295,7 @@ let _ =
         set_linter_f ()
       | ProcessInput input ->
         begin match !working_mode, input with
-        | Compact, PairedEndFASTQ _ | Compact, InterleavedFASTQ _ ->
+        | Compact, PairedEndFASTQ _ | Compact, InterleavedFASTQ _ | Compact, Tabular _ ->
           KMer.ReadFiles.add_from_files KMer.ReadFiles.empty input |>
             KMer.ReadFiles.iter ~linter:!linter_f ~verbose:!Parameters.verbose (output_tabular_record ~pe:true)
         | Compact, _ ->
