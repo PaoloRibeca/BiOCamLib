@@ -5,6 +5,10 @@ if [ -z "$PROFILE" ]; then
   PROFILE="dev"
 fi
 
+if [ "$PROFILE" = "release" ]; then
+  rm -rf _build
+fi
+
 dune build --profile="$PROFILE" bin/Parallel.exe
 dune build --profile="$PROFILE" bin/FASTools.exe
 
