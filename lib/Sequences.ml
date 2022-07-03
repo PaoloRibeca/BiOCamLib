@@ -134,11 +134,13 @@ module FASTA:
       try
         while true do
           let line = input_line file in
-          if line.[0] = '>' then begin
-            process_current ();
-            current := String.sub line 1 (String.length line - 1)
-          end else
-            linter line |> Buffer.add_string seq
+          if line <> "" then begin
+            if line.[0] = '>' then begin
+              process_current ();
+              current := String.sub line 1 (String.length line - 1)
+            end else
+              linter line |> Buffer.add_string seq
+          end
         done
       with End_of_file ->
         process_current ();
