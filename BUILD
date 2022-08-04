@@ -1,5 +1,7 @@
 #!/bin/sh
 
+set -e
+
 PROFILE="$1"
 if [ -z "$PROFILE" ]; then
   PROFILE="dev"
