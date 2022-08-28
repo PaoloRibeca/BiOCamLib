@@ -314,36 +314,36 @@ module ProteinEncodingHash (K: IntParameter):
       (* 0b--..--11..1100000 *)
       and mask = 1 lsl (5 * k) - 32 in
       let red_len = len - 1 in
-    (* This function is invoked to compute the first hash
-        and start processing from a given position *)
-    let rec accumulate_hashes pos =
-      let shift old_hash pos =
-        let encoded =
-          match s.[pos] with
-          | 'A' | 'a' -> 0
-          | 'C' | 'c' -> 1
-          | 'D' | 'd' -> 2
-          | 'E' | 'e' -> 3
-          | 'F' | 'f' -> 4
-          | 'G' | 'g' -> 5
-          | 'H' | 'h' -> 6
-          | 'I' | 'i' -> 7
-          | 'K' | 'k' -> 8
-          | 'L' | 'l' -> 9
-          | 'M' | 'm' -> 10
-          | 'N' | 'n' -> 11
-          | 'O' | 'o' -> 12
-          | 'P' | 'p' -> 13
-          | 'Q' | 'q' -> 14
-          | 'R' | 'r' -> 15
-          | 'S' | 's' -> 16
-          | 'T' | 't' -> 17
-          | 'U' | 'u' -> 18
-          | 'V' | 'v' -> 19
-          | 'W' | 'w' -> 20
-          | 'Y' | 'y' -> 21
-          | _ -> raise_notrace (Exit pos) in
-        ((old_hash lsl 5) land mask) lor encoded in
+      (* This function is invoked to compute the first hash
+          and start processing from a given position *)
+      let rec accumulate_hashes pos =
+        let shift old_hash pos =
+          let encoded =
+            match s.[pos] with
+            | 'A' | 'a' -> 0
+            | 'C' | 'c' -> 1
+            | 'D' | 'd' -> 2
+            | 'E' | 'e' -> 3
+            | 'F' | 'f' -> 4
+            | 'G' | 'g' -> 5
+            | 'H' | 'h' -> 6
+            | 'I' | 'i' -> 7
+            | 'K' | 'k' -> 8
+            | 'L' | 'l' -> 9
+            | 'M' | 'm' -> 10
+            | 'N' | 'n' -> 11
+            | 'O' | 'o' -> 12
+            | 'P' | 'p' -> 13
+            | 'Q' | 'q' -> 14
+            | 'R' | 'r' -> 15
+            | 'S' | 's' -> 16
+            | 'T' | 't' -> 17
+            | 'U' | 'u' -> 18
+            | 'V' | 'v' -> 19
+            | 'W' | 'w' -> 20
+            | 'Y' | 'y' -> 21
+            | _ -> raise_notrace (Exit pos) in
+          ((old_hash lsl 5) land mask) lor encoded in
         (* There must be at least k letters left *)
         if len - pos < k then
           ()
@@ -429,5 +429,22 @@ module DNAEncodingHash (K: IntParameter):
       IntHashtbl.clear filter;
       accumulate_hashes 0;
       IntHashtbl.iter (fun hash cntr -> f hash !cntr) filter
+(*
+    let decode hash =
+      let res = Bytes.create k in
+      let red_k = k - 1 and rem = ref hash in
+      for i = 0 to red_k do
+        res.[red_k - i] <-
+          begin match !rem land 3 with
+          | 0 -> 'A'
+          | 1 -> 'C'
+          | 2 -> 'G'
+          | 3 -> 'T'
+          | _ -> assert false
+          end;
+        rem := !rem lsr 2
+      done;
+      Bytes.to_string res
+*)
   end
 

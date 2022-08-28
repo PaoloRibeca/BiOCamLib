@@ -29,8 +29,9 @@ type linter_t =
 and working_mode_t =
   | Compact
   | Expand
-  | RevCom
   | Match of Str.regexp
+  | RevCom
+  | UnQuals
 and to_do_t =
   | SetWorkingMode of working_mode_t
   | SetLinter of linter_t
@@ -56,7 +57,7 @@ module Parameters =
     let verbose = ref Defaults.verbose
   end
 
-let version = "0.3"
+let version = "0.4"
 
 let header =
   Printf.sprintf begin
@@ -80,17 +81,22 @@ let _ =
       [ "split each tab-separated line into one or more FASTA/FASTQ records" ],
       TA.Optional,
       (fun _ -> SetWorkingMode Expand |> Tools.List.accum Parameters.program);
-    [ "revcom"; "-r"; "--revcom" ],
-      None,
-      [ "reverse-complement sequences in FASTA/FASTQ records or tab-separated lines" ],
-      TA.Optional,
-      (fun _ -> SetWorkingMode RevCom |> Tools.List.accum Parameters.program);
     [ "match"; "-m"; "--match" ],
       Some "<regexp>",
       [ "select matching sequence names in FASTA/FASTQ records or tab-separated lines.";
         "For paired-end files, the pair matches when at least one name matches" ],
       TA.Optional,
       (fun _ -> SetWorkingMode (Match (TA.get_parameter () |> Str.regexp)) |> Tools.List.accum Parameters.program);
+    [ "revcom"; "-r"; "--revcom" ],
+      None,
+      [ "reverse-complement sequences in FASTA/FASTQ records or tab-separated lines" ],
+      TA.Optional,
+      (fun _ -> SetWorkingMode RevCom |> Tools.List.accum Parameters.program);
+    [ "dropq"; "-d"; "--dropq" ],
+      None,
+      [ "drop qualities in FASTA/FASTQ records or tab-separated lines" ],
+      TA.Optional,
+      (fun _ -> SetWorkingMode UnQuals |> Tools.List.accum Parameters.program);
     TA.make_separator_multiline [ "Input/Output."; "Executed delayed in order of specification, default='-F'." ];
     [ "-f"; "--fasta" ],
       Some "<fasta_file_name>",
@@ -304,15 +310,6 @@ let _ =
         | Expand, _ ->
           KMer.ReadFiles.add_from_files KMer.ReadFiles.empty input |>
             KMer.ReadFiles.iter ~linter:!linter_f ~verbose:!Parameters.verbose output_fast_record
-        | RevCom, FASTA _
-        | RevCom, SingleEndFASTQ _
-        | RevCom, PairedEndFASTQ _
-        | RevCom, InterleavedFASTQ _ ->
-          KMer.ReadFiles.add_from_files KMer.ReadFiles.empty input |>
-            KMer.ReadFiles.iter ~linter:!linter_f ~verbose:!Parameters.verbose (output_fast_record ~rc:true)
-        | RevCom, Tabular _ ->
-          KMer.ReadFiles.add_from_files KMer.ReadFiles.empty input |>
-            KMer.ReadFiles.iter ~linter:!linter_f ~verbose:!Parameters.verbose (output_tabular_record ~rc:true)
         | Match regexp, FASTA _
         | Match regexp, SingleEndFASTQ _ ->
           KMer.ReadFiles.add_from_files KMer.ReadFiles.empty input |>
@@ -346,6 +343,41 @@ let _ =
                 output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = qua_1 };
                 output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = qua_2 }
               end)
+            file
+        | RevCom, FASTA _
+        | RevCom, SingleEndFASTQ _
+        | RevCom, PairedEndFASTQ _
+        | RevCom, InterleavedFASTQ _ ->
+          KMer.ReadFiles.add_from_files KMer.ReadFiles.empty input |>
+            KMer.ReadFiles.iter ~linter:!linter_f ~verbose:!Parameters.verbose (output_fast_record ~rc:true)
+        | RevCom, Tabular _ ->
+          KMer.ReadFiles.add_from_files KMer.ReadFiles.empty input |>
+            KMer.ReadFiles.iter ~linter:!linter_f ~verbose:!Parameters.verbose (output_tabular_record ~rc:true)
+        | UnQuals, FASTA _
+        | UnQuals, SingleEndFASTQ _ ->
+          KMer.ReadFiles.add_from_files KMer.ReadFiles.empty input |>
+            KMer.ReadFiles.iter ~linter:!linter_f ~verbose:!Parameters.verbose
+              (fun i segm record ->
+                output_fast_record i segm { record with qua = "" })
+        | UnQuals, PairedEndFASTQ (file_1, file_2) ->
+          Sequences.FASTQ.iter_pe ~linter:!linter_f ~verbose:!Parameters.verbose
+            (fun i tag_1 seq_1 _ tag_2 seq_2 _ ->
+              output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = "" };
+              output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = "" })
+            file_1 file_2
+        | UnQuals, InterleavedFASTQ file ->
+          Sequences.FASTQ.iter_il ~linter:!linter_f ~verbose:!Parameters.verbose
+            (fun i tag_1 seq_1 _ tag_2 seq_2 _ ->
+              output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = "" };
+              output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = "" })
+            file
+        | UnQuals, Tabular file ->
+          Sequences.Tabular.iter ~linter:!linter_f ~verbose:!Parameters.verbose
+            (fun i tag seq _ ->
+              output_fast_record i 0 { tag; seq; qua = "" })
+            (fun i tag_1 seq_1 _ tag_2 seq_2 _ ->
+              output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = "" };
+              output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = "" })
             file
         end
       | SetOutput fname ->
