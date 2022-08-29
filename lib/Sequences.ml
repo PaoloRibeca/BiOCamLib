@@ -351,7 +351,8 @@ module Types =
     let strand_of_string = function
       | "F" | "f" | "+" | "forward" | "Forward" -> forward
       | "R" | "r" | "-" | "reverse" | "Reverse" -> reverse
-      | s -> failwith ("GenomeTypes.strand_of_string: Unrecognized strand '" ^ s ^ "'")
+      | s ->
+        Printf.sprintf "(%s): Unrecognized strand '%s'" __FUNCTION__ s |> failwith
     let string_of_strand = function
       | Forward _ -> "+"
       | Reverse _ -> "-"
@@ -387,7 +388,8 @@ module Types =
         if pos < 0 then
           raise Exit;
         { name = stranded_of_split str fields.(0); position = pos }
-      with _ -> failwith "Sequences.Types.stranded_pointer_of_string: Wrong syntax"
+      with _ ->
+        Printf.sprintf "(%s): Syntax error" __FUNCTION__ |> failwith
     (*
     module StrandedPointerSet =
       Set.Make (Tools.MakeComparable (struct type t = stranded_pointer_t end))
@@ -429,7 +431,7 @@ module Junctions:
           let line = Tools.Split.on_char_as_array '\t' (input_line introns) in
           incr cntr;
           let error what =
-            Printf.sprintf "Sequences.Introns.parse: On line %d: %s\n%!" !cntr what |> failwith in
+            Printf.sprintf "(%s): On line %d: %s\n%!" __FUNCTION__ !cntr what |> failwith in
           (* Format is: <name_1> <str_1> <pos_1> <name_2> <str_2> <pos_2> [<cov>],
               or:       <name> <str> <pos_1> <pos_2> [<cov>] *)
           let stranded_name, pos_don, pos_acc, cov =
@@ -525,7 +527,8 @@ module Translation:
       | "29" | "Table29" | "Table_29" -> Table_29
       | "30" | "Table30" | "Table_30" -> Table_30
       | "31" | "Table31" | "Table_31" -> Table_31
-      | w -> failwith ("Invalid translation table '" ^ w ^ "'")
+      | w ->
+        Printf.sprintf "(%s): Invalid translation table '%s'" __FUNCTION__ w |> failwith
     let [@warning "-32"] describe = function
       | Table_1 -> "Standard"
       | Table_2 -> "VertebrateMitochondrial"
@@ -575,7 +578,7 @@ module Translation:
             | _ -> ()
             end
           | _ ->
-            failwith "Translation table not yet implemented, sorry")
+            Printf.sprintf "(%s): Translation table not yet implemented, sorry" __FUNCTION__ |> failwith)
         s;
       !starts
     let get_stops ?(frames = [0; 1; 2]) table s =
@@ -721,7 +724,8 @@ Printf.eprintf "<<<Start=%d\n%!" start;
                         there can be some junk in the assembly *)
                     | _ -> 'X' (*assert false*)
                     end
-                  | _ -> failwith "Translation table not yet implemented"
+                  | _ ->
+                    Printf.sprintf "(%s): Translation table not yet implemented, sorry" __FUNCTION__ |> failwith
                   end;
 (*
 Printf.eprintf "%d>>>%s\n%!" pos (Buffer.contents buf);
@@ -780,10 +784,8 @@ module Reference:
                   let table = Translation.of_string line.(1) in
                   line.(0), table
                 with _ ->
-                  failwith begin
-                    "Reference.add_from_fasta: On line " ^ string_of_int !cntr ^
-                    ": Incorrect translation table file syntax"
-                  end in
+                  Printf.sprintf "(%s): On line %d: Incorrect translation table file syntax" __FUNCTION__ !cntr
+                    |> failwith in
               res := StringMap.add name table !res
             done
           with End_of_file -> ()
@@ -800,9 +802,7 @@ module Reference:
               try
                 StringMap.find !name tables
               with _ ->
-                failwith begin
-                  "Reference.add_from_fasta: Unknown translation table for sequence '" ^ !name ^ "'"
-                end in
+                Printf.sprintf "(%s): Unknown translation table for sequence '%s'" __FUNCTION__ !name |> failwith in
           let seq = Buffer.contents seq in
           res := StrandedStringMap.add (Types.Forward !name) (seq, table) !res;
           res := StrandedStringMap.add (Types.Reverse !name) (Lint.rc seq, table) !res
@@ -833,7 +833,7 @@ module Reference:
         StrandedStringMap.find str_name obj
       with Not_found ->
         let _, name = Types.split_of_stranded str_name in
-        failwith ("Sequences.Reference.find: Unknown sequence '" ^ name ^ "'")
+        Printf.sprintf "(%s): Unknown sequence '%s'" __FUNCTION__ name |> failwith
     let length obj str_name =
         let seq, _ = find obj str_name in
         String.length seq
@@ -842,11 +842,9 @@ module Reference:
       let seq, _ = find obj name in
       let hi = lo + len in
       if lo < 0 then
-        failwith("Sequences.Reference.get_sequence: Low coordinate '" ^ string_of_int lo ^
-                 "' is out of range");
+        Printf.sprintf "(%s): Low coordinate '%d' is out of range" __FUNCTION__ lo |> failwith;
       if hi > String.length seq then
-        failwith("Sequences.Reference.get_sequence: High coordinate '" ^ string_of_int hi ^
-                 "' is out of range");
+        Printf.sprintf "(%s): High coordinate '%d' is out of range" __FUNCTION__ hi |> failwith;
       (*let lo = max 0 lo and hi = min hi (String.length seq) in
       let len = hi - lo in*)
       if len = 0 then
