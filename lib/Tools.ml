@@ -324,6 +324,14 @@ module Multimap (OKey:Map.OrderedType) (OVal:Set.OrderedType) =
           KeyMap.add k (ValSet.remove v s) (KeyMap.remove k om)
       with Not_found ->
         om
+    let cardinal_set = KeyMap.cardinal
+    let cardinal om =
+      let res = ref 0 in
+      KeyMap.iter
+        (fun _ s ->
+          res := !res + ValSet.cardinal s)
+        om;
+      !res
     let iter_set = KeyMap.iter
     let iteri_set f =
       let i = ref 0 in
