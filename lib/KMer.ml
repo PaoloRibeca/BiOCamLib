@@ -287,10 +287,13 @@ module type KMerHash =
   sig
     type t
     val k: int
+    val encode: string -> t
+    val decode: t -> string
     (* Iterates a function over all hashes that can be extracted from a string
-        according to the specific method being used *)
+        according to the specific method being used (for instance, in the case of DNA
+        iteration happens both on the string and its RC).
+       The second argument to the function is the frequency of the k-mer *)
     val iter: (t -> int -> unit) -> string -> unit
-    (*val decode: t -> string*)
   end
 
 module type IntParameter =
@@ -306,6 +309,78 @@ module ProteinEncodingHash (K: IntParameter):
       if K.value > 12 then
         Printf.sprintf "(%s): Invalid argument (k must be <= 12, found %d)" __FUNCTION__ K.value |> failwith;
       K.value
+    let encode_char err_f = function
+      | 'A' | 'a' -> 0
+      | 'C' | 'c' -> 1
+      | 'D' | 'd' -> 2
+      | 'E' | 'e' -> 3
+      | 'F' | 'f' -> 4
+      | 'G' | 'g' -> 5
+      | 'H' | 'h' -> 6
+      | 'I' | 'i' -> 7
+      | 'K' | 'k' -> 8
+      | 'L' | 'l' -> 9
+      | 'M' | 'm' -> 10
+      | 'N' | 'n' -> 11
+      | 'O' | 'o' -> 12
+      | 'P' | 'p' -> 13
+      | 'Q' | 'q' -> 14
+      | 'R' | 'r' -> 15
+      | 'S' | 's' -> 16
+      | 'T' | 't' -> 17
+      | 'U' | 'u' -> 18
+      | 'V' | 'v' -> 19
+      | 'W' | 'w' -> 20
+      | 'Y' | 'y' -> 21
+      | w -> err_f w
+    let encode s =
+      if String.length s <> k then
+        Printf.sprintf "(%s): Invalid argument (string length must be k=%d, found %d)" __FUNCTION__ k (String.length s)
+          |> failwith;
+      let red_k = k - 1 and res = ref 0 in
+      for i = 0 to red_k do
+        res :=
+          !res lsl 5 +
+          encode_char begin
+            fun w ->
+              Printf.sprintf "(%s): Invalid argument (expected character in [ACGTacgt], found '%c')" __FUNCTION__ w
+                |> failwith
+          end s.[i]
+      done;
+      !res
+    let decode hash =
+      let res = Bytes.create k in
+      let red_k = k - 1 and rem = ref hash in
+      for i = 0 to red_k do
+        res.Tools.Bytes.@(red_k - i) <-
+          begin match !rem land 31 with
+          | 0 -> 'A'
+          | 1 -> 'C'
+          | 2 -> 'D'
+          | 3 -> 'E'
+          | 4 -> 'F'
+          | 5 -> 'G'
+          | 6 -> 'H'
+          | 7 -> 'I'
+          | 8 -> 'K'
+          | 9 -> 'L'
+          | 10 -> 'M'
+          | 11 -> 'N'
+          | 12 -> 'O'
+          | 13 -> 'P'
+          | 14 -> 'Q'
+          | 15 -> 'R'
+          | 16 -> 'S'
+          | 17 -> 'T'
+          | 18 -> 'U'
+          | 19 -> 'V'
+          | 20 -> 'W'
+          | 21 -> 'Y'
+          | _ -> assert false
+          end;
+        rem := !rem lsr 5
+      done;
+      Bytes.to_string res
     (* This is not thread-safe, but hopefully more optimised than placing the filter into iter() *)
     let filter = IntHashtbl.create 1024
     exception Exit of int
@@ -318,31 +393,7 @@ module ProteinEncodingHash (K: IntParameter):
           and start processing from a given position *)
       let rec accumulate_hashes pos =
         let shift old_hash pos =
-          let encoded =
-            match s.[pos] with
-            | 'A' | 'a' -> 0
-            | 'C' | 'c' -> 1
-            | 'D' | 'd' -> 2
-            | 'E' | 'e' -> 3
-            | 'F' | 'f' -> 4
-            | 'G' | 'g' -> 5
-            | 'H' | 'h' -> 6
-            | 'I' | 'i' -> 7
-            | 'K' | 'k' -> 8
-            | 'L' | 'l' -> 9
-            | 'M' | 'm' -> 10
-            | 'N' | 'n' -> 11
-            | 'O' | 'o' -> 12
-            | 'P' | 'p' -> 13
-            | 'Q' | 'q' -> 14
-            | 'R' | 'r' -> 15
-            | 'S' | 's' -> 16
-            | 'T' | 't' -> 17
-            | 'U' | 'u' -> 18
-            | 'V' | 'v' -> 19
-            | 'W' | 'w' -> 20
-            | 'Y' | 'y' -> 21
-            | _ -> raise_notrace (Exit pos) in
+          let encoded = encode_char (fun _ -> raise_notrace (Exit pos)) s.[pos] in
           ((old_hash lsl 5) land mask) lor encoded in
         (* There must be at least k letters left *)
         if len - pos < k then
@@ -377,6 +428,40 @@ module DNAEncodingHash (K: IntParameter):
       if K.value > 30 then
         Printf.sprintf "(%s): Invalid argument (k must be <= 30, found %d)" __FUNCTION__ K.value |> failwith;
       K.value
+    let encode s =
+      if String.length s <> k then
+        Printf.sprintf "(%s): Invalid argument (string length must be k=%d, found %d)" __FUNCTION__ k (String.length s)
+          |> failwith;
+      let red_k = k - 1 and res = ref 0 in
+      for i = 0 to red_k do
+        res :=
+          !res lsl 2 + begin
+            match s.[i] with
+            | 'A' | 'a' -> 0
+            | 'C' | 'c' -> 1
+            | 'G' | 'g' -> 2
+            | 'T' | 't' -> 3
+            | w ->
+              Printf.sprintf "(%s): Invalid argument (expected character in [ACGTacgt], found '%c')" __FUNCTION__ w
+                |> failwith
+          end
+      done;
+      !res
+    let decode hash =
+      let res = Bytes.create k in
+      let red_k = k - 1 and rem = ref hash in
+      for i = 0 to red_k do
+        res.Tools.Bytes.@(red_k - i) <-
+          begin match !rem land 3 with
+          | 0 -> 'A'
+          | 1 -> 'C'
+          | 2 -> 'G'
+          | 3 -> 'T'
+          | _ -> assert false
+          end;
+        rem := !rem lsr 2
+      done;
+      Bytes.to_string res
     (* This is not thread-safe, but hopefully more optimised than placing the filter into iter() *)
     let filter = IntHashtbl.create 1024
     exception Exit of int
@@ -429,22 +514,5 @@ module DNAEncodingHash (K: IntParameter):
       IntHashtbl.clear filter;
       accumulate_hashes 0;
       IntHashtbl.iter (fun hash cntr -> f hash !cntr) filter
-(*
-    let decode hash =
-      let res = Bytes.create k in
-      let red_k = k - 1 and rem = ref hash in
-      for i = 0 to red_k do
-        res.[red_k - i] <-
-          begin match !rem land 3 with
-          | 0 -> 'A'
-          | 1 -> 'C'
-          | 2 -> 'G'
-          | 3 -> 'T'
-          | _ -> assert false
-          end;
-        rem := !rem lsr 2
-      done;
-      Bytes.to_string res
-*)
   end
 

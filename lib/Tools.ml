@@ -54,6 +54,8 @@ module Float:
 module String:
   sig
     include module type of String
+    val ( ^ ): string -> string -> string
+    val ( .@() ): string -> int -> char
     val accum: string ref -> string -> unit
     val pluralize: ?plural:string -> one:'a -> string -> 'a -> string
     val pluralize_int : ?plural:string -> string -> int -> string
@@ -61,6 +63,8 @@ module String:
   end
 = struct
     include String
+    let ( ^ ) = Stdlib.( ^ )
+    let ( .@() ) = String.get
     let accum sr s = sr := !sr ^ s
     let pluralize (type a) ?(plural = "") ~(one:a) s n =
       if n = one then
@@ -71,6 +75,22 @@ module String:
         s ^ "s"
     let pluralize_int = pluralize ~one:1
     let pluralize_float = pluralize ~one:1.
+  end
+
+module Bytes:
+  sig
+    include module type of Bytes
+    val ( ^ ): bytes -> bytes -> bytes
+    val ( .@() ): bytes -> int -> char
+    val ( .@()<- ): bytes -> int -> char -> unit
+    val accum: bytes ref -> bytes -> unit
+  end
+= struct
+    include Bytes
+    let ( ^ ) = Bytes.cat
+    let ( .@() ) = Bytes.get
+    let ( .@()<- ) = Bytes.set
+    let accum br b = br := !br ^ b
   end
 
 module List:
@@ -531,93 +551,180 @@ module Split =
     let on_char_as_array c s = String.split_on_char c s |> Array.of_list
   end
 
-(* A general module type to unify numbers *)
-(* module type M = sig include module type of struct include Int end end *)
-module type Number =
+module Number:
   sig
-    type t
-    val zero: t
-    val one: t
-    val minus_one: t
-    val neg: t -> t
-    val add: t -> t -> t
-    val sub: t -> t -> t
-    val mul: t -> t -> t
-    val div: t -> t -> t
-    val rem: t -> t -> t
-    val succ: t -> t
-    val pred: t -> t
-    val abs: t -> t
-    val equal: t -> t -> bool
-    val compare: t -> t -> int
-    val to_int: t -> int
-    val of_int: int -> t
-    val to_float: t -> float
-    val of_float: float -> t
-    val to_string: t -> string
-    val of_string: string -> t
-    val of_string_opt: string -> t option
+    (* A general module type to unify numbers *)
+    (* module type M = sig include module type of struct include Int end end *)
+    module type BasicType =
+      sig
+        type t
+        val zero: t
+        val one: t
+        val minus_one: t
+        val neg: t -> t
+        val add: t -> t -> t
+        val sub: t -> t -> t
+        val mul: t -> t -> t
+        val div: t -> t -> t
+        val rem: t -> t -> t
+        val succ: t -> t
+        val pred: t -> t
+        val abs: t -> t
+        val equal: t -> t -> bool
+        val compare: t -> t -> int
+        val to_int: t -> int
+        val of_int: int -> t
+        val to_float: t -> float
+        val of_float: float -> t
+        val to_string: t -> string
+        val of_string: string -> t
+        val of_string_opt: string -> t option
+      end
+    module type Type =
+      sig
+        include BasicType
+        val ( .-() ): t -> t
+        val ( + ): t -> t -> t
+        val ( - ): t -> t -> t
+        val ( * ): t -> t -> t
+        val ( / ): t -> t -> t
+        val ( % ): t -> t -> t
+        val incr: t ref -> unit
+        val ( .++() ): t ref -> unit
+        val decr: t ref -> unit
+        val ( .--() ): t ref -> unit
+        val ( = ): t -> t -> bool
+        val ( == ): t -> t -> int
+      end
+    module Make: functor (N: BasicType) -> Type with type t = N.t
+  end
+= struct
+    module type BasicType =
+      sig
+        type t
+        val zero: t
+        val one: t
+        val minus_one: t
+        val neg: t -> t
+        val add: t -> t -> t
+        val sub: t -> t -> t
+        val mul: t -> t -> t
+        val div: t -> t -> t
+        val rem: t -> t -> t
+        val succ: t -> t
+        val pred: t -> t
+        val abs: t -> t
+        val equal: t -> t -> bool
+        val compare: t -> t -> int
+        val to_int: t -> int
+        val of_int: int -> t
+        val to_float: t -> float
+        val of_float: float -> t
+        val to_string: t -> string
+        val of_string: string -> t
+        val of_string_opt: string -> t option
+      end
+    module type Type =
+      sig
+        include BasicType
+        val ( .-() ): t -> t
+        val ( + ): t -> t -> t
+        val ( - ): t -> t -> t
+        val ( * ): t -> t -> t
+        val ( / ): t -> t -> t
+        val ( % ): t -> t -> t
+        val incr: t ref -> unit
+        val ( .++() ): t ref -> unit
+        val decr: t ref -> unit
+        val ( .--() ): t ref -> unit
+        val ( = ): t -> t -> bool
+        val ( == ): t -> t -> int
+      end
+    module Make (N: BasicType): Type with type t = N.t =
+      struct
+        include N
+        let ( .-() ) = N.neg
+        let ( + ) = N.add
+        let ( - ) = N.sub
+        let ( * ) = N.mul
+        let ( / ) = N.div
+        let ( % ) = N.rem
+        let incr rn = rn := !rn + N.one
+        let ( .++() ) = incr
+        let decr rn = rn := !rn - N.one
+        let ( .--() ) = decr
+        let ( = ) = N.equal
+        let ( == ) = N.compare
+      end
   end
 
 (* Encapsulated vectors based on bigarrays *)
 module BA:
   sig
-    module type Type =
+    module type ScalarType =
       sig
-        include Number
+        include Number.Type
         type elt_t
         val elt: (t, elt_t) Bigarray.kind
       end
-    module type VectorType =
+    module type Type =
       sig
         module BA1 = Bigarray.Array1
-        module N: Type
+        module N: ScalarType
         type t
         val init: int -> N.t -> t
         val empty: t
         val length: t -> int
         val get: t -> int -> N.t
-        val ( .=() ): t -> int -> N.t
+        val ( .@() ): t -> int -> N.t
         val set: t -> int -> N.t -> unit
-        val ( .=()<- ): t -> int -> N.t -> unit
+        val ( .@()<- ): t -> int -> N.t -> unit
         val incr: t -> int -> unit
         val ( .+() ): t -> int -> unit
         val incr_by: t -> int -> N.t -> unit
         val ( .+()<- ): t -> int -> N.t -> unit
+        val decr: t -> int -> unit
+        val ( .-() ): t -> int -> unit
+        val decr_by: t -> int -> N.t -> unit
+        val ( .-()<- ): t -> int -> N.t -> unit
         val sub: t -> int -> int -> t
         val blit: t -> t -> unit
         val fill: t -> N.t -> unit
       end
-    module Vector: functor (T: Type) -> VectorType with type N.t = T.t
+    module Vector: functor (T: ScalarType) -> Type with type N.t = T.t
   end
 = struct
-    module type Type =
+    module type ScalarType =
       sig
-        include Number
+        include Number.Type
         type elt_t
         val elt: (t, elt_t) Bigarray.kind
       end
-    module type VectorType =
+    module type Type =
       sig
         module BA1 = Bigarray.Array1
-        module N: Type
+        module N: ScalarType
         type t
         val init: int -> N.t -> t
         val empty: t
         val length: t -> int
         val get: t -> int -> N.t
-        val ( .=() ): t -> int -> N.t
+        val ( .@() ): t -> int -> N.t
         val set: t -> int -> N.t -> unit
-        val ( .=()<- ): t -> int -> N.t -> unit
+        val ( .@()<- ): t -> int -> N.t -> unit
         val incr: t -> int -> unit
         val ( .+() ): t -> int -> unit
         val incr_by: t -> int -> N.t -> unit
         val ( .+()<- ): t -> int -> N.t -> unit
+        val decr: t -> int -> unit
+        val ( .-() ): t -> int -> unit
+        val decr_by: t -> int -> N.t -> unit
+        val ( .-()<- ): t -> int -> N.t -> unit
         val sub: t -> int -> int -> t
         val blit: t -> t -> unit
         val fill: t -> N.t -> unit
       end
-    module Vector (T: Type) = (* This should work with float too *)
+    module Vector (T: ScalarType) = (* This should work with float too *)
       struct
         module BA1 = Bigarray.Array1
         module N = T
@@ -629,15 +736,21 @@ module BA:
         let empty = init 0 N.zero
         let length = BA1.dim
         let get = BA1.get
-        let ( .=() ) = BA1.get
+        let ( .@() ) = BA1.get
         let set = BA1.set
-        let ( .=()<- ) = BA1.set
+        let ( .@()<- ) = BA1.set
         let incr ba n =
           BA1.get ba n |> N.add N.one |> BA1.set ba n
         let ( .+() ) = incr
         let incr_by ba n v =
           BA1.get ba n |> N.add v |> BA1.set ba n
         let ( .+()<- ) = incr_by
+        let decr ba n =
+          N.sub (BA1.get ba n) N.one |> BA1.set ba n
+        let ( .-() ) = decr
+        let decr_by ba n v =
+          N.sub (BA1.get ba n) v |> BA1.set ba n
+        let ( .-()<- ) = decr_by
         let sub = BA1.sub
         let blit = BA1.blit
         let fill = BA1.fill
