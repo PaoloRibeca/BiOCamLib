@@ -25,7 +25,7 @@
 module SlidingWindow:
   sig
     type t
-    val make: int -> t
+    val make: string -> t
     val length: t -> int
     val add_char: t -> char -> char
     val contents: t -> string
@@ -35,8 +35,8 @@ module SlidingWindow:
       drum: Bytes.t;
       mutable index: int
     }
-    let make n = {
-      drum = Bytes.make n '\000';
+    let make s = {
+      drum = Bytes.of_string s;
       index = 0
     }
     let length w = Bytes.length w.drum
@@ -45,7 +45,9 @@ module SlidingWindow:
       Bytes.set w.drum w.index c;
       w.index <- (w.index + 1) mod (Bytes.length w.drum);
       res
-    let contents w = Bytes.to_string w.drum
+    let contents w =
+      let len = Bytes.length w.drum in
+      Bytes.sub_string w.drum w.index (len - w.index) ^ Bytes.sub_string w.drum 0 w.index
   end
 
 module IntComparable = struct type t = int let compare = (-) end
