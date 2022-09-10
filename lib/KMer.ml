@@ -22,6 +22,32 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 *)
 
+module SlidingWindow:
+  sig
+    type t
+    val make: int -> t
+    val length: t -> int
+    val add_char: t -> char -> char
+    val contents: t -> string
+  end
+= struct
+    type t = {
+      drum: Bytes.t;
+      mutable index: int
+    }
+    let make n = {
+      drum = Bytes.make n '\000';
+      index = 0
+    }
+    let length w = Bytes.length w.drum
+    let add_char w c =
+      let res = Bytes.get w.drum w.index in
+      Bytes.set w.drum w.index c;
+      w.index <- (w.index + 1) mod (Bytes.length w.drum);
+      res
+    let contents w = Bytes.to_string w.drum
+  end
+
 module IntComparable = struct type t = int let compare = (-) end
 
 module IntSet = Set.Make (IntComparable)
