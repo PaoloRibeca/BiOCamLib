@@ -787,6 +787,7 @@ module Argv:
     val get_parameter_float_pos: unit -> float
     val get_parameter_int_non_neg: unit -> int
     val get_parameter_float_non_neg: unit -> float
+    val get_parameter_int_percentage: unit -> int
     val get_parameter_float_fraction: unit -> float
     (* Consumes and returns all the parameters which are left on the command line *)
     val get_remaining_parameters: unit -> string array
@@ -853,6 +854,9 @@ module Argv:
     let get_parameter_float_non_neg =
       template_get "get_parameter_float_non_neg" "non-negative float"
       (template_filter get_parameter_float (fun x -> x >= 0.))
+    let get_parameter_int_percentage =
+      template_get "get_parameter_int_percentage" "integer between 0 and 100"
+      (template_filter get_parameter_int (fun x -> x >= 0 && x <= 100))
     let get_parameter_float_fraction =
       template_get "get_parameter_float_fraction" "float between 0 and 1"
       (template_filter get_parameter_float (fun x -> x >= 0. && x <= 1.))
