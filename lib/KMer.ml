@@ -371,7 +371,7 @@ module ProteinEncodingHash (K: IntParameter):
           !res lsl 5 +
           encode_char begin
             fun w ->
-              Printf.sprintf "(%s): Invalid argument (expected character in [ACGTacgt], found '%c')" __FUNCTION__ w
+              Printf.sprintf "(%s): Invalid argument (expected character in [ACDEFGHIKLMNOPQRSTUVWYacdefghiklmnopqrstuvwy], found '%c')" __FUNCTION__ w
                 |> failwith
           end s.[i]
       done;
