@@ -898,6 +898,7 @@ module Argv:
           if opts = [] && help = [] then
             error "parse" ("Malformed initializer for option #" ^ string_of_int i);
           if opts = [] then begin
+            (* Case of a separator *)
             accum_md "\n";
             List.iteri
               (fun i line ->
@@ -988,11 +989,15 @@ module Argv:
                   end;
                   accum_md ~escape:true help)
               else
+                (* Case of a separator *)
                 (fun i help ->
                   begin if i = 0 then
-                    " \027[4m" ^ help ^ "\027[0m\n"
+                    if help <> "" then
+                      " \027[4m" ^ help ^ "\027[0m\n"
+                    else
+                      ""
                   else
-                    "   \027[4m" ^ help ^ "\027[0m\n"
+                    " \027[4m| " ^ help ^ "\027[0m\n"
                   end |> accum_usage)
             end help;
             if opts <> [] && help <> [] then
