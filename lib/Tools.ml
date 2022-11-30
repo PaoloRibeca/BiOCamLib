@@ -902,12 +902,14 @@ module Argv:
             accum_md "\n";
             List.iteri
               (fun i line ->
-                if i = 0 then
-                  accum_md "**";
-                accum_md ~escape:true line;
-                if i = 0 then
-                  accum_md "**";
-                accum_md "\n")
+                if line <> "" then begin
+                  if i = 0 then
+                    accum_md "**";
+                  accum_md ~escape:true line;
+                  if i = 0 then
+                    accum_md "**";
+                  accum_md "\n"
+                end)
               help;
             (* Section headers require a new table *)
             need_table_header := true
