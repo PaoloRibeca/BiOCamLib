@@ -1,5 +1,5 @@
 (*
-    Tools.ml -- (c) 2015-2022 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    Tools.ml -- (c) 2015-2023 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     This file is part of BiOCamLib, the OCaml foundations upon which
     a number of the bioinformatics tools I developed are built.
@@ -377,6 +377,118 @@ module Multimap (OKey:Map.OrderedType) (OVal:Set.OrderedType) =
             s)
     let max_binding = KeyMap.max_binding
     let min_binding = KeyMap.min_binding
+  end
+
+module type TransitiveClosure_t =
+  sig
+    type element_t
+    type t
+    val empty: unit -> t
+    val add_one: t -> element_t -> t
+    val add_two: t -> element_t -> element_t -> t
+    val iter: (unit -> element_t -> unit) -> t -> unit
+  end
+module MakeTransitiveClosure (T: TypeContainer):
+  TransitiveClosure_t with type element_t := T.t
+= struct
+    type element_t = T.t
+    type class_t =
+      | Singleton of element_t
+      | Node of class_t * class_t
+    module ElementMap = Map.Make (MakeComparable (T))
+    type t = {
+      (* Each class has an associated unique numerical ID for fast comparison *)
+      elements_to_classes: (int * class_t) ElementMap.t;
+      ids_to_classes: class_t IntMap.t;
+      id: int
+    }
+    let rec iter_class f = function
+      | Singleton el -> f el
+      | Node (cl_l, cl_r) ->
+        iter_class f cl_l;
+        iter_class f cl_r
+    let empty () = {
+      elements_to_classes = ElementMap.empty;
+      ids_to_classes = IntMap.empty;
+      id = 0
+    }
+    let add_one tc el =
+      match ElementMap.find_opt el tc.elements_to_classes with
+      | None ->
+        (* The element is in its own separate equivalence class *)
+        let cl = Singleton el in
+        { elements_to_classes = ElementMap.add el (tc.id, cl) tc.elements_to_classes;
+          ids_to_classes = IntMap.add tc.id cl tc.ids_to_classes;
+          id = tc.id + 1 }
+      | Some _ ->
+        tc
+    (* Adds two equivalent elements *)
+    let add_two tc el_1 el_2 =
+      let tc = add_one tc el_1 in
+      let tc = add_one tc el_2 in
+      let id_1, cl_1 = ElementMap.find el_1 tc.elements_to_classes
+      and id_2, cl_2 = ElementMap.find el_2 tc.elements_to_classes in
+      if id_1 = id_2 then
+        (* Nothing to do - elements belonging to the same class *)
+        tc
+      else begin
+        let cl = Node (cl_1, cl_2) and res = ref tc.elements_to_classes in
+        iter_class
+          (fun el ->
+            res := ElementMap.add el (tc.id, cl) !res)
+          cl;
+        { elements_to_classes = !res;
+          ids_to_classes =
+            IntMap.(remove id_1 tc.ids_to_classes |> remove id_2 |> add tc.id cl);
+          id = tc.id + 1 }
+      end
+    let iter f' tc =
+      IntMap.iter
+        (fun _ ->
+          let f = f' () in
+          iter_class f)
+        tc.ids_to_classes
+  end
+module IntTransitiveClosure = MakeTransitiveClosure (struct type t = int end)
+(* Optimised implementation for String that hashes elements *)
+module StringTransitiveClosure:
+  TransitiveClosure_t with type element_t := string
+= struct
+    type t = {
+      tc: IntTransitiveClosure.t;
+      string_to_int: (string, int) Hashtbl.t;
+      int_to_string: (int, string) Hashtbl.t;
+      id: int
+    }
+    let empty () = {
+      tc = IntTransitiveClosure.empty ();
+      string_to_int = Hashtbl.create 16;
+      int_to_string = Hashtbl.create 16;
+      id = 0
+    }
+    let add_one tc el =
+      if Hashtbl.mem tc.string_to_int el then
+        tc
+      else begin
+        Hashtbl.add tc.string_to_int el tc.id;
+        Hashtbl.add tc.int_to_string tc.id el;
+        { tc with
+          tc = Hashtbl.find tc.string_to_int el |> IntTransitiveClosure.add_one tc.tc;
+          id = tc.id + 1 }
+      end
+    let add_two tc el_1 el_2 =
+      let tc = add_one tc el_1 in
+      let tc = add_one tc el_2 in
+      { tc with
+        tc =
+          IntTransitiveClosure.add_two tc.tc
+            (Hashtbl.find tc.string_to_int el_1) (Hashtbl.find tc.string_to_int el_2) }
+    let iter f' tc =
+      IntTransitiveClosure.iter
+        (fun () ->
+          let string_f = f' () in
+          fun i -> Hashtbl.find tc.int_to_string i |> string_f)
+        tc.tc
   end
 
 module Trie:
@@ -1128,6 +1240,59 @@ module Subprocess:
         handle_termination_status command (Buffer.contents stderr_contents)
     let spawn_and_process_output ?(verbose = false) pre f post command =
       spawn_with_args_and_process_output ~verbose pre f post command [||]
+  end
+
+module Memory:
+  sig
+    (* Quick-n-dirty hook to get how much memory a process is using *)
+    val get_rs_size: unit -> float
+    val get_gc_size: unit -> float
+    module Profiler:
+      sig
+        type t = {
+          sampling_rate: int;
+          current_rs_size: float;
+          maximum_rs_size: float;
+          current_gc_size: float;
+          maximum_gc_size: float
+        }
+        val make: ?sampling_rate:int -> unit -> t
+        val update: t -> t
+      end
+  end
+= struct
+    let get_rs_size () =
+      Unix.getpid () |> Printf.sprintf "ps -p %d -o rss --no-headers" |>
+          Subprocess.spawn_and_read_single_line |> float_of_string
+    let get_gc_size () =
+      (Gc.stat ()).major_words *. 8.
+    module Profiler =
+      struct
+        type t = {
+          sampling_rate: int;
+          current_rs_size: float;
+          maximum_rs_size: float;
+          current_gc_size: float;
+          maximum_gc_size: float
+        }
+        let make ?(sampling_rate = 100) () =
+          { sampling_rate;
+            current_rs_size = 0.;
+            maximum_rs_size = 0.;
+            current_gc_size = 0.;
+            maximum_gc_size = 0. }
+        let update p =
+          if Random.int p.sampling_rate = 0 then begin
+            let current_rs_size = get_rs_size ()
+            and current_gc_size = get_gc_size () in
+            { p with
+              current_rs_size;
+              maximum_rs_size = max current_rs_size p.current_rs_size;
+              current_gc_size;
+              maximum_gc_size = max current_gc_size p.current_gc_size }
+          end else
+            p
+      end
   end
 
 (* Abstraction for filenames to be used in scripts *)
