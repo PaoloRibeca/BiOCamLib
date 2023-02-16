@@ -117,6 +117,7 @@ module List:
         Some hd
   end
 
+
 module Array:
   sig
     include module type of Array
@@ -129,14 +130,12 @@ module Array:
     let of_rlist l =
       List.rev l |> Array.of_list
     let riter f a =
-      let l = Array.length a in
-      for i = l - 1 downto 0 do
-        f a.(i)
+      for i = Array.length a - 1 downto 0 do
+        Array.unsafe_get a i |> f
       done
     let riteri f a =
-      let l = Array.length a in
-      for i = l - 1 downto 0 do
-        f i a.(i)
+      for i = Array.length a - 1 downto 0 do
+        Array.unsafe_get a i |> f i
       done
   end
 
@@ -273,14 +272,14 @@ module Map:
   end
 
 (* Frequently used module idioms *)
-module type TypeContainer = sig type t end
-module MakeComparable (T: TypeContainer) =
+module type TypeContainer_t = sig type t end
+module MakeComparable (T: TypeContainer_t) =
   struct
     type t = T.t
     (* Informs the compiler that polymorphism is not needed *)
     let compare (a:t) (b:t) = compare a b
   end
-module MakeRComparable (T: TypeContainer) =
+module MakeRComparable (T: TypeContainer_t) =
   struct
     type t = T.t
     (* Informs the compiler that polymorphism is not needed *)
@@ -388,7 +387,7 @@ module type TransitiveClosure_t =
     val add_two: t -> element_t -> element_t -> t
     val iter: (unit -> element_t -> unit) -> t -> unit
   end
-module MakeTransitiveClosure (T: TypeContainer):
+module MakeTransitiveClosure (T: TypeContainer_t):
   TransitiveClosure_t with type element_t := T.t
 = struct
     type element_t = T.t
@@ -606,7 +605,7 @@ module Trie:
   end
 
 (* General C++-style iterator *)
-module type Sequable =
+module type Sequable_t =
   sig
     type 'a init_t
     type 'a t
@@ -621,8 +620,9 @@ module type Sequable =
     val incr: 'a t -> unit
   end
 (* Implementation for Stdlib modules built upon Seq *)
-module Seq:Sequable with type 'a init_t := 'a Seq.t and type 'a ret_t := 'a =
-  struct
+module Seq:
+  Sequable_t with type 'a init_t := 'a Seq.t and type 'a ret_t := 'a
+= struct
     type 'a t = 'a Seq.t ref
     let empty () = ref Seq.empty
     let is_empty it = !it () = Seq.Nil
@@ -667,7 +667,7 @@ module Number:
   sig
     (* A general module type to unify numbers *)
     (* module type M = sig include module type of struct include Int end end *)
-    module type BasicType =
+    module type BasicType_t =
       sig
         type t
         val zero: t
@@ -692,9 +692,9 @@ module Number:
         val of_string: string -> t
         val of_string_opt: string -> t option
       end
-    module type Type =
+    module type Type_t =
       sig
-        include BasicType
+        include BasicType_t
         val ( .-() ): t -> t
         val ( + ): t -> t -> t
         val ( - ): t -> t -> t
@@ -708,10 +708,10 @@ module Number:
         val ( = ): t -> t -> bool
         val ( == ): t -> t -> int
       end
-    module Make: functor (N: BasicType) -> Type with type t = N.t
+    module Make: functor (N: BasicType_t) -> Type_t with type t = N.t
   end
 = struct
-    module type BasicType =
+    module type BasicType_t =
       sig
         type t
         val zero: t
@@ -736,9 +736,9 @@ module Number:
         val of_string: string -> t
         val of_string_opt: string -> t option
       end
-    module type Type =
+    module type Type_t =
       sig
-        include BasicType
+        include BasicType_t
         val ( .-() ): t -> t
         val ( + ): t -> t -> t
         val ( - ): t -> t -> t
@@ -752,7 +752,7 @@ module Number:
         val ( = ): t -> t -> bool
         val ( == ): t -> t -> int
       end
-    module Make (N: BasicType): Type with type t = N.t =
+    module Make (N: BasicType_t): Type_t with type t = N.t =
       struct
         include N
         let ( .-() ) = N.neg
@@ -773,16 +773,16 @@ module Number:
 (* Encapsulated vectors based on bigarrays *)
 module BA:
   sig
-    module type ScalarType =
+    module type ScalarType_t =
       sig
-        include Number.Type
+        include Number.Type_t
         type elt_t
         val elt: (t, elt_t) Bigarray.kind
       end
-    module type Type =
+    module type Type_t =
       sig
         module BA1 = Bigarray.Array1
-        module N: ScalarType
+        module N: ScalarType_t
         type t
         val init: int -> N.t -> t
         val empty: t
@@ -803,19 +803,19 @@ module BA:
         val blit: t -> t -> unit
         val fill: t -> N.t -> unit
       end
-    module Vector: functor (T: ScalarType) -> Type with type N.t = T.t
+    module Vector: functor (T: ScalarType_t) -> Type_t with type N.t = T.t
   end
 = struct
-    module type ScalarType =
+    module type ScalarType_t =
       sig
-        include Number.Type
+        include Number.Type_t
         type elt_t
         val elt: (t, elt_t) Bigarray.kind
       end
-    module type Type =
+    module type Type_t =
       sig
         module BA1 = Bigarray.Array1
-        module N: ScalarType
+        module N: ScalarType_t
         type t
         val init: int -> N.t -> t
         val empty: t
@@ -836,7 +836,7 @@ module BA:
         val blit: t -> t -> unit
         val fill: t -> N.t -> unit
       end
-    module Vector (T: ScalarType) = (* This should work with float too *)
+    module Vector (T: ScalarType_t) = (* This should work with float too *)
       struct
         module BA1 = Bigarray.Array1
         module N = T
