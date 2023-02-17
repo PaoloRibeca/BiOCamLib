@@ -22,7 +22,7 @@ module Defaults =
 
 module Parameters =
   struct
-    let verbose = ref Defaults.verbose
+    let [@warning "-32"] verbose = ref Defaults.verbose
   end
 
 let version = "0.3"
