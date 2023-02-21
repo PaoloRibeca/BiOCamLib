@@ -37,7 +37,7 @@ module Misc =
 module Defaults =
   struct
     let lines_per_block = 10000
-    let threads = Tools.Parallel.get_nproc ()
+    let threads = Processes.Parallel.get_nproc ()
     let verbose = false
     let debug = false
   end
@@ -143,7 +143,7 @@ let () =
       Misc.line__failwith in
   let lines_per_block = !Parameters.lines_per_block
   and eof = ref false and processing_buffer = Buffer.create 16777216 in
-  Tools.Parallel.process_stream_chunkwise
+  Processes.Parallel.process_stream_chunkwise
     (fun () ->
       if not !eof then begin
         if !Misc.input_line_num mod lines_per_block = 0 then
