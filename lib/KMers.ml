@@ -165,24 +165,23 @@ module LevenshteinBall:
 (* Auxiliary module to store and print k-mer frequencies *)
 module HashFrequencies:
   sig
-    type t
-    val create: int -> t
+    module Base = Tools.IntHashtbl
+    type t = int ref Base.t
     (* The first parameter is the hash, the second its frequency *)
     val add: t -> int -> int -> unit
     val iter: (int -> int -> unit) -> t -> unit
   end
 = struct
-    type t = int ref Tools.IntHashtbl.t
-    let create = Tools.IntHashtbl.create
+    module Base = Tools.IntHashtbl
+    type t = int ref Base.t
     let add distr key occs =
       try
-        let found = Tools.IntHashtbl.find distr key in
+        let found = Base.find distr key in
         found := !found + occs
       with Not_found ->
-        Tools.IntHashtbl.add distr key (ref occs)
+        Base.add distr key (ref occs)
     let iter f =
-      Tools.IntHashtbl.iter
-        (fun key freq -> f key !freq)
+      Base.iter (fun key occs -> f key !occs)
   end
 
 module type Hash_t =
@@ -310,7 +309,7 @@ module ProteinHash (K: IntParameter_t):
         end in
       shift 0 0 0
     let iterc f s =
-      let res = HashFrequencies.create 64 in
+      let res = HashFrequencies.Base.create 64 in
       iteri
         (fun _ hash ->
           HashFrequencies.add res hash 1)
@@ -391,7 +390,7 @@ module DNAHash (K: IntParameter_t):
               shift incr_pos (0, 0) incr_pos in
       shift 0 (0, 0) 0
     let iterc f s =
-      let res = HashFrequencies.create 64 in
+      let res = HashFrequencies.Base.create 64 in
       iteri
         (fun _ (hash_f, hash_r) ->
           HashFrequencies.add res hash_f 1;
