@@ -40,8 +40,7 @@ module Lint:
     let none w = w
     let dnaize_bytes ?(keep_dashes = false) b =
       let len = Bytes.length b in
-      let red_len = len - 1 in
-      for i = 0 to red_len do
+      for i = 0 to len - 1 do
         Bytes.set b i begin
           match Bytes.get b i with
           | 'A' | 'a' -> 'A'
@@ -77,8 +76,7 @@ module Lint:
       Bytes.to_string (rc_bytes ~keep_dashes (Bytes.of_string s))
     let proteinize_bytes ?(keep_dashes = false) b =
       let len = Bytes.length b in
-      let red_len = len - 1 in
-      for i = 0 to red_len do
+      for i = 0 to len - 1 do
         Bytes.set b i begin
           match Bytes.get b i with
           | 'A' | 'a' -> 'A'

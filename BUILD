@@ -1,9 +1,9 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 set -e
 
 PROFILE="$1"
-if [ -z "$PROFILE" ]; then
+if [[ "$PROFILE" == "" ]]; then
   PROFILE="dev"
 fi
 
@@ -25,9 +25,8 @@ cp _build/default/bin/Octopus.exe build/Octopus
 
 chmod 755 build/*
 
-if [ "$PROFILE" = "release" ]; then
+if [[ "$PROFILE" == "release" ]]; then
   strip build/*
+  rm -rf _build
 fi
-
-rm -rf _build
 

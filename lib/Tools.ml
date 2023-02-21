@@ -217,6 +217,14 @@ module Hashtbl:
       res
   end
 
+module IntHash =
+  struct
+    type t = int
+    let equal (i: int) (j: int) = (i - j = 0) (*(i = j)*)
+    let hash (i: int) = i (* land max_int *)
+  end
+module IntHashtbl = Hashtbl.Make (IntHash)
+
 module Set:
   sig
     include module type of Set
@@ -294,10 +302,12 @@ module CharMap: module type of Map.Make (ComparableChar) = Map.Make (ComparableC
 module RComparableChar = MakeRComparable (struct type t = char end)
 module CharRSet: module type of Set.Make (RComparableChar) = Set.Make (RComparableChar)
 module CharRMap: module type of Map.Make (RComparableChar) = Map.Make (RComparableChar)
-module ComparableInt = MakeComparable (struct type t = int end)
+(* Optimisation for integers *)
+module ComparableInt = struct type t = int let compare a b = a - b end
 module IntSet: module type of Set.Make (ComparableInt) = Set.Make (ComparableInt)
 module IntMap: module type of Map.Make (ComparableInt) = Map.Make (ComparableInt)
-module RComparableInt = MakeRComparable (struct type t = int end)
+(* Optimisation for integers *)
+module RComparableInt = struct type t = int let compare a b = b - a end
 module IntRSet: module type of Set.Make (RComparableInt) = Set.Make (RComparableInt)
 module IntRMap: module type of Map.Make (RComparableInt) = Map.Make (RComparableInt)
 module ComparableFloat = MakeComparable (struct type t = float end)
@@ -378,80 +388,83 @@ module Multimap (OKey:Map.OrderedType) (OVal:Set.OrderedType) =
     let min_binding = KeyMap.min_binding
   end
 
-module type TransitiveClosure_t =
-  sig
-    type element_t
-    type t
-    val empty: unit -> t
-    val add_one: t -> element_t -> t
-    val add_two: t -> element_t -> element_t -> t
-    val iter: (unit -> element_t -> unit) -> t -> unit
-  end
-module MakeTransitiveClosure (T: TypeContainer_t):
-  TransitiveClosure_t with type element_t := T.t
-= struct
-    type element_t = T.t
-    type class_t =
-      | Singleton of element_t
-      | Node of class_t * class_t
-    module ElementMap = Map.Make (MakeComparable (T))
-    type t = {
-      (* Each class has an associated unique numerical ID for fast comparison *)
-      elements_to_classes: (int * class_t) ElementMap.t;
-      ids_to_classes: class_t IntMap.t;
-      id: int
-    }
-    let rec iter_class f = function
-      | Singleton el -> f el
-      | Node (cl_l, cl_r) ->
-        iter_class f cl_l;
-        iter_class f cl_r
-    let empty () = {
-      elements_to_classes = ElementMap.empty;
-      ids_to_classes = IntMap.empty;
-      id = 0
-    }
-    let add_one tc el =
-      match ElementMap.find_opt el tc.elements_to_classes with
-      | None ->
-        (* The element is in its own separate equivalence class *)
-        let cl = Singleton el in
-        { elements_to_classes = ElementMap.add el (tc.id, cl) tc.elements_to_classes;
-          ids_to_classes = IntMap.add tc.id cl tc.ids_to_classes;
-          id = tc.id + 1 }
-      | Some _ ->
-        tc
-    (* Adds two equivalent elements *)
-    let add_two tc el_1 el_2 =
-      let tc = add_one tc el_1 in
-      let tc = add_one tc el_2 in
-      let id_1, cl_1 = ElementMap.find el_1 tc.elements_to_classes
-      and id_2, cl_2 = ElementMap.find el_2 tc.elements_to_classes in
-      if id_1 = id_2 then
-        (* Nothing to do - elements belonging to the same class *)
-        tc
-      else begin
-        let cl = Node (cl_1, cl_2) and res = ref tc.elements_to_classes in
-        iter_class
-          (fun el ->
-            res := ElementMap.add el (tc.id, cl) !res)
-          cl;
-        { elements_to_classes = !res;
-          ids_to_classes =
-            IntMap.(remove id_1 tc.ids_to_classes |> remove id_2 |> add tc.id cl);
-          id = tc.id + 1 }
+module TransitiveClosure =
+  struct
+    module type T_t =
+      sig
+        type element_t
+        type t
+        val empty: unit -> t
+        val add_one: t -> element_t -> t
+        val add_two: t -> element_t -> element_t -> t
+        val iter: (unit -> element_t -> unit) -> t -> unit
       end
-    let iter f' tc =
-      IntMap.iter
-        (fun _ ->
-          let f = f' () in
-          iter_class f)
-        tc.ids_to_classes
+    module Make (T: TypeContainer_t):
+      T_t with type element_t := T.t
+    = struct
+        type element_t = T.t
+        type class_t =
+          | Singleton of element_t
+          | Node of class_t * class_t
+        module ElementMap = Map.Make (MakeComparable (T))
+        type t = {
+          (* Each class has an associated unique numerical ID for fast comparison *)
+          elements_to_classes: (int * class_t) ElementMap.t;
+          ids_to_classes: class_t IntMap.t;
+          id: int
+        }
+        let rec iter_class f = function
+          | Singleton el -> f el
+          | Node (cl_l, cl_r) ->
+            iter_class f cl_l;
+            iter_class f cl_r
+        let empty () = {
+          elements_to_classes = ElementMap.empty;
+          ids_to_classes = IntMap.empty;
+          id = 0
+        }
+        let add_one tc el =
+          match ElementMap.find_opt el tc.elements_to_classes with
+          | None ->
+            (* The element is in its own separate equivalence class *)
+            let cl = Singleton el in
+            { elements_to_classes = ElementMap.add el (tc.id, cl) tc.elements_to_classes;
+              ids_to_classes = IntMap.add tc.id cl tc.ids_to_classes;
+              id = tc.id + 1 }
+          | Some _ ->
+            tc
+        (* Adds two equivalent elements *)
+        let add_two tc el_1 el_2 =
+          let tc = add_one tc el_1 in
+          let tc = add_one tc el_2 in
+          let id_1, cl_1 = ElementMap.find el_1 tc.elements_to_classes
+          and id_2, cl_2 = ElementMap.find el_2 tc.elements_to_classes in
+          if id_1 = id_2 then
+            (* Nothing to do - elements belonging to the same class *)
+            tc
+          else begin
+            let cl = Node (cl_1, cl_2) and res = ref tc.elements_to_classes in
+            iter_class
+              (fun el ->
+                res := ElementMap.add el (tc.id, cl) !res)
+              cl;
+            { elements_to_classes = !res;
+              ids_to_classes =
+                IntMap.(remove id_1 tc.ids_to_classes |> remove id_2 |> add tc.id cl);
+              id = tc.id + 1 }
+          end
+        let iter f' tc =
+          IntMap.iter
+            (fun _ ->
+              let f = f' () in
+              iter_class f)
+            tc.ids_to_classes
+      end
   end
-module IntTransitiveClosure = MakeTransitiveClosure (struct type t = int end)
+module IntTransitiveClosure = TransitiveClosure.Make (struct type t = int end)
 (* Optimised implementation for String that hashes elements *)
 module StringTransitiveClosure:
-  TransitiveClosure_t with type element_t := string
+  TransitiveClosure.T_t with type element_t := string
 = struct
     type t = {
       tc: IntTransitiveClosure.t;
@@ -1599,7 +1612,6 @@ module Parallel:
           incr next
         done;
         (* Switch off all the workers *)
-        let red_threads = threads - 1 in
         for ii = 0 to red_threads do
           output_byte o_2_w.(ii) 0;
           flush o_2_w.(ii)
