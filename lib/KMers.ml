@@ -50,13 +50,15 @@ module SlidingWindow:
 
 module LevenshteinBall:
   sig
-    type t
+    module Base = Tools.StringSet
+    type t = Base.t
     val make: ?radius:int -> ?alphabet:string -> ?uppercase:bool -> string -> string -> string -> t
-    val length: t -> int
-    val iter: (string -> unit) -> t -> unit
+    val accumk: ?radius:int -> ?alphabet:string -> ?uppercase:bool -> int -> string -> t
+    val iterk: ?radius:int -> ?alphabet:string -> ?uppercase:bool -> (string -> unit) -> int -> string -> unit
   end
 = struct
-    type t = Tools.StringSet.t
+    module Base = Tools.StringSet
+    type t = Base.t
     let make ?(radius = 1) ?(alphabet = "ACGT") ?(uppercase = true) l_ctxt s r_ctxt =
       if radius < 0 then
         Printf.sprintf "%s: Invalid radius %d" __FUNCTION__ radius |> failwith;
@@ -156,10 +158,27 @@ module LevenshteinBall:
           purged := Tools.StringSet.add (String.sub s radius l) !purged)
         !res;
       !purged
-    let length =
-      Tools.StringSet.cardinal
-    let iter =
-      Tools.StringSet.iter
+    let accumk ?(radius = 1) ?(alphabet = "ACGT") ?(uppercase = true) k s =
+      let l = String.length s in
+      let top = l - k and res = ref Base.empty in
+      for lo = 0 to top do
+        res :=
+          Base.union !res begin
+            make ~radius ~alphabet ~uppercase begin
+              let ctxt_lo = (lo - radius) |> max 0 in
+              String.sub s ctxt_lo (lo - ctxt_lo)
+            end begin
+              String.sub s lo k
+            end begin
+              let hi = lo + k in
+              let ctxt_hi = (hi + radius) |> min l in
+              String.sub s hi (ctxt_hi - hi) 
+            end
+          end
+      done;
+      !res
+    let iterk ?(radius = 1) ?(alphabet = "ACGT") ?(uppercase = true) f k s =
+      accumk ~radius ~alphabet ~uppercase k s |> Base.iter f
   end
 
 (* Auxiliary module to store and print k-mer frequencies *)
@@ -192,10 +211,12 @@ module type Hash_t =
     val decode: t -> string
     (* Iterates a function over all hashes that can be extracted from a string
         according to the specific method being used (for instance, in the case of DNA
-        iteration happens both on the string and its RC) *)
+        iteration happens both on the string and its RC).
+       Iteration is positional, i.e., k-mers can appear more than once *)
     type iter_t
     val iteri: (int -> iter_t -> unit) -> string -> unit
-    (* The second argument to the function is the frequency of the k-mer *)
+    (* Iteration with collection - k-mers can appear only once.
+       The second argument to the function is the frequency of the k-mer *)
     val iterc: (t -> int -> unit) -> string -> unit
   end
 
