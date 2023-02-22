@@ -48,139 +48,6 @@ module SlidingWindow:
       Bytes.sub_string w.drum w.index (len - w.index) ^ Bytes.sub_string w.drum 0 w.index
   end
 
-module LevenshteinBall:
-  sig
-    module Base = Tools.StringSet
-    type t = Base.t
-    val make: ?radius:int -> ?alphabet:string -> ?uppercase:bool -> string -> string -> string -> t
-    val accumk: ?radius:int -> ?alphabet:string -> ?uppercase:bool -> int -> string -> t
-    val iterk: ?radius:int -> ?alphabet:string -> ?uppercase:bool -> (string -> unit) -> int -> string -> unit
-  end
-= struct
-    module Base = Tools.StringSet
-    type t = Base.t
-    let make ?(radius = 1) ?(alphabet = "ACGT") ?(uppercase = true) l_ctxt s r_ctxt =
-      if radius < 0 then
-        Printf.sprintf "%s: Invalid radius %d" __FUNCTION__ radius |> failwith;
-      let l_ctxt, s, r_ctxt =
-        if uppercase then
-          String.uppercase_ascii l_ctxt, String.uppercase_ascii s, String.uppercase_ascii r_ctxt
-        else
-          l_ctxt, s, r_ctxt in
-      (* We trim/pad contexts whenever needed *)
-      let padding = String.make radius ' ' in
-      let l_ctxt = String.sub (padding ^ l_ctxt) (String.length l_ctxt) radius
-      and r_ctxt = String.sub (r_ctxt ^ padding) 0 radius in
-      (* The string also includes left and right contexts *)
-      let hi = radius + String.length s - 1 in
-      let last = hi + radius in
-      let expand prev =
-        let res = ref Tools.StringSet.empty in
-        let open Tools.Bytes in
-        Tools.StringSet.iter
-          (fun orig_s ->
-            let s = of_string orig_s in
-            (* Mismatches *)
-            for i = radius to hi do
-              let c = s.@(i) in
-              String.iter
-                (fun cc ->
-                  if cc <> c then begin
-                    s.@(i) <- cc;
-                    res := Tools.StringSet.add (to_string s) !res
-                  end)
-                alphabet;
-              (* We restore the previous state *)
-              s.@(i) <- c
-            done;
-            (* Deletions *)
-            for i = radius to hi do
-              let c = s.@(i) in
-              (* Right-to-left deletion *)
-              let l = last - i in
-              blit s (i + 1) s i l;
-              s.@(last) <- ' '; (* Padding *)
-              if s.@(hi) <> ' ' then
-                res := Tools.StringSet.add (to_string s) !res;
-              (* We restore the previous state *)
-              blit s i s (i + 1) l;
-              s.@(i) <- c;
-              (* Left-to-right deletion *)
-              blit s 0 s 1 i;
-              s.@(0) <- ' '; (* Padding *)
-              if s.@(radius) <> ' ' then
-                res := Tools.StringSet.add (to_string s) !res;
-              (* We restore the previous state *)
-              blit s 1 s 0 i;
-              s.@(i) <- c
-            done;
-            (* Insertions *)
-            for i = radius to hi - 1 do
-              (* Left-to-right insertion *)
-              let c = s.@(hi) in
-              let l = hi - i in
-              blit s i s (i + 1) l;
-              String.iter
-                (fun cc ->
-                  s.@(i) <- cc;
-                  res := Tools.StringSet.add (to_string s) !res)
-                alphabet;
-              (* We restore the previous state *)
-              blit s (i + 1) s i l;
-              s.@(hi) <- c;
-              (* Right-to-left insertion *)
-              let c = s.@(0) in
-              let l = i + 1 in
-              blit s 1 s 0 l;
-              String.iter
-                (fun cc ->
-                  s.@(l) <- cc;
-                  res := Tools.StringSet.add (to_string s) !res)
-                alphabet;
-              (* We restore the previous state *)
-              blit s 0 s 1 l;
-              s.@(0) <- c
-            done;
-            assert (to_string s = orig_s))
-          prev;
-        !res in
-      (* The k-mer itself gets inserted here *)
-      let curr = l_ctxt ^ s ^ r_ctxt |> Tools.StringSet.singleton |> ref in
-      let res = ref !curr in
-      for _ = 1 to radius do
-        curr := expand !curr;
-        res := Tools.StringSet.union !res !curr
-      done;
-      (* We eliminate contexts *)
-      let l = String.length s and purged = ref Tools.StringSet.empty in
-      Tools.StringSet.iter
-        (fun s ->
-          purged := Tools.StringSet.add (String.sub s radius l) !purged)
-        !res;
-      !purged
-    let accumk ?(radius = 1) ?(alphabet = "ACGT") ?(uppercase = true) k s =
-      let l = String.length s in
-      let top = l - k and res = ref Base.empty in
-      for lo = 0 to top do
-        res :=
-          Base.union !res begin
-            make ~radius ~alphabet ~uppercase begin
-              let ctxt_lo = (lo - radius) |> max 0 in
-              String.sub s ctxt_lo (lo - ctxt_lo)
-            end begin
-              String.sub s lo k
-            end begin
-              let hi = lo + k in
-              let ctxt_hi = (hi + radius) |> min l in
-              String.sub s hi (ctxt_hi - hi) 
-            end
-          end
-      done;
-      !res
-    let iterk ?(radius = 1) ?(alphabet = "ACGT") ?(uppercase = true) f k s =
-      accumk ~radius ~alphabet ~uppercase k s |> Base.iter f
-  end
-
 (* Auxiliary module to store and print k-mer frequencies *)
 module HashFrequencies:
   sig
@@ -207,7 +74,9 @@ module type Hash_t =
   sig
     type t
     val k: int
+    val alphabet: string
     val encode: string -> t
+    val encode_char: (char -> t) -> char -> t
     val decode: t -> string
     (* Iterates a function over all hashes that can be extracted from a string
         according to the specific method being used (for instance, in the case of DNA
@@ -230,6 +99,7 @@ module ProteinHash (K: IntParameter_t):
       if K.value > 12 then
         Printf.sprintf "(%s): Invalid argument (k must be <= 12, found %d)" __FUNCTION__ K.value |> failwith;
       K.value
+    let alphabet = "ACDEFGHIKLMNOPQRSTUVWY"
     let encode_char err_f = function
       | 'A' | 'a' -> 0
       | 'C' | 'c' -> 1
@@ -346,6 +216,13 @@ module DNAHash (K: IntParameter_t):
       if K.value > 30 then
         Printf.sprintf "(%s): Invalid argument (k must be <= 30, found %d)" __FUNCTION__ K.value |> failwith;
       K.value
+    let alphabet = "ACGT"
+    let encode_char err_f = function
+      | 'A' | 'a' -> 0
+      | 'C' | 'c' -> 1
+      | 'G' | 'g' -> 2
+      | 'T' | 't' -> 3
+      | w -> err_f w
     let encode s =
       if String.length s <> k then
         Printf.sprintf "(%s): Invalid argument (string length must be k=%d, found %d)" __FUNCTION__ k (String.length s)
@@ -353,16 +230,12 @@ module DNAHash (K: IntParameter_t):
       let red_k = k - 1 and res = ref 0 in
       for i = 0 to red_k do
         res :=
-          !res lsl 2 + begin
-            match s.[i] with
-            | 'A' | 'a' -> 0
-            | 'C' | 'c' -> 1
-            | 'G' | 'g' -> 2
-            | 'T' | 't' -> 3
-            | w ->
+          !res lsl 2 +
+          encode_char begin
+            fun w ->
               Printf.sprintf "(%s): Invalid argument (expected character in [ACGTacgt], found '%c')" __FUNCTION__ w
                 |> failwith
-          end
+          end s.[i]
       done;
       !res
     let decode hash =
@@ -419,4 +292,159 @@ module DNAHash (K: IntParameter_t):
         s;
       HashFrequencies.iter f res
   end
+
+module LevenshteinBall (H: Hash_t with type t = int):
+  sig
+    module Base = Tools.StringSet
+    type t = Base.t
+    val make: ?radius:int -> string -> string -> string -> t
+    val accumk: ?radius:int -> string -> t
+    val iterk: ?radius:int -> (string -> unit) -> string -> unit
+    val iterkh: ?radius:int -> (H.t -> unit) -> string -> unit
+  end
+= struct
+    module Base = Tools.StringSet
+    type t = Base.t
+    let lint s =
+      (* This is not entirely general, but OK for the time being *)
+      let s = String.uppercase_ascii s |> Bytes.of_string
+      and encode = H.encode_char (fun _ -> -1) in
+      Bytes.iteri
+        (fun i c ->
+          Tools.Bytes.(
+            s.@(i) <-
+              if encode c = -1 then
+                ' '
+              else
+                c
+          ))
+        s;
+      Bytes.to_string s
+    let make ?(radius = 1) l_ctxt s r_ctxt =
+      if radius < 0 then
+        Printf.sprintf "%s: Invalid radius %d" __FUNCTION__ radius |> failwith;
+      let l_ctxt, s, r_ctxt = lint l_ctxt, lint s, lint r_ctxt in
+      (* We trim/pad contexts whenever needed *)
+      let padding = String.make radius ' ' in
+      let l_ctxt = String.sub (padding ^ l_ctxt) (String.length l_ctxt) radius
+      and r_ctxt = String.sub (r_ctxt ^ padding) 0 radius in
+      (* The string also includes left and right contexts *)
+      let hi = radius + String.length s - 1 in
+      let last = hi + radius in
+      let expand prev =
+        let res = ref Tools.StringSet.empty in
+        let open Tools.Bytes in
+        Tools.StringSet.iter
+          (fun orig_s ->
+            let s = of_string orig_s in
+            (* Mismatches *)
+            for i = radius to hi do
+              let c = s.@(i) in
+              String.iter
+                (fun cc ->
+                  if cc <> c then begin
+                    s.@(i) <- cc;
+                    res := Tools.StringSet.add (to_string s) !res
+                  end)
+                H.alphabet;
+              (* We restore the previous state *)
+              s.@(i) <- c
+            done;
+            (* Deletions *)
+            for i = radius to hi do
+              let c = s.@(i) in
+              (* Right-to-left deletion *)
+              let l = last - i in
+              blit s (i + 1) s i l;
+              s.@(last) <- ' '; (* Padding *)
+              if s.@(hi) <> ' ' then
+                res := Tools.StringSet.add (to_string s) !res;
+              (* We restore the previous state *)
+              blit s i s (i + 1) l;
+              s.@(i) <- c;
+              (* Left-to-right deletion *)
+              blit s 0 s 1 i;
+              s.@(0) <- ' '; (* Padding *)
+              if s.@(radius) <> ' ' then
+                res := Tools.StringSet.add (to_string s) !res;
+              (* We restore the previous state *)
+              blit s 1 s 0 i;
+              s.@(i) <- c
+            done;
+            (* Insertions *)
+            for i = radius to hi - 1 do
+              (* Left-to-right insertion *)
+              let c = s.@(hi) in
+              let l = hi - i in
+              blit s i s (i + 1) l;
+              String.iter
+                (fun cc ->
+                  s.@(i) <- cc;
+                  res := Tools.StringSet.add (to_string s) !res)
+                H.alphabet;
+              (* We restore the previous state *)
+              blit s (i + 1) s i l;
+              s.@(hi) <- c;
+              (* Right-to-left insertion *)
+              let c = s.@(0) in
+              let l = i + 1 in
+              blit s 1 s 0 l;
+              String.iter
+                (fun cc ->
+                  s.@(l) <- cc;
+                  res := Tools.StringSet.add (to_string s) !res)
+                H.alphabet;
+              (* We restore the previous state *)
+              blit s 0 s 1 l;
+              s.@(0) <- c
+            done;
+            assert (to_string s = orig_s))
+          prev;
+        !res in
+      (* The k-mer itself gets inserted here *)
+      let curr = l_ctxt ^ s ^ r_ctxt |> Tools.StringSet.singleton |> ref in
+      let res = ref !curr in
+      for _ = 1 to radius do
+        curr := expand !curr;
+        res := Tools.StringSet.union !res !curr
+      done;
+      (* We eliminate contexts *)
+      let l = String.length s and purged = ref Tools.StringSet.empty in
+      Tools.StringSet.iter
+        (fun s ->
+          purged := Tools.StringSet.add (String.sub s radius l) !purged)
+        !res;
+      !purged
+    let accumk ?(radius = 1) s =
+      (* First we replace non-alphabet characters with spaces, in order to be compatible
+          with the conventions used by make() above *)
+      let l = String.length s in
+      let top = l - H.k and res = ref Base.empty in
+      for lo = 0 to top do
+        res :=
+          Base.union !res begin
+            make ~radius begin
+              let ctxt_lo = (lo - radius) |> max 0 in
+              String.sub s ctxt_lo (lo - ctxt_lo)
+            end begin
+              String.sub s lo H.k
+            end begin
+              let hi = lo + H.k in
+              let ctxt_hi = (hi + radius) |> min l in
+              String.sub s hi (ctxt_hi - hi)
+            end
+          end
+      done;
+      !res
+    let iterk ?(radius = 1) f s =
+      accumk ~radius s |> Base.iter f
+    let iterkh ?(radius = 1) f s =
+      accumk ~radius s |>
+        Base.iter
+          (fun s ->
+            try
+              H.encode s |> f
+            with _ ->
+              ())
+    end
 
