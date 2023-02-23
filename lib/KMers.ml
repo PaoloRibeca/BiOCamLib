@@ -231,11 +231,14 @@ module DNAHash (K: IntParameter_t):
       for i = 0 to red_k do
         res :=
           !res lsl 2 +
-          encode_char begin
-            fun w ->
+            match s.[i] with
+            | 'A' | 'a' -> 0
+            | 'C' | 'c' -> 1
+            | 'G' | 'g' -> 2
+            | 'T' | 't' -> 3
+            | w ->
               Printf.sprintf "(%s): Invalid argument (expected character in [ACGTacgt], found '%c')" __FUNCTION__ w
                 |> failwith
-          end s.[i]
       done;
       !res
     let decode hash =
@@ -322,7 +325,7 @@ module LevenshteinBall (H: Hash_t with type t = int):
       Bytes.to_string s
     let make ?(radius = 1) l_ctxt s r_ctxt =
       if radius < 0 then
-        Printf.sprintf "%s: Invalid radius %d" __FUNCTION__ radius |> failwith;
+        Printf.sprintf "(%s): Invalid radius %d" __FUNCTION__ radius |> failwith;
       let l_ctxt, s, r_ctxt = lint l_ctxt, lint s, lint r_ctxt in
       (* We trim/pad contexts whenever needed *)
       let padding = String.make radius ' ' in
