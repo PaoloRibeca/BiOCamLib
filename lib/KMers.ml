@@ -349,7 +349,7 @@ module DNAHashDoubleStranded (K: IntParameter_t):
       HashFrequencies.iter f res
   end
 
-module LevenshteinBall (H: Hash_t with type t = int):
+module LevenshteinBall (H: HashBase_t with type t = int):
   sig
     module Base = Tools.StringSet
     type t = Base.t
