@@ -70,7 +70,8 @@ module HashFrequencies:
       Base.iter (fun key occs -> f key !occs)
   end
 
-module type Hash_t =
+(* This type lacks iterators *)
+module type HashBase_t =
   sig
     type t
     val k: int
@@ -78,6 +79,11 @@ module type Hash_t =
     val encode: string -> t
     val encode_char: (char -> t) -> char -> t
     val decode: t -> string
+  end
+(* The following one is the complete one *)
+module type Hash_t =
+  sig
+    include HashBase_t
     (* Iterates a function over all hashes that can be extracted from a string
         according to the specific method being used (for instance, in the case of DNA
         iteration happens both on the string and its RC).
@@ -87,8 +93,6 @@ module type Hash_t =
     (* Iteration with collection - k-mers can appear only once.
        The second argument to the function is the frequency of the k-mer *)
     val iterc: (t -> int -> unit) -> string -> unit
-    (* DNA hashes also have an additional iterator iterc_rc with the same signature,
-        whereby iteration happens on both strands *)
   end
 
 module type IntParameter_t = sig val value: int end
@@ -210,11 +214,9 @@ module ProteinHash (K: IntParameter_t):
       HashFrequencies.iter f res
   end
 
-module DNAHash (K: IntParameter_t):
-  sig
-    include Hash_t with type t = int and type iter_t = int * int
-    val iterc_rc: (t -> int -> unit) -> string -> unit
-  end
+(* Base type without iterators, which depend on the strand *)
+module DNAHashBase (K: IntParameter_t):
+  HashBase_t with type t = int
 = struct
     type t = int
     let k =
@@ -261,6 +263,52 @@ module DNAHash (K: IntParameter_t):
         rem := !rem lsr 2
       done;
       Bytes.to_string res
+  end
+
+module DNAHashSingleStranded (K: IntParameter_t):
+  Hash_t with type t = int and type iter_t = int
+= struct
+    include DNAHashBase (K)
+    (* Iterates over all k-mers.
+       For each position it presents the forward hash only *)
+    type iter_t = int
+    let iteri f s =
+      (* Our k-mer over alphabet ACGT
+          is encoded into base-4 numbers.
+         The first 30 letters at most are used.
+         If there are Ns or other non-base letters, the string is split *)
+      let l = String.length s
+      (* 0b--..--11..1100 *)
+      and mask = 1 lsl (2 * k) - 4 in
+      let add_base old_hash encoded =
+        ((old_hash lsl 2) land mask) lor encoded in
+      let rec shift start hash pos =
+        if pos - start >= k then
+          f (pos - k) hash;
+        let incr_pos = pos + 1 in
+        if incr_pos <= l then
+          match s.[pos] with
+          | 'A' | 'a' -> shift start (add_base hash 0) incr_pos
+          | 'C' | 'c' -> shift start (add_base hash 1) incr_pos
+          | 'G' | 'g' -> shift start (add_base hash 2) incr_pos
+          | 'T' | 't' -> shift start (add_base hash 3) incr_pos
+          | _ ->
+            (* In this case we restart *)
+            if incr_pos + k <= l then
+              shift incr_pos 0 incr_pos in
+      shift 0 0 0
+    let iterc f s =
+      let res = HashFrequencies.Base.create 64 in
+      iteri
+        (fun _ hash ->
+          HashFrequencies.add res hash 1)
+        s;
+      HashFrequencies.iter f res
+  end
+module DNAHashDoubleStranded (K: IntParameter_t):
+  Hash_t with type t = int and type iter_t = int * int
+= struct
+    include DNAHashBase (K)
     (* Iterates over all k-mers.
        For each position it presents both forward and reverse hash *)
     type iter_t = int * int
@@ -294,19 +342,12 @@ module DNAHash (K: IntParameter_t):
     let iterc f s =
       let res = HashFrequencies.Base.create 64 in
       iteri
-        (fun _ (hash_f, _) ->
-          HashFrequencies.add res hash_f 1)
-        s;
-      HashFrequencies.iter f res
-    let iterc_rc f s =
-      let res = HashFrequencies.Base.create 64 in
-      iteri
         (fun _ (hash_f, hash_r) ->
           HashFrequencies.add res hash_f 1;
           HashFrequencies.add res hash_r 1)
         s;
       HashFrequencies.iter f res
-    end
+  end
 
 module LevenshteinBall (H: Hash_t with type t = int):
   sig
