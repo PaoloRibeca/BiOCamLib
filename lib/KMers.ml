@@ -87,6 +87,8 @@ module type Hash_t =
     (* Iteration with collection - k-mers can appear only once.
        The second argument to the function is the frequency of the k-mer *)
     val iterc: (t -> int -> unit) -> string -> unit
+    (* DNA hashes also have an additional iterator iterc_rc with the same signature,
+        whereby iteration happens on both strands *)
   end
 
 module type IntParameter_t = sig val value: int end
@@ -209,7 +211,10 @@ module ProteinHash (K: IntParameter_t):
   end
 
 module DNAHash (K: IntParameter_t):
-  Hash_t with type t = int and type iter_t = int * int
+  sig
+    include Hash_t with type t = int and type iter_t = int * int
+    val iterc_rc: (t -> int -> unit) -> string -> unit
+  end
 = struct
     type t = int
     let k =
@@ -289,12 +294,19 @@ module DNAHash (K: IntParameter_t):
     let iterc f s =
       let res = HashFrequencies.Base.create 64 in
       iteri
+        (fun _ (hash_f, _) ->
+          HashFrequencies.add res hash_f 1)
+        s;
+      HashFrequencies.iter f res
+    let iterc_rc f s =
+      let res = HashFrequencies.Base.create 64 in
+      iteri
         (fun _ (hash_f, hash_r) ->
           HashFrequencies.add res hash_f 1;
           HashFrequencies.add res hash_r 1)
         s;
       HashFrequencies.iter f res
-  end
+    end
 
 module LevenshteinBall (H: Hash_t with type t = int):
   sig
@@ -449,5 +461,5 @@ module LevenshteinBall (H: Hash_t with type t = int):
               H.encode s |> f
             with _ ->
               ())
-    end
+  end
 

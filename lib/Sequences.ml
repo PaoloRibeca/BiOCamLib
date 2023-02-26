@@ -37,10 +37,10 @@ module Lint:
 = struct
     let none w = w
     let dnaize_bytes ?(keep_dashes = false) b =
-      let len = Bytes.length b in
-      for i = 0 to len - 1 do
-        Bytes.set b i begin
-          match Bytes.get b i with
+      let open Tools.Bytes in
+      for i = 0 to length b - 1 do
+        b.@(i) <- begin
+          match b.@(i) with
           | 'A' | 'a' -> 'A'
           | 'C' | 'c' -> 'C'
           | 'G' | 'g' -> 'G'
@@ -51,7 +51,7 @@ module Lint:
       done;
       b
     let dnaize ?(keep_dashes = false) s =
-      Bytes.to_string (dnaize_bytes ~keep_dashes (Bytes.of_string s))
+      Tools.Bytes.of_string s |> dnaize_bytes ~keep_dashes |> Tools.Bytes.to_string
     let rc_bytes ?(keep_dashes = false) b =
       let compl = function
         | 'A' | 'a' -> 'T'
@@ -60,23 +60,23 @@ module Lint:
         | 'T' | 't' -> 'A'
         | '-' when keep_dashes -> '-'
         | _ -> 'N' in
-      let len = Bytes.length b in
-      let red_len = len - 1 in
+      let open Tools.Bytes in
+      let red_len = length b - 1 in
       let half_len = red_len / 2 in
       for i = 0 to half_len do
         let idx = red_len - i in
-        let c = Bytes.get b i in
-        Bytes.set b i (compl (Bytes.get b idx));
-        Bytes.set b idx (compl c)
+        let c = b.@(i) in
+        b.@(i) <- compl b.@(idx);
+        b.@(idx) <- compl c
       done;
       b
     let rc ?(keep_dashes = false) s =
-      Bytes.to_string (rc_bytes ~keep_dashes (Bytes.of_string s))
+      Tools.Bytes.of_string s |> rc_bytes ~keep_dashes |> Tools.Bytes.to_string
     let proteinize_bytes ?(keep_dashes = false) b =
-      let len = Bytes.length b in
-      for i = 0 to len - 1 do
-        Bytes.set b i begin
-          match Bytes.get b i with
+      let open Tools.Bytes in
+      for i = 0 to length b - 1 do
+        b.@(i) <- begin
+          match b.@(i) with
           | 'A' | 'a' -> 'A'
           | 'C' | 'c' -> 'C'
           | 'D' | 'd' -> 'D'
@@ -106,7 +106,7 @@ module Lint:
       done;
       b
     let proteinize ?(keep_dashes = false) s =
-      Bytes.to_string (proteinize_bytes ~keep_dashes (Bytes.of_string s))
+      Tools.Bytes.of_string s |> proteinize_bytes ~keep_dashes |> Tools.Bytes.to_string
   end
 
 module Types =
