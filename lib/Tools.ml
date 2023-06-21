@@ -230,6 +230,7 @@ module Set:
       sig
         include module type of Set.Make(O)
         val iteri: (int -> elt -> unit) -> t -> unit
+        val elements_array: t -> elt array
         val find_next: elt -> t -> elt
         val find_next_opt: elt -> t -> elt option
       end
@@ -245,6 +246,14 @@ module Set:
             (fun el ->
               f !cntr el;
               incr cntr)
+        let elements_array s =
+          let n = cardinal s in
+          let res = min_elt s |> Array.make n in
+          iteri
+            (fun i el ->
+              res.(i) <- el)
+            s;
+          res
         let find_next lo = find_first (fun k -> O.compare k lo > 0)
         let find_next_opt lo = find_first_opt (fun k -> O.compare k lo > 0)
       end
@@ -257,6 +266,7 @@ module Map:
       sig
         include module type of Map.Make(O)
         val iteri: (int -> key -> 'a -> unit) -> 'a t -> unit
+        val bindings_array: 'a t -> (key * 'a) array
         val find_next: key -> 'a t -> key * 'a
         val find_next_opt: key -> 'a t -> (key * 'a) option
       end
@@ -272,6 +282,14 @@ module Map:
             (fun k v ->
               f !cntr k v;
               incr cntr)
+        let bindings_array m =
+          let n = cardinal m in
+          let res = min_binding m |> Array.make n in
+          iteri
+            (fun i k v ->
+              res.(i) <- k, v)
+            m;
+          res
         let find_next lo = find_first (fun k -> O.compare k lo > 0)
         let find_next_opt lo = find_first_opt (fun k -> O.compare k lo > 0)
       end
