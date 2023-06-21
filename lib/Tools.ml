@@ -248,12 +248,15 @@ module Set:
               incr cntr)
         let elements_array s =
           let n = cardinal s in
-          let res = min_elt s |> Array.make n in
-          iteri
-            (fun i el ->
-              res.(i) <- el)
-            s;
-          res
+          if n > 0 then begin
+            let res = min_elt s |> Array.make n in
+            iteri
+              (fun i el ->
+                res.(i) <- el)
+              s;
+            res
+          end else
+            [||]
         let find_next lo = find_first (fun k -> O.compare k lo > 0)
         let find_next_opt lo = find_first_opt (fun k -> O.compare k lo > 0)
       end
@@ -284,12 +287,15 @@ module Map:
               incr cntr)
         let bindings_array m =
           let n = cardinal m in
-          let res = min_binding m |> Array.make n in
-          iteri
-            (fun i k v ->
-              res.(i) <- k, v)
-            m;
-          res
+          if n > 0 then begin
+            let res = min_binding m |> Array.make n in
+            iteri
+              (fun i k v ->
+                res.(i) <- k, v)
+              m;
+            res
+          end else
+            [||]
         let find_next lo = find_first (fun k -> O.compare k lo > 0)
         let find_next_opt lo = find_first_opt (fun k -> O.compare k lo > 0)
       end
