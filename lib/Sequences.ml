@@ -26,40 +26,48 @@ module Lint:
   sig
     val none: 'a -> 'a
     (* *)
-    val dnaize_bytes: ?keep_dashes:bool -> bytes -> bytes
-    val rc_bytes: ?keep_dashes:bool -> bytes -> bytes
-    val proteinize_bytes: ?keep_dashes:bool -> bytes -> bytes
+    val dnaize_bytes: ?keep_lowercase:bool -> ?keep_dashes:bool -> bytes -> bytes
+    val rc_bytes: bytes -> bytes
+    val proteinize_bytes: ?keep_lowercase:bool -> ?keep_dashes:bool -> bytes -> bytes
     (* *)
-    val dnaize: ?keep_dashes:bool -> string -> string
-    val rc: ?keep_dashes:bool -> string -> string
-    val proteinize: ?keep_dashes:bool -> string -> string
+    val dnaize: ?keep_lowercase:bool -> ?keep_dashes:bool -> string -> string
+    val rc: string -> string
+    val proteinize: ?keep_lowercase:bool -> ?keep_dashes:bool -> string -> string
   end
 = struct
     let none w = w
-    let dnaize_bytes ?(keep_dashes = false) b =
-      let open Tools.Bytes in
-      for i = 0 to length b - 1 do
-        b.@(i) <- begin
-          match b.@(i) with
+    let dnaize_bytes ?(keep_lowercase = false) ?(keep_dashes = false) b =
+      let dnaize =
+        if keep_lowercase then
+          function
+          | 'A' -> 'A' | 'a' -> 'a'
+          | 'C' -> 'C' | 'c' -> 'c'
+          | 'G' -> 'G' | 'g' -> 'g'
+          | 'T' -> 'T' | 't' -> 't'
+          | '-' when keep_dashes -> '-'
+          | _ -> 'N'
+        else
+          function
           | 'A' | 'a' -> 'A'
           | 'C' | 'c' -> 'C'
           | 'G' | 'g' -> 'G'
           | 'T' | 't' -> 'T'
           | '-' when keep_dashes -> '-'
-          | _ -> 'N'
-        end
+          | _ -> 'N' in
+      let open Tools.Bytes in
+      for i = 0 to length b - 1 do
+        b.@(i) <- dnaize b.@(i)
       done;
       b
-    let dnaize ?(keep_dashes = false) s =
-      Tools.Bytes.of_string s |> dnaize_bytes ~keep_dashes |> Tools.Bytes.to_string
-    let rc_bytes ?(keep_dashes = false) b =
+    let dnaize ?(keep_lowercase = false) ?(keep_dashes = false) s =
+      Tools.Bytes.of_string s |> dnaize_bytes ~keep_lowercase ~keep_dashes |> Tools.Bytes.to_string
+    let rc_bytes b =
       let compl = function
-        | 'A' | 'a' -> 'T'
-        | 'C' | 'c' -> 'G'
-        | 'G' | 'g' -> 'C'
-        | 'T' | 't' -> 'A'
-        | '-' when keep_dashes -> '-'
-        | _ -> 'N' in
+        | 'A' -> 'T' | 'a' -> 't'
+        | 'C' -> 'G' | 'c' -> 'g'
+        | 'G' -> 'C' | 'g' -> 'c'
+        | 'T' -> 'A' | 't' -> 'a'
+        | c -> c in
       let open Tools.Bytes in
       let red_len = length b - 1 in
       let half_len = red_len / 2 in
@@ -70,13 +78,39 @@ module Lint:
         b.@(idx) <- compl c
       done;
       b
-    let rc ?(keep_dashes = false) s =
-      Tools.Bytes.of_string s |> rc_bytes ~keep_dashes |> Tools.Bytes.to_string
-    let proteinize_bytes ?(keep_dashes = false) b =
-      let open Tools.Bytes in
-      for i = 0 to length b - 1 do
-        b.@(i) <- begin
-          match b.@(i) with
+    let rc s =
+      Tools.Bytes.of_string s |> rc_bytes |> Tools.Bytes.to_string
+    let proteinize_bytes ?(keep_lowercase = false) ?(keep_dashes = false) b =
+      let proteinize =
+        if keep_lowercase then
+          function
+          | 'A' -> 'A' | 'a' -> 'a'
+          | 'C' -> 'C' | 'c' -> 'c'
+          | 'D' -> 'D' | 'd' -> 'd'
+          | 'E' -> 'E' | 'e' -> 'e'
+          | 'F' -> 'F' | 'f' -> 'f'
+          | 'G' -> 'G' | 'g' -> 'g'
+          | 'H' -> 'H' | 'h' -> 'h'
+          | 'I' -> 'I' | 'i' -> 'i'
+          | 'K' -> 'K' | 'k' -> 'k'
+          | 'L' -> 'L' | 'l' -> 'l'
+          | 'M' -> 'M' | 'm' -> 'm'
+          | 'N' -> 'N' | 'n' -> 'n'
+          | 'O' -> 'O' | 'o' -> 'o'
+          | 'P' -> 'P' | 'p' -> 'p'
+          | 'Q' -> 'Q' | 'q' -> 'q'
+          | 'R' -> 'R' | 'r' -> 'r'
+          | 'S' -> 'S' | 's' -> 's'
+          | 'T' -> 'T' | 't' -> 't'
+          | 'U' -> 'U' | 'u' -> 'u'
+          | 'V' -> 'V' | 'v' -> 'v'
+          | 'W' -> 'W' | 'w' -> 'w'
+          | 'Y' -> 'Y' | 'y' -> 'y'
+          | '*' -> '*'
+          | '-' when keep_dashes -> '-'
+          | _ -> 'X'
+        else
+          function
           | 'A' | 'a' -> 'A'
           | 'C' | 'c' -> 'C'
           | 'D' | 'd' -> 'D'
@@ -101,12 +135,14 @@ module Lint:
           | 'Y' | 'y' -> 'Y'
           | '*' -> '*'
           | '-' when keep_dashes -> '-'
-          | _ -> 'X'
-        end
+          | _ -> 'X' in
+      let open Tools.Bytes in
+      for i = 0 to length b - 1 do
+        b.@(i) <- proteinize b.@(i)
       done;
       b
-    let proteinize ?(keep_dashes = false) s =
-      Tools.Bytes.of_string s |> proteinize_bytes ~keep_dashes |> Tools.Bytes.to_string
+    let proteinize ?(keep_lowercase = false) ?(keep_dashes = false) s =
+      Tools.Bytes.of_string s |> proteinize_bytes ~keep_lowercase ~keep_dashes |> Tools.Bytes.to_string
   end
 
 module Types =
@@ -524,9 +560,9 @@ module Reference:
   sig
     type t
     val empty: t
-    (* The optional argument is a file containing translation tables.
+    (* The last optional argument is a file containing translation tables.
         If they are absent, Table_1 (Standard) is assumed *)
-    val add_from_fasta: ?tables:string -> t -> string -> t
+    val add_from_fasta: ?linter:(string -> string) -> ?tables:string -> t -> string -> t
     val find: t -> string Types.stranded_t -> string * Translation.t
     val length: t -> string Types.stranded_t -> int
     val get_sequence: t -> Types.stranded_interval_t -> string
@@ -540,7 +576,8 @@ module Reference:
     type t = (string * Translation.t) StrandedStringMap.t
     let empty = StrandedStringMap.empty
     module StringMap = Map.Make(String)
-    let add_from_fasta ?(tables = "") obj input =
+    let add_from_fasta ?(linter = Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(tables = "")
+                       obj input =
       let tables =
         let res = ref StringMap.empty in
         if tables <> "" then begin
@@ -595,7 +632,7 @@ module Reference:
             name := String.sub line 1 (String.length line - 1);
             Buffer.clear seq
           end else
-            Buffer.add_bytes seq (Lint.dnaize_bytes (Bytes.of_string line))
+            Buffer.add_string seq (linter line)
         done
       with End_of_file ->
         process_seq ();

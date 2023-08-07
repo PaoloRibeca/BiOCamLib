@@ -122,6 +122,7 @@ module Array:
     val of_rlist: 'a list -> 'a array
     val riter: ('a -> unit) -> 'a array -> unit
     val riteri: (int -> 'a -> unit) -> 'a array -> unit
+    val resize: ?is_buffer:bool -> int -> 'a -> 'a array -> 'a array
   end
 = struct
     include Array
@@ -135,6 +136,23 @@ module Array:
       for i = Array.length a - 1 downto 0 do
         Array.unsafe_get a i |> f i
       done
+    let resize ?(is_buffer = false) n null a =
+      let l = Array.length a in
+      if n > l then begin
+        let res =
+          Array.make begin
+            if is_buffer then
+              max n (l * 14 / 10)
+            else
+              n
+          end null in
+        Array.blit a 0 res 0 l;
+        res
+      end else if n < l && not is_buffer then
+        (* We have to resize in order to honour the request *)
+        Array.sub a 0 n
+      else
+        a
   end
 
 module Printf:
@@ -226,7 +244,7 @@ module IntHashtbl = Hashtbl.Make (IntHash)
 module Set:
   sig
     include module type of Set
-    module Make (O:Set.OrderedType):
+    module Make (O: Set.OrderedType):
       sig
         include module type of Set.Make(O)
         val iteri: (int -> elt -> unit) -> t -> unit
@@ -237,7 +255,7 @@ module Set:
   end
 = struct
     include Set
-    module Make (O:Set.OrderedType) =
+    module Make (O: Set.OrderedType) =
       struct
         include Set.Make(O)
         let iteri f =
@@ -265,7 +283,7 @@ module Set:
 module Map:
   sig
     include module type of Map
-    module Make (O:Map.OrderedType):
+    module Make (O: Map.OrderedType):
       sig
         include module type of Map.Make(O)
         val iteri: (int -> key -> 'a -> unit) -> 'a t -> unit
@@ -276,7 +294,7 @@ module Map:
   end
 = struct
     include Map
-    module Make (O:Map.OrderedType) =
+    module Make (O: Map.OrderedType) =
       struct
         include Map.Make(O)
         let iteri f =
@@ -346,13 +364,11 @@ module StringRSet: module type of Set.Make (RComparableString) = Set.Make (RComp
 module StringRMap: module type of Map.Make (RComparableString) = Map.Make (RComparableString)
 
 (* An ordered multimap is a map 'key -> 'val Set (no duplications allowed) *)
-module Multimap (OKey:Map.OrderedType) (OVal:Set.OrderedType) =
+module Multimap (OrdKey: Map.OrderedType) (OrdVal: Set.OrderedType) =
   struct
-    module KeyOrd = OKey
-    module ValOrd = OVal
-    (* Keys have type OKey.t, values OVal.t *)
-    module KeyMap = Map.Make (OKey)
-    module ValSet = Set.Make (OVal)
+    (* Keys have type OrdKey.t, values OrdVal.t *)
+    module KeyMap = Map.Make (OrdKey)
+    module ValSet = Set.Make (OrdVal)
     (* To store the values *)
     type t = ValSet.t KeyMap.t
     let empty = KeyMap.empty
@@ -415,114 +431,118 @@ module TransitiveClosure =
     module type T_t =
       sig
         type element_t
+        type set_t
         type t
         val empty: unit -> t
-        val add_one: t -> element_t -> t
-        val add_two: t -> element_t -> element_t -> t
+        val add_equivalences: t -> set_t -> unit
+        val cardinal: t -> int
         val iter: (unit -> element_t -> unit) -> t -> unit
       end
-    module Make (T: TypeContainer_t):
-      T_t with type element_t := T.t
+    module Make (O: Set.OrderedType):
+      T_t with type element_t := O.t and type set_t := Set.Make(O).t
     = struct
-        type element_t = T.t
-        type class_t =
-          | Singleton of element_t
-          | Node of class_t * class_t
-        module ElementMap = Map.Make (MakeComparable (T))
+        type element_t = O.t
+        module ValueSet = Set.Make (O)
         type t = {
-          (* Each class has an associated unique numerical ID for fast comparison *)
-          elements_to_classes: (int * class_t) ElementMap.t;
-          ids_to_classes: class_t IntMap.t;
-          id: int
+          (* We need this, which is also the ID of the next element,
+              because vectors will be buffers and hence
+              the size of id_to_element might not coincide with it *)
+          mutable cardinal: int;
+          (* Elements having a general type are hashed to integers.
+             The hash contains:
+              (1) The element ID (a progressive integer)
+              (2) The index of the first relation the element appears in *)
+          hash: (element_t, int * int) Hashtbl.t;
+          (* The inverse of the previous one *)
+          mutable id_to_element: element_t array;
+          (* We need this because vectors will be buffers and hence
+              the size of relations_to_classes might not coincide with it *)
+          mutable relation_number: int;
+          (* We keep track of relations as they are progressively added.
+             The class of a relation is the lowest relation index of its elements *)
+          mutable relation_to_class: int array;
+          (* The classes *)
+          mutable classes: IntSet.t IntMap.t
         }
-        let rec iter_class f = function
-          | Singleton el -> f el
-          | Node (cl_l, cl_r) ->
-            iter_class f cl_l;
-            iter_class f cl_r
         let empty () = {
-          elements_to_classes = ElementMap.empty;
-          ids_to_classes = IntMap.empty;
-          id = 0
+          cardinal = 0;
+          hash = Hashtbl.create 128;
+          id_to_element = [||];
+          relation_number = 0;
+          relation_to_class = [||];
+          classes = IntMap.empty
         }
-        let add_one tc el =
-          match ElementMap.find_opt el tc.elements_to_classes with
-          | None ->
-            (* The element is in its own separate equivalence class *)
-            let cl = Singleton el in
-            { elements_to_classes = ElementMap.add el (tc.id, cl) tc.elements_to_classes;
-              ids_to_classes = IntMap.add tc.id cl tc.ids_to_classes;
-              id = tc.id + 1 }
-          | Some _ ->
-            tc
-        (* Adds two equivalent elements *)
-        let add_two tc el_1 el_2 =
-          let tc = add_one tc el_1 in
-          let tc = add_one tc el_2 in
-          let id_1, cl_1 = ElementMap.find el_1 tc.elements_to_classes
-          and id_2, cl_2 = ElementMap.find el_2 tc.elements_to_classes in
-          if id_1 = id_2 then
-            (* Nothing to do - elements belonging to the same class *)
-            tc
-          else begin
-            let cl = Node (cl_1, cl_2) and res = ref tc.elements_to_classes in
-            iter_class
-              (fun el ->
-                res := ElementMap.add el (tc.id, cl) !res)
-              cl;
-            { elements_to_classes = !res;
-              ids_to_classes =
-                IntMap.(remove id_1 tc.ids_to_classes |> remove id_2 |> add tc.id cl);
-              id = tc.id + 1 }
+        let add_equivalences tc set =
+          if set <> ValueSet.empty then begin
+            (* We'll need the new relation when inserting new elements,
+                so we have to initialise it immediately *)            
+            (*Printf.eprintf "Processing relation #%d...\n%!" tc.relation_number;*)
+            (* We make sure there is enough space in relations_to_classes *)
+            tc.relation_to_class <- Array.resize ~is_buffer:true (tc.relation_number + 1) (-1) tc.relation_to_class;
+            (* For the time being, the new relations are in a class of their own *)
+            tc.relation_to_class.(tc.relation_number) <- tc.relation_number;
+            (* Here new_class are the new elements appearing in the relation,
+                and new_relation are the classes to be merged *)
+            let new_class = ref IntSet.empty and new_relation = ref IntSet.empty in
+            ValueSet.iter
+              (fun element ->
+                if Hashtbl.mem tc.hash element |> not then begin
+                  Hashtbl.add tc.hash element (tc.cardinal, tc.relation_number);
+                  (* We make sure there is enough space in id_to_element *)
+                  tc.id_to_element <- Array.resize ~is_buffer:true (tc.cardinal + 1) element tc.id_to_element;
+                  tc.id_to_element.(tc.cardinal) <- element;
+                  new_class := IntSet.add tc.cardinal !new_class;
+                  tc.cardinal <- tc.cardinal + 1
+                end;
+                let _, relation = Hashtbl.find tc.hash element in
+                if relation <> tc.relation_number then begin
+                  (* Update dangling links *)
+                  let dangling = ref IntSet.empty in
+                  while IntMap.mem tc.relation_to_class.(relation) tc.classes |> not do
+                    dangling := IntSet.add relation !dangling;
+                    tc.relation_to_class.(relation) <- tc.relation_to_class.(tc.relation_to_class.(relation))
+                  done;
+                  let ok = tc.relation_to_class.(relation) in
+                  IntSet.iter
+                    (fun relation ->
+                      tc.relation_to_class.(relation) <- ok)
+                    !dangling
+                end;
+                new_relation := IntSet.add tc.relation_to_class.(relation) !new_relation)
+              set;
+            let new_class = !new_class and new_relation = !new_relation in
+            (*Printf.eprintf " New class: %d -> {" tc.relation_number;
+            IntSet.iter (Printf.eprintf " %d") new_class;
+            Printf.eprintf " } (elements)\n%!";
+            Printf.eprintf " New relation: %d -> {" tc.relation_number;
+            IntSet.iter (Printf.eprintf " %d") new_relation;
+            Printf.eprintf " } (classes)\n%!";*)
+            if new_class <> IntSet.empty then
+              tc.classes <- IntMap.add tc.relation_number new_class tc.classes;
+            (* We can update the relations ID now - DON'T MOVE *)
+            tc.relation_number <- tc.relation_number + 1;
+            (* We merge and update classes *)
+            let min_class = IntSet.min_elt new_relation in
+            (*Printf.eprintf " Minimum class is %d\n%!" min_class;*)
+            let union = ref IntSet.empty in
+            IntSet.iter
+              (fun class_ ->
+                tc.relation_to_class.(class_) <- min_class;
+                union := IntMap.find class_ tc.classes |> IntSet.union !union;
+                tc.classes <- IntMap.remove class_ tc.classes)
+              new_relation;
+            tc.classes <- IntMap.add min_class !union tc.classes
           end
+        let cardinal tc = tc.cardinal
         let iter f' tc =
           IntMap.iter
-            (fun _ ->
+            (fun _ elements ->
               let f = f' () in
-              iter_class f)
-            tc.ids_to_classes
+              IntSet.iter
+                (fun id -> f tc.id_to_element.(id))
+                elements)
+            tc.classes
       end
-  end
-module IntTransitiveClosure = TransitiveClosure.Make (struct type t = int end)
-(* Optimised implementation for String that hashes elements *)
-module StringTransitiveClosure:
-  TransitiveClosure.T_t with type element_t := string
-= struct
-    type t = {
-      tc: IntTransitiveClosure.t;
-      string_to_int: (string, int) Hashtbl.t;
-      int_to_string: (int, string) Hashtbl.t;
-      id: int
-    }
-    let empty () = {
-      tc = IntTransitiveClosure.empty ();
-      string_to_int = Hashtbl.create 16;
-      int_to_string = Hashtbl.create 16;
-      id = 0
-    }
-    let add_one tc el =
-      if Hashtbl.mem tc.string_to_int el then
-        tc
-      else begin
-        Hashtbl.add tc.string_to_int el tc.id;
-        Hashtbl.add tc.int_to_string tc.id el;
-        { tc with
-          tc = Hashtbl.find tc.string_to_int el |> IntTransitiveClosure.add_one tc.tc;
-          id = tc.id + 1 }
-      end
-    let add_two tc el_1 el_2 =
-      let tc = add_one tc el_1 in
-      let tc = add_one tc el_2 in
-      { tc with
-        tc =
-          IntTransitiveClosure.add_two tc.tc
-            (Hashtbl.find tc.string_to_int el_1) (Hashtbl.find tc.string_to_int el_2) }
-    let iter f' tc =
-      IntTransitiveClosure.iter
-        (fun () ->
-          let string_f = f' () in
-          fun i -> Hashtbl.find tc.int_to_string i |> string_f)
-        tc.tc
   end
 
 module Trie:

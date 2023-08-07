@@ -5,6 +5,7 @@ BiOCamLib is the [OCaml](https://ocaml.org) foundation upon which a number of th
 It mostly consists of a library &mdash; you'll need to clone this repository if you want to manually compile other programs I've developed, notably [SiNPle](https://github.com/PaoloRibeca/SiNPle) or [KPop](https://github.com/PaoloRibeca/KPop). You might also use the library for your own programs, if you are familiar with OCaml and patient enough to read the code.
 
 As a bonus, BiOCamLib comes bundled with a few programs:
+* `RC`, which can efficiently compute the reverse complement of (possibly very long) sequences. Each sequence should be input on a separate line &mdash; lines are processed one by one and not buffered. I use this program in many of my workflows.
 * `Octopus`, which is a high-throughput program to compute the transitive closure of strings. For instance, the input
   ```
   A duh
@@ -22,7 +23,7 @@ As a bonus, BiOCamLib comes bundled with a few programs:
 * `Parallel`, which allows you to split and process an input file chunk-wise using the reader/workers/writer model implemented in `BiOCamLib.Tools.Parallel`. You can see it as a demonstration of the capabilities of the library, but I also often use it as a useful tool to solve real-life problems.
 * `FASTools`, which is a Swiss-knife tool for the manipulation of FASTA/FASTQ files. It supports all formats (FASTA, single- and paired-end FASTQ, interleaved FASTQ) and a simpler tabular format whereby FASTA/FASTQ records are represented as tab-separated lines. It facilitates format interconversions and other manipulations.
 
-## Installing `Octopus`, `Parallel`, and `FASTools`
+## Installing `RC`, `Octopus`, `Parallel`, and `FASTools`
 
 > :warning: Note that the only operating systems we officially support are Linux and MacOS. :warning:
 >
@@ -40,7 +41,7 @@ You can download pre-compiled binaries for Linux and MacOS x86_64 from our [rele
 
 ### Manual install
 
-Alternatively, you can install `Octopus`, `Parallel`, and `FASTools` manually by cloning and compiling the BiOCamLib sources. You'll need an up-to-date distribution of the OCaml compiler and the [Dune package manager](https://github.com/ocaml/dune) for that. Both can be installed through [OPAM](https://opam.ocaml.org/), the official OCaml distribution system. Once you have a working OPAM distribution you'll also have a working OCaml compiler, and Dune can be installed with the command
+Alternatively, you can install `RC`, `Octopus`, `Parallel`, and `FASTools` manually by cloning and compiling the BiOCamLib sources. You'll need an up-to-date distribution of the OCaml compiler and the [Dune package manager](https://github.com/ocaml/dune) for that. Both can be installed through [OPAM](https://opam.ocaml.org/), the official OCaml distribution system. Once you have a working OPAM distribution you'll also have a working OCaml compiler, and Dune can be installed with the command
 ```bash
 $ opam install dune
 ```
@@ -51,7 +52,15 @@ Then go to the directory into which you have downloaded the latest BiOCamLib sou
 $ ./BUILD
 ```
 
-That should generate the executables `Octopus`, `Parallel`, and `FASTools`. Copy them to some favourite location in your PATH, for instance `~/.local/bin`.
+That should generate the executables `RC`, `Octopus`, `Parallel`, and `FASTools`. Copy them to some favourite location in your PATH, for instance `~/.local/bin`.
+
+## How to use `RC`
+
+`RC` has no command line options. It inputs sequences from standard input and outputs their reverse complement to standard output, one sequence at the time. Hence, `RC` can be conveniently used in a subprocess. For example, the command
+```bash
+$ echo GAtTaCA | RC
+```
+would produce `TGtAaTC`. Note that non-`[ACGTacgt]` characters are output unmodified, so sequence validation and linting must be performed elsewhere whenever they are necessary.
 
 ## Command line options for `Octopus`
 
@@ -62,7 +71,7 @@ $ Octopus -h
 in your terminal. You will see a header containing information about the version:
 
 ```
-This is the Octopus program (version 0.3)
+This is the Octopus program (version 0.4)
  (c) 2016-2023 Paolo Ribeca, <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -124,8 +133,8 @@ $ FASTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is the FASTools program (version 0.4)
- (c) 2022 Paolo Ribeca, <paolo.ribeca@gmail.com>
+This is the FASTools program (version 0.5)
+ (c) 2022-2023 Paolo Ribeca, <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
 ```
@@ -157,6 +166,7 @@ Executed delayed in order of specification, default=<mark>_-F_</mark>.
 | `-t`<br>`--tabular` | _&lt;tabular\_file\_name&gt;_ |  process input file containing FAST\[A&#124;Q\] records as tab\-separated lines |  |
 | `-T` |  |  process FAST\[A&#124;Q\] records in tabular form from standard input |  |
 | `-l`<br>`--linter` | _'none'&#124;'DNA'&#124;'dna'&#124;'protein'_ |  sets linter for sequence\.<br>All non\-base \(for DNA\) or non\-AA \(for protein\) characters  are converted to unknowns | <ins>default=<mark>_none_</mark></ins> |
+| `--linter-keep-lowercase` | _&lt;bool&gt;_ |  sets whether the linter should keep lowercase DNA/protein characters  appearing in sequences rather than capitalise them | <ins>default=<mark>_false_</mark></ins> |
 | `--linter-keep-dashes` | _&lt;bool&gt;_ |  sets whether the linter should keep dashes appearing in sequences  or convert them to unknowns | <ins>default=<mark>_false_</mark></ins> |
 | `-o`<br>`--output` | _&lt;output\_file\_name&gt;_ |  set the name of the output file\.<br>Files are kept open, and it is possible to switch between them  by repeatedly using this option\.<br>Use '/dev/stdout' for standard output | <ins>default=<mark>_/dev/stdout_</mark></ins> |
 | `-O`<br>`--paired-end-output` | _&lt;output\_file\_name\_1&gt; &lt;output\_file\_name\_2&gt;_ |  set the names of paired\-end FASTQ output files\.<br>Files are kept open, and it is possible to switch between them  by repeatedly using this option\.<br>Use '/dev/stdout' for standard output | <ins>default=<mark>_/dev/stdout /dev/stdout_</mark></ins> |

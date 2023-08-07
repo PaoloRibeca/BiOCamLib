@@ -91,7 +91,8 @@ module FASTA:
       string -> (int -> (string * string) list -> 'a) -> ('a -> unit) -> int -> unit
   end
 = struct
-    let iter ?(linter = Sequences.Lint.dnaize ~keep_dashes:false) ?(verbose = false) f filename =
+    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
+             f filename =
       let file = open_in filename and progr = ref 0 and current = ref "" and seq = Buffer.create 1048576 in
       if verbose then
         Printf.eprintf "(%s): Reading FASTA file '%s'...%!" __FUNCTION__ filename;
@@ -117,8 +118,8 @@ module FASTA:
         close_in file;
         if verbose then
           Printf.eprintf " done.\n%!"
-    let parallel_iter ?(linter = Sequences.Lint.dnaize ~keep_dashes:false) ?(buffered_chunks_per_thread = 10)
-                      ?(max_memory = 1000000000) ?(verbose = false)
+    let parallel_iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
+                      ?(buffered_chunks_per_thread = 10) ?(max_memory = 1000000000) ?(verbose = false)
                       filename (f:int -> (string * string) list -> 'a) (g:'a -> unit) threads =
       let max_block_bytes = max_memory / (buffered_chunks_per_thread * threads) in
       (* Parallel section *)
@@ -195,7 +196,8 @@ module FASTQ:
       (int -> string -> string -> string -> string -> string -> string -> unit) -> string -> unit
   end
 = struct
-    let iter_se ?(linter = Sequences.Lint.dnaize ~keep_dashes:false) ?(verbose = false) f file =
+    let iter_se ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
+                f file =
       let read = ref 0 and input = open_in file in
       if verbose then
         Printf.eprintf "(%s): Reading SE FASTQ file '%s'...%!" __FUNCTION__ file;
@@ -215,7 +217,8 @@ module FASTQ:
       close_in input;
       if verbose then
         Printf.eprintf " done.\n%!"
-    let iter_pe ?(linter = Sequences.Lint.dnaize ~keep_dashes:false) ?(verbose = false) f file1 file2 =
+    let iter_pe ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
+                f file1 file2 =
       let read = ref 0 and input1 = open_in file1 and input2 = open_in file2 in
       if verbose then
         Printf.eprintf "(%s): Reading PE FASTQ files '%s' and '%s'...%!" __FUNCTION__ file1 file2;
@@ -243,7 +246,8 @@ module FASTQ:
       close_in input2;
       if verbose then
         Printf.eprintf " done.\n%!"
-    let iter_il ?(linter = Sequences.Lint.dnaize ~keep_dashes:false) ?(verbose = false) f file =
+    let iter_il ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
+                f file =
       let read = ref 0 and input = open_in file in
       if verbose then
         Printf.eprintf "(%s): Reading interleaved PE FASTQ file '%s'...%!" __FUNCTION__ file;
@@ -279,7 +283,8 @@ module Tabular:
       (int -> string -> string -> string -> string -> string -> string -> unit) -> string -> unit
   end
 = struct
-    let iter ?(linter = Sequences.Lint.dnaize ~keep_dashes:false) ?(verbose = false) f g filename =
+    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
+             f g filename =
       let file = open_in filename and progr = ref 0 in
       if verbose then
         Printf.eprintf "(%s): Reading tabular file '%s'...%!" __FUNCTION__ filename;
@@ -340,7 +345,7 @@ module ReadsIterate:
     let length = Array.length
     let add_from_files files file =
       Array.append files [| file |]
-    let iter ?(linter = Sequences.Lint.dnaize ~keep_dashes:false) ?(verbose = false) f =
+    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false) f =
       Array.iter
         (function
           | Type.FASTA file ->
@@ -427,7 +432,8 @@ module ReadsStore:
       let res = ref 0 in
       iter (fun _ _ segm -> res := !res + String.length segm.seq) store;
       !res
-    let add_from_files ?(linter = Sequences.Lint.dnaize ~keep_dashes:false) ?(verbose = false) orig file =
+    let add_from_files ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
+                       orig file =
       let res = ref [] in
       begin match file with
       | Type.FASTA file ->

@@ -1,5 +1,5 @@
 (*
-    FASTools.ml -- (c) 2022 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    FASTools.ml -- (c) 2022-2023 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     FASTools allows to perform a number of basic manipulations on
     FASTA and FASTQ files.
@@ -35,6 +35,7 @@ and working_mode_t =
 and to_do_t =
   | SetWorkingMode of working_mode_t
   | SetLinter of linter_t
+  | SetLinterKeepLowercase of bool
   | SetLinterKeepDashes of bool
   | ProcessInput of Files.Type.t
   | SetOutput of string
@@ -57,12 +58,12 @@ module Parameters =
     let verbose = ref Defaults.verbose
   end
 
-let version = "0.4"
+let version = "0.5"
 
 let header =
   Printf.sprintf begin
     "This is the FASTools program (version %s)\n%!" ^^
-    " (c) 2022 Paolo Ribeca, <paolo.ribeca@gmail.com>\n%!"
+    " (c) 2022-2023 Paolo Ribeca, <paolo.ribeca@gmail.com>\n%!"
   end version
 
 let _ =
@@ -157,10 +158,16 @@ let _ =
             Printf.sprintf "Unknown linter '%s'" w |> TA.parse_error;
             assert false (* Just to please the compiler *)
         end |> Tools.List.accum Parameters.program);
+    [ "--linter-keep-lowercase" ],
+      Some "<bool>",
+      [ "sets whether the linter should keep lowercase DNA/protein characters";
+        " appearing in sequences rather than capitalise them" ],
+      TA.Default (fun () -> "false"),
+      (fun _ -> SetLinterKeepLowercase (TA.get_parameter_boolean ()) |> Tools.List.accum Parameters.program);
     [ "--linter-keep-dashes" ],
       Some "<bool>",
       [ "sets whether the linter should keep dashes appearing in sequences";
-        " or convert them to unknowns" ],
+        " rather than convert them to unknowns" ],
       TA.Default (fun () -> "false"),
       (fun _ -> SetLinterKeepDashes (TA.get_parameter_boolean ()) |> Tools.List.accum Parameters.program);
     [ "-o"; "--output" ],
@@ -210,13 +217,17 @@ let _ =
       (fun _ -> TA.usage (); exit 1)
   ];
   let working_mode = ref Compact
-  and linter = ref None and linter_keep_dashes = ref false and linter_f = ref Sequences.Lint.none
+  and linter_keep_lowercase = ref false and linter_keep_dashes = ref false
+  and linter = ref None and linter_f = ref Sequences.Lint.none
   and outputs = StringMap.singleton "/dev/stdout" stdout |> ref in
   let [@warning "-5"] set_linter_f () =
     match !linter with
-    | None -> linter_f := Sequences.Lint.none
-    | DNA -> linter_f := Sequences.Lint.dnaize ~keep_dashes:!linter_keep_dashes
-    | Protein -> linter_f := Sequences.Lint.proteinize ~keep_dashes:!linter_keep_dashes
+    | None ->
+      linter_f := Sequences.Lint.none
+    | DNA ->
+      linter_f := Sequences.Lint.dnaize ~keep_lowercase:!linter_keep_lowercase ~keep_dashes:!linter_keep_dashes
+    | Protein ->
+      linter_f := Sequences.Lint.proteinize ~keep_lowercase:!linter_keep_lowercase ~keep_dashes:!linter_keep_dashes
   and get_output_stream fname output =
     match StringMap.find_opt fname !outputs with
     | Some o ->
@@ -295,6 +306,9 @@ let _ =
         working_mode := mode
       | SetLinter l ->
         linter := l;
+        set_linter_f ()
+      | SetLinterKeepLowercase b ->
+        linter_keep_lowercase := b;
         set_linter_f ()
       | SetLinterKeepDashes b ->
         linter_keep_dashes := b;

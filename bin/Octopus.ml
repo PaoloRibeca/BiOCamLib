@@ -25,7 +25,7 @@ module Parameters =
     let [@warning "-32"] verbose = ref Defaults.verbose
   end
 
-let version = "0.3"
+let version = "0.4"
 
 let header =
   Printf.sprintf begin
@@ -64,21 +64,13 @@ let () =
       TA.Optional,
       (fun _ -> TA.usage (); exit 1)
   ];
-  let module TC = Tools.StringTransitiveClosure in
-  let re_whitespace = Str.regexp "[ \t]+" and res = TC.empty () |> ref in
+  let module TC = Tools.TransitiveClosure.Make (Tools.ComparableString) in
+  let re_whitespace = Str.regexp "[ \t]+" and res = TC.empty () in
   try
     while true do
       (* Note that whitespace at the beginning or the end of the line will be ignored *)
-      let line = input_line stdin |> Tools.Split.as_list re_whitespace in
-      match line with
-      | [] -> ()
-      | el :: [] ->
-        res := TC.add_one !res el
-      | hd :: tl ->
-        List.iter
-          (fun el ->
-            res := TC.add_two !res hd el)
-          tl
+      let line = input_line stdin |> Tools.Split.as_list re_whitespace |> Tools.StringSet.of_list in
+      TC.add_equivalences res line
     done
   with End_of_file ->
     let done_first_line = ref false in
@@ -95,7 +87,7 @@ let () =
           else
             done_first_elem := true;
           Printf.printf "%s" el))
-      !res;
+      res;
     if !done_first_line then
       Printf.printf "\n%!"
 
