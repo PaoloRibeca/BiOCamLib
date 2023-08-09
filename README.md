@@ -6,20 +6,7 @@ It mostly consists of a library &mdash; you'll need to clone this repository if 
 
 As a bonus, BiOCamLib comes bundled with a few programs:
 * `RC`, which can efficiently compute the reverse complement of (possibly very long) sequences. Each sequence should be input on a separate line &mdash; lines are processed one by one and not buffered. I use this program in many of my workflows.
-* `Octopus`, which is a high-throughput program to compute the transitive closure of strings. For instance, the input
-  ```
-  A duh
-  b C
-  c f e
-  duh zz x
-  b c
-  ```
-  will result in the output
-  ```
-  A       duh     zz      x
-  b       C       c       f       e
-  ```
-  (tab-separated) once processed by `Octopus`. This is useful to cluster things.
+* `Octopus`, which is a high-throughput program to compute the transitive closure of strings. This is useful to cluster things.
 * `Parallel`, which allows you to split and process an input file chunk-wise using the reader/workers/writer model implemented in `BiOCamLib.Tools.Parallel`. You can see it as a demonstration of the capabilities of the library, but I also often use it as a useful tool to solve real-life problems.
 * `FASTools`, which is a Swiss-knife tool for the manipulation of FASTA/FASTQ files. It supports all formats (FASTA, single- and paired-end FASTQ, interleaved FASTQ) and a simpler tabular format whereby FASTA/FASTQ records are represented as tab-separated lines. It facilitates format interconversions and other manipulations.
 
@@ -54,15 +41,64 @@ $ ./BUILD
 
 That should generate the executables `RC`, `Octopus`, `Parallel`, and `FASTools`. Copy them to some favourite location in your PATH, for instance `~/.local/bin`.
 
-## How to use `RC`
+## Using `RC`
 
-`RC` has no command line options. It inputs sequences from standard input and outputs their reverse complement to standard output, one sequence at the time. Hence, `RC` can be conveniently used in a subprocess. For example, the command
+`RC` inputs sequences from standard input and outputs their reverse complement to standard output, one sequence at the time. Hence, `RC` can be conveniently used in a subprocess. For example, the command
 ```bash
 $ echo GAtTaCA | RC
 ```
 would produce `TGtAaTC`. Note that non-`[ACGTacgt]` characters are output unmodified, so sequence validation and linting must be performed elsewhere whenever they are necessary.
 
-## Command line options for `Octopus`
+### Command line options
+
+This is the full list of command line options available for the program `RC`. You can visualise the list by typing
+```bash
+$ RC -h
+```
+in your terminal. You will see a header containing information about the version:
+```
+This is the RC program (version 0.2)
+ (c) 2023 Paolo Ribeca, <paolo.ribeca@gmail.com>
+```
+followed by detailed information. The general form(s) the command can be used is:
+```
+RC [OPTIONS]
+```
+
+**Algorithm**
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-C`<br>`--no-complement` |  |  do not base\-complement the sequence | <ins>default=<mark>_base\-complement_</mark></ins> |
+
+**Miscellaneous**
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-V`<br>`--version` |  |  print version and exit |  |
+| `-h`<br>`--help` |  |  print syntax and exit |  |
+
+## Using `Octopus`
+
+`Octopus` reads from its standard input equivalence relations, one set of relations per line. Each line consists of a set of strings separated by whitespace; if any two labels appear on the same line, they are considered to belong to the same equivalence class. When all the input has been parsed, `Octopus` outputs all the labels seen in the input sorted according to their equivalence class &mdash; each line contains one equivalence class, with its member string labels separated by a `\t` character. The order in which classes appear is kept, but elements within the class will be lexicographically sorted. For example, the command
+```bash
+$ (cat <<___
+A duh
+  b  C
+c f e
+ duh zz x
+b c
+___
+) | Octopus
+```
+(without the first `$` prompt character) will result in the output
+```
+A       duh     x       zz
+C       b       c       e       f
+```
+(tab-separated).
+
+### Command line options for `Octopus`
 
 This is the full list of command line options available for the program `Octopus`. You can visualise the list by typing
 ```bash

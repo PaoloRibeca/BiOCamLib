@@ -49,11 +49,39 @@ module Float:
     let round x = if x >= 0. then floor (x +. 0.5) else ceil (x -. 0.5)
   end
 
+module Bytes:
+  sig
+    include module type of Bytes
+    val ( ^ ): bytes -> bytes -> bytes
+    val ( .@() ): bytes -> int -> char
+    val ( .@()<- ): bytes -> int -> char -> unit
+    (* In-place flipping *)
+    val rev: bytes -> unit
+    val accum: bytes ref -> bytes -> unit
+  end
+= struct
+    include Bytes
+    let ( ^ ) = Bytes.cat
+    let ( .@() ) = Bytes.get
+    let ( .@()<- ) = Bytes.set
+    let rev b =
+      let red_len = length b - 1 in
+      let half_len = red_len / 2 in
+      for i = 0 to half_len do
+        let idx = red_len - i in
+        let c = b.@(i) in
+        b.@(i) <- b.@(idx);
+        b.@(idx) <- c
+      done
+      let accum br b = br := !br ^ b
+  end
+
 module String:
   sig
     include module type of String
     val ( ^ ): string -> string -> string
     val ( .@() ): string -> int -> char
+    val rev: string -> string
     val accum: string ref -> string -> unit
     val pluralize: ?plural:string -> one:'a -> string -> 'a -> string
     val pluralize_int : ?plural:string -> string -> int -> string
@@ -63,6 +91,11 @@ module String:
     include String
     let ( ^ ) = Stdlib.( ^ )
     let ( .@() ) = String.get
+    let rev s =
+      (* This function allocates memory *)
+      let b = Bytes.of_string s in
+      Bytes.rev b;
+      Bytes.unsafe_to_string b
     let accum sr s = sr := !sr ^ s
     let pluralize (type a) ?(plural = "") ~(one:a) s n =
       if n = one then
@@ -73,22 +106,6 @@ module String:
         s ^ "s"
     let pluralize_int = pluralize ~one:1
     let pluralize_float = pluralize ~one:1.
-  end
-
-module Bytes:
-  sig
-    include module type of Bytes
-    val ( ^ ): bytes -> bytes -> bytes
-    val ( .@() ): bytes -> int -> char
-    val ( .@()<- ): bytes -> int -> char -> unit
-    val accum: bytes ref -> bytes -> unit
-  end
-= struct
-    include Bytes
-    let ( ^ ) = Bytes.cat
-    let ( .@() ) = Bytes.get
-    let ( .@()<- ) = Bytes.set
-    let accum br b = br := !br ^ b
   end
 
 module List:

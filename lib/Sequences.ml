@@ -25,10 +25,10 @@
 module Lint:
   sig
     val none: 'a -> 'a
-    (* *)
-    val dnaize_bytes: ?keep_lowercase:bool -> ?keep_dashes:bool -> bytes -> bytes
-    val rc_bytes: bytes -> bytes
-    val proteinize_bytes: ?keep_lowercase:bool -> ?keep_dashes:bool -> bytes -> bytes
+    (* The _bytes functions modify content in place *)
+    val dnaize_bytes: ?keep_lowercase:bool -> ?keep_dashes:bool -> bytes -> unit
+    val rc_bytes: bytes -> unit
+    val proteinize_bytes: ?keep_lowercase:bool -> ?keep_dashes:bool -> bytes -> unit
     (* *)
     val dnaize: ?keep_lowercase:bool -> ?keep_dashes:bool -> string -> string
     val rc: string -> string
@@ -57,29 +57,31 @@ module Lint:
       let open Tools.Bytes in
       for i = 0 to length b - 1 do
         b.@(i) <- dnaize b.@(i)
-      done;
-      b
+      done
     let dnaize ?(keep_lowercase = false) ?(keep_dashes = false) s =
-      Tools.Bytes.of_string s |> dnaize_bytes ~keep_lowercase ~keep_dashes |> Tools.Bytes.to_string
+      (* This function allocates memory *)
+      let b = Tools.Bytes.of_string s in
+      dnaize_bytes ~keep_lowercase ~keep_dashes b;
+      Tools.Bytes.unsafe_to_string b
     let rc_bytes b =
-      let compl = function
-        | 'A' -> 'T' | 'a' -> 't'
-        | 'C' -> 'G' | 'c' -> 'g'
-        | 'G' -> 'C' | 'g' -> 'c'
-        | 'T' -> 'A' | 't' -> 'a'
-        | c -> c in
       let open Tools.Bytes in
-      let red_len = length b - 1 in
-      let half_len = red_len / 2 in
-      for i = 0 to half_len do
-        let idx = red_len - i in
-        let c = b.@(i) in
-        b.@(i) <- compl b.@(idx);
-        b.@(idx) <- compl c
-      done;
-      b
+      rev b;
+      iteri
+        (fun i c ->
+          b.@(i) <- begin
+            match c with
+            | 'A' -> 'T' | 'a' -> 't'
+            | 'C' -> 'G' | 'c' -> 'g'
+            | 'G' -> 'C' | 'g' -> 'c'
+            | 'T' -> 'A' | 't' -> 'a'
+            | c -> c
+          end)
+        b
     let rc s =
-      Tools.Bytes.of_string s |> rc_bytes |> Tools.Bytes.to_string
+      (* This function allocates memory *)
+      let b = Tools.Bytes.of_string s in
+      rc_bytes b;
+      Tools.Bytes.unsafe_to_string b
     let proteinize_bytes ?(keep_lowercase = false) ?(keep_dashes = false) b =
       let proteinize =
         if keep_lowercase then
@@ -139,10 +141,12 @@ module Lint:
       let open Tools.Bytes in
       for i = 0 to length b - 1 do
         b.@(i) <- proteinize b.@(i)
-      done;
-      b
+      done
     let proteinize ?(keep_lowercase = false) ?(keep_dashes = false) s =
-      Tools.Bytes.of_string s |> proteinize_bytes ~keep_lowercase ~keep_dashes |> Tools.Bytes.to_string
+      (* This function allocates memory *)
+      let b = Tools.Bytes.of_string s in
+      proteinize_bytes ~keep_lowercase ~keep_dashes b;
+      Tools.Bytes.unsafe_to_string b
   end
 
 module Types =
