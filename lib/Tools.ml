@@ -873,6 +873,8 @@ module BA:
         val sub: t -> int -> int -> t
         val blit: t -> t -> unit
         val fill: t -> N.t -> unit
+        val resize: ?is_buffer:bool -> int -> N.t -> t -> t
+        val to_floatarray: t -> floatarray
       end
     module Vector: functor (T: ScalarType_t) -> Type_t with type N.t = T.t
   end
@@ -906,6 +908,8 @@ module BA:
         val sub: t -> int -> int -> t
         val blit: t -> t -> unit
         val fill: t -> N.t -> unit
+        val resize: ?is_buffer:bool -> int -> N.t -> t -> t
+        val to_floatarray: t -> floatarray
       end
     module Vector (T: ScalarType_t) = (* This should work with float too *)
       struct
@@ -937,6 +941,33 @@ module BA:
         let sub = BA1.sub
         let blit = BA1.blit
         let fill = BA1.fill
+        let resize ?(is_buffer = false) n zero v =
+          let l = length v in
+          if n > l then begin
+            let res =
+              init begin
+                if is_buffer then
+                  max n (l * 14 / 10)
+                else
+                  n
+              end zero in
+            BA1.blit v (BA1.sub res 0 l);
+            res
+          end else if n < l && not is_buffer then
+            (* We have to resize in order to honour ~exact *)
+            let res = init n zero in
+            BA1.blit (BA1.sub v 0 n) res;
+            res
+          else
+            v
+        let to_floatarray v =
+          let l = length v in
+          let red_l = l - 1
+          and res = Float.Array.make l 0. in
+          for i = 0 to red_l do
+            N.to_float v.@(i) |> Float.Array.set res i
+          done;
+          res
       end
   end
 
