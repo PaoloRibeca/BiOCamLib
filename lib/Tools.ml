@@ -954,7 +954,7 @@ module BA:
             BA1.blit v (BA1.sub res 0 l);
             res
           end else if n < l && not is_buffer then
-            (* We have to resize in order to honour ~exact *)
+            (* We have to resize in order to honour the request *)
             let res = init n zero in
             BA1.blit (BA1.sub v 0 n) res;
             res
