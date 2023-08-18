@@ -94,6 +94,7 @@ module String:
         val red: string -> string
         val green: string -> string
         val blue: string -> string
+        val make_header: string -> string -> string -> (string * string * string) list -> string
       end
   end
 = struct
@@ -123,6 +124,17 @@ module String:
         let red = Printf.sprintf "\o033[38;5;9m%s\o033[0m"
         let green = Printf.sprintf "\o033[38;5;10m%s\o033[0m"
         let blue = Printf.sprintf "\o033[38;5;12m%s\o033[0m"
+        let make_header what version date author_info =
+          let res =
+            Printf.sprintf "This is the %s program (version %s, %s)\n" (blue what) (blue version) (blue date)
+            |> ref in
+          List.iter
+            (fun (years, name, email) ->
+              res := !res ^ begin
+                Printf.sprintf " (c) %s %s, <%s>\n" years (blue name) (under email)
+              end)
+            author_info;
+          !res
       end
   end
 
@@ -205,7 +217,7 @@ module Printf:
     val ptfprintf: ?mode:mode_t -> out_channel -> ('a, out_channel, unit) format -> 'a
     val ptprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
     val pteprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
-    (* Printers for String.TermIO *)
+    (* Channel printers for String.TermIO *)
     module TermIO:
       sig
         val bold: out_channel -> string -> unit
