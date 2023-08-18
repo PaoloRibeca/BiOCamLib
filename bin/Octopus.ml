@@ -25,17 +25,15 @@ module Parameters =
     let [@warning "-32"] verbose = ref Defaults.verbose
   end
 
-let version = "0.4"
-
-let header =
-  Printf.sprintf begin
-    "This is the Octopus program (version %s)\n%!" ^^
-    " (c) 2016-2023 Paolo Ribeca, <paolo.ribeca@gmail.com>\n%!"
-  end version
+let version = "4"
+and date = "18-08-2023"
+and authors = [
+  "2016-2023", "Paolo Ribeca", "paolo.ribeca@gmail.com"
+]
 
 let () =
   let module TA = Tools.Argv in
-  TA.set_header header;
+  Tools.String.TermIO.make_header "Octopus" version date authors |> TA.set_header;
   TA.set_synopsis "[OPTIONS]";
   TA.parse [
     TA.make_separator "Miscellaneous";

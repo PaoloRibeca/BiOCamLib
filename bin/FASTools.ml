@@ -58,17 +58,15 @@ module Parameters =
     let verbose = ref Defaults.verbose
   end
 
-let version = "0.5"
+let version = "5"
+and date = "18-08-2023"
+and authors = [
+  "2022-2023", "Paolo Ribeca", "paolo.ribeca@gmail.com"
+]
 
-let header =
-  Printf.sprintf begin
-    "This is the FASTools program (version %s)\n%!" ^^
-    " (c) 2022-2023 Paolo Ribeca, <paolo.ribeca@gmail.com>\n%!"
-  end version
-
-let _ =
+let () =
   let module TA = Tools.Argv in
-  TA.set_header header;
+  Tools.String.TermIO.make_header "FASTools" version date authors |> TA.set_header;
   TA.set_synopsis "[OPTIONS]";
   TA.parse [
     TA.make_separator_multiline [ "Working mode."; "Executed delayed in order of specification, default='compact'." ];

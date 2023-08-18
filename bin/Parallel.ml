@@ -54,17 +54,15 @@ module Parameters =
     let debug = ref Defaults.debug
   end
 
-let version = "0.4"
-
-let header =
-  Printf.sprintf begin
-    "This is the Parallel program (version %s)\n" ^^
-    " (c) 2019-2022 Paolo Ribeca, <paolo.ribeca@gmail.com>\n"
-  end version
+let version = "4"
+and date = "18-08-2023"
+and authors = [
+  "2019-2023", "Paolo Ribeca", "paolo.ribeca@gmail.com"
+]
 
 let () =
   let module TA = Tools.Argv in
-  TA.set_header header;
+  Tools.String.TermIO.make_header "Parallel" version date authors |> TA.set_header;
   TA.set_synopsis "[OPTIONS] -- [COMMAND TO PARALLELIZE AND ITS OPTIONS]";
   TA.parse [
     TA.make_separator "Command to parallelize";

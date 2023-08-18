@@ -20,17 +20,15 @@ module Parameters =
     let no_complement = ref false
   end
 
-let version = "0.2"
-
-let header =
-  Printf.sprintf begin
-    "This is the RC program (version %s)\n%!" ^^
-    " (c) 2023 Paolo Ribeca, <paolo.ribeca@gmail.com>\n%!"
-  end version
+let version = "2"
+and date = "18-08-2023"
+and authors = [
+  "2023", "Paolo Ribeca", "paolo.ribeca@gmail.com"
+]
 
 let () =
   let module TA = Tools.Argv in
-  TA.set_header header;
+  Tools.String.TermIO.make_header "RC" version date authors |> TA.set_header;
   TA.set_synopsis "[OPTIONS]";
   TA.parse [
     TA.make_separator "Algorithm";

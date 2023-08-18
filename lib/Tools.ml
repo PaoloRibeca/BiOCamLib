@@ -89,6 +89,7 @@ module String:
     module TermIO:
       sig
         val bold: string -> string
+        val italic: string -> string
         val under: string -> string
         val grey: string -> string
         val red: string -> string
@@ -118,12 +119,13 @@ module String:
     let pluralize_float = pluralize ~one:1.
     module TermIO =
       struct
-        let bold = Printf.sprintf "\o033[1m%s\o033[0m"
-        let under = Printf.sprintf "\o033[4m%s\o033[0m"
-        let grey = Printf.sprintf "\o033[38;5;7m%s\o033[0m"
-        let red = Printf.sprintf "\o033[38;5;9m%s\o033[0m"
-        let green = Printf.sprintf "\o033[38;5;10m%s\o033[0m"
-        let blue = Printf.sprintf "\o033[38;5;12m%s\o033[0m"
+        let bold = Printf.sprintf "\027[1m%s\027[0m"
+        let italic = Printf.sprintf "\027[3m%s\027[0m"
+        let under = Printf.sprintf "\027[4m%s\027[0m"
+        let grey = Printf.sprintf "\027[38;5;7m%s\027[0m"
+        let red = Printf.sprintf "\027[38;5;1m%s\027[0m"
+        let green = Printf.sprintf "\027[38;5;2m%s\027[0m"
+        let blue = Printf.sprintf "\027[38;5;4m%s\027[0m"
         let make_header what version date author_info =
           let res =
             Printf.sprintf "This is the %s program (version %s, %s)\n" (blue what) (blue version) (blue date)
@@ -131,7 +133,7 @@ module String:
           List.iter
             (fun (years, name, email) ->
               res := !res ^ begin
-                Printf.sprintf " (c) %s %s, <%s>\n" years (blue name) (under email)
+                Printf.sprintf " (c) %s %s, <%s>\n" years (bold name) (under email)
               end)
             author_info;
           !res
@@ -273,6 +275,7 @@ module Printf:
       struct
         let _printer f = fun ch s -> f s |> Printf.fprintf ch "%s"
         let bold = _printer String.TermIO.bold
+        let italic = _printer String.TermIO.italic
         let under = _printer String.TermIO.under
         let grey = _printer String.TermIO.grey
         let red = _printer String.TermIO.red
@@ -1130,7 +1133,8 @@ module Argv:
       i := len;
       res
     let parse specs =
-      _usage := !_header ^ "Usage:\n  \027[1m" ^ argv.(0) ^ "\027[0m " ^ !_synopsis ^ "\n";
+      let open String.TermIO in
+      _usage := !_header ^ "Usage:\n  " ^ bold argv.(0) ^ " " ^ blue !_synopsis ^ "\n";
       _md := "```\n" ^ !_header ^ "```\nUsage:\n```\n" ^ argv.(0) ^ " " ^ !_synopsis ^ "\n```\n";
       let accum_usage = String.accum _usage
       and accum_md ?(escape = false) s =
@@ -1158,7 +1162,7 @@ module Argv:
         end
       and trie = ref Trie.empty and table = ref StringMap.empty and mandatory = ref StringSet.empty in
       List.iteri
-        (fun i (opts, vl, help, clss, act) ->
+        (fun i (opts, vl, help, class_, act) ->
           if opts = [] && help = [] then
             error "parse" ("Malformed initializer for option #" ^ string_of_int i);
           if opts = [] then begin
@@ -1187,17 +1191,17 @@ module Argv:
             (fun i opt ->
               if help <> [] then begin (* The option might be hidden *)
                 if i > 0 then begin
-                  accum_usage "\027[2m|\027[0m";
+                  grey "|" |> accum_usage;
                   accum_md "<br>"
                 end;
-                "\027[1m" ^ opt ^ "\027[0m" |> accum_usage;
+                blue opt |> accum_usage;
                 (* No escaping needed here, as the text is already surrounded by quotes *)
                 "`" ^ opt ^ "`" |> accum_md
               end;
               if Trie.find_string !trie opt <> "" then
                 "Clashing command line option '" ^ opt ^ "' in table" |> error "parse";
               trie := Trie.add !trie opt;
-              if clss = Mandatory then begin
+              if class_ = Mandatory then begin
                 let repr = List.fold_left (fun a b -> a ^ (if a = "" then "" else "|") ^ b) "" opts in
                 mandatory := StringSet.add repr !mandatory;
                 table :=
@@ -1223,7 +1227,7 @@ module Argv:
           if help <> [] then begin
             begin match vl with
               | None -> ""
-              | Some vl -> "\n    \027[3m" ^ vl ^ "\027[0m"
+              | Some vl -> "\n    " ^ bold vl
             end ^ begin
               if opts <> [] then
                 "\n"
@@ -1234,7 +1238,7 @@ module Argv:
             List.iteri begin
               if opts <> [] then
                 (fun i help ->
-                  "   \027[38;5;7m|\027[0m " ^ help ^ "\n" |> accum_usage;
+                  "   " ^ grey "|" ^ " " ^ help ^ "\n" |> accum_usage;
                   let l = String.length help in
                   let first_char =
                     if l > 0 then
@@ -1259,22 +1263,22 @@ module Argv:
                 (fun i help ->
                   begin if i = 0 then
                     if help <> "" then
-                      " \027[4m" ^ help ^ "\027[0m\n"
+                      " " ^ green help ^ "\n"
                     else
                       ""
                   else
-                    " \027[4m| " ^ help ^ "\027[0m\n"
+                    " " ^ green ("| " ^ help) ^ "\n"
                   end |> accum_usage)
             end help;
             if opts <> [] && help <> [] then
               accum_md " | ";
-            begin match clss with
+            begin match class_ with
             | Mandatory ->
-              accum_usage "   \027[38;5;7m*\027[0m (\027[4mmandatory\027[0m)\n";
+              "   " ^ grey "*" ^ " (" ^ red "mandatory" ^ ")\n" |> accum_usage;
               accum_md "*(mandatory)*"
             | Optional -> ()
             | Default def ->
-              "   \027[38;5;7m|\027[0m (default='\027[4m" ^ def () ^ "\027[0m')\n" |> accum_usage;
+              "   " ^ grey "|" ^ " (default='" ^ (def () |> bold) ^ "')\n" |> accum_usage;
               accum_md "<ins>default=<mark>_";
               def () |> accum_md ~escape:true;
               accum_md "_</mark></ins>"
