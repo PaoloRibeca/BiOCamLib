@@ -86,6 +86,15 @@ module String:
     val pluralize: ?plural:string -> one:'a -> string -> 'a -> string
     val pluralize_int : ?plural:string -> string -> int -> string
     val pluralize_float : ?plural:string -> string -> float -> string
+    module TermIO:
+      sig
+        val bold: string -> string
+        val under: string -> string
+        val grey: string -> string
+        val red: string -> string
+        val green: string -> string
+        val blue: string -> string
+      end
   end
 = struct
     include String
@@ -106,6 +115,15 @@ module String:
         s ^ "s"
     let pluralize_int = pluralize ~one:1
     let pluralize_float = pluralize ~one:1.
+    module TermIO =
+      struct
+        let bold = Printf.sprintf "\033[1m%s\033[0m"
+        let under = Printf.sprintf "\033[4m%s\033[0m"
+        let grey = Printf.sprintf "\033[38;5;7m%s\033[0m"
+        let red = Printf.sprintf "\033[38;5;9m%s\033[0m"
+        let green = Printf.sprintf "\033[38;5;10m%s\033[0m"
+        let blue = Printf.sprintf "\033[38;5;12m%s\033[0m"
+      end
   end
 
 module List:
@@ -197,6 +215,16 @@ module Printf:
     val ptfprintf: ?mode:mode_t -> out_channel -> ('a, out_channel, unit) format -> 'a
     val ptprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
     val pteprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
+    (* Printers for String.TermIO *)
+    module TermIO:
+      sig
+        val bold: out_channel -> string -> unit
+        val under: out_channel -> string -> unit
+        val grey: out_channel -> string -> unit
+        val red: out_channel -> string -> unit
+        val green: out_channel -> string -> unit
+        val blue: out_channel -> string -> unit
+      end
   end
 = struct
     include Printf
@@ -239,6 +267,15 @@ module Printf:
     let ptfprintf ?(mode = Time) = proto_pfprintf ~mode (tfprintf ~mode)
     let ptprintf ?(mode = Time) = ptfprintf ~mode stdout
     let pteprintf ?(mode = Time) = ptfprintf ~mode stderr
+    module TermIO =
+      struct
+        let bold ch s = String.TermIO.bold s |> Printf.fprintf ch "%s"
+        let under ch s = String.TermIO.under s |> Printf.fprintf ch "%s"
+        let grey ch s = String.TermIO.grey s |> Printf.fprintf ch "%s"
+        let red ch s = String.TermIO.red s |> Printf.fprintf ch "%s"
+        let green ch s = String.TermIO.green s |> Printf.fprintf ch "%s"
+        let blue ch s = String.TermIO.blue s |> Printf.fprintf ch "%s"
+      end
   end
 
 module Hashtbl:
