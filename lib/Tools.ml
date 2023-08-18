@@ -171,6 +171,16 @@ module Array:
         a
   end
 
+module TermIO =
+  struct
+    let bold = Printf.sprintf "\033[1m%s\033[0m"
+    let under = Printf.sprintf "\033[4m%s\033[0m"
+    let grey = Printf.sprintf "\033[38;5;7m%s\033[0m"
+    let red = Printf.sprintf "\033[38;5;9m%s\033[0m"
+    let green = Printf.sprintf "\033[38;5;10m%s\033[0m"
+    let blue = Printf.sprintf "\033[38;5;12m%s\033[0m"
+  end
+
 module Printf:
   sig
     include module type of Printf
