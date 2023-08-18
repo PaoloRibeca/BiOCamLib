@@ -128,12 +128,12 @@ module String:
         let blue = Printf.sprintf "\027[38;5;4m%s\027[0m"
         let make_header what version date author_info =
           let res =
-            Printf.sprintf "This is the %s program (version %s, %s)\n" (blue what) (blue version) (blue date)
+            Printf.sprintf "This is the %s program (version %s as of %s)\n" (blue what) (blue version) (blue date)
             |> ref in
           List.iter
             (fun (years, name, email) ->
               res := !res ^ begin
-                Printf.sprintf " (c) %s %s, <%s>\n" years (bold name) (under email)
+                Printf.sprintf " (c) %s %s <%s>\n" years (bold name) (under email)
               end)
             author_info;
           !res
@@ -1278,7 +1278,7 @@ module Argv:
               accum_md "*(mandatory)*"
             | Optional -> ()
             | Default def ->
-              "   " ^ grey "|" ^ " (default='" ^ (def () |> bold) ^ "')\n" |> accum_usage;
+              "   " ^ grey "|" ^ " (default='" ^ (def () |> bold |> under) ^ "')\n" |> accum_usage;
               accum_md "<ins>default=<mark>_";
               def () |> accum_md ~escape:true;
               accum_md "_</mark></ins>"

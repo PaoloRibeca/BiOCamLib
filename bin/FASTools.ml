@@ -182,7 +182,7 @@ let () =
         "Files are kept open, and it is possible to switch between them";
         " by repeatedly using this option.";
         "Use '/dev/stdout' for standard output" ],
-      TA.Default (fun () -> "/dev/stdout /dev/stdout"),
+      TA.Default (fun () -> "/dev/stdout"),
       (fun _ ->
         let output_1 = TA.get_parameter () in
         let output_2 = TA.get_parameter () in
