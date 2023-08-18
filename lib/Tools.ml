@@ -117,12 +117,12 @@ module String:
     let pluralize_float = pluralize ~one:1.
     module TermIO =
       struct
-        let bold = Printf.sprintf "\033[1m%s\033[0m"
-        let under = Printf.sprintf "\033[4m%s\033[0m"
-        let grey = Printf.sprintf "\033[38;5;7m%s\033[0m"
-        let red = Printf.sprintf "\033[38;5;9m%s\033[0m"
-        let green = Printf.sprintf "\033[38;5;10m%s\033[0m"
-        let blue = Printf.sprintf "\033[38;5;12m%s\033[0m"
+        let bold = Printf.sprintf "\o033[1m%s\o033[0m"
+        let under = Printf.sprintf "\o033[4m%s\o033[0m"
+        let grey = Printf.sprintf "\o033[38;5;7m%s\o033[0m"
+        let red = Printf.sprintf "\o033[38;5;9m%s\o033[0m"
+        let green = Printf.sprintf "\o033[38;5;10m%s\o033[0m"
+        let blue = Printf.sprintf "\o033[38;5;12m%s\o033[0m"
       end
   end
 
@@ -187,16 +187,6 @@ module Array:
         Array.sub a 0 n
       else
         a
-  end
-
-module TermIO =
-  struct
-    let bold = Printf.sprintf "\033[1m%s\033[0m"
-    let under = Printf.sprintf "\033[4m%s\033[0m"
-    let grey = Printf.sprintf "\033[38;5;7m%s\033[0m"
-    let red = Printf.sprintf "\033[38;5;9m%s\033[0m"
-    let green = Printf.sprintf "\033[38;5;10m%s\033[0m"
-    let blue = Printf.sprintf "\033[38;5;12m%s\033[0m"
   end
 
 module Printf:
@@ -269,12 +259,13 @@ module Printf:
     let pteprintf ?(mode = Time) = ptfprintf ~mode stderr
     module TermIO =
       struct
-        let bold ch s = String.TermIO.bold s |> Printf.fprintf ch "%s"
-        let under ch s = String.TermIO.under s |> Printf.fprintf ch "%s"
-        let grey ch s = String.TermIO.grey s |> Printf.fprintf ch "%s"
-        let red ch s = String.TermIO.red s |> Printf.fprintf ch "%s"
-        let green ch s = String.TermIO.green s |> Printf.fprintf ch "%s"
-        let blue ch s = String.TermIO.blue s |> Printf.fprintf ch "%s"
+        let _printer f = fun ch s -> f s |> Printf.fprintf ch "%s"
+        let bold = _printer String.TermIO.bold
+        let under = _printer String.TermIO.under
+        let grey = _printer String.TermIO.grey
+        let red = _printer String.TermIO.red
+        let green = _printer String.TermIO.green
+        let blue = _printer String.TermIO.blue
       end
   end
 
