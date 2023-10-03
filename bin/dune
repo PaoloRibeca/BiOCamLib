@@ -5,8 +5,8 @@
     (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static))))
 
 (executables
- (public_names Parallel Octopus RC FASTools)
- (names Parallel Octopus RC FASTools)
+ (public_names Parallel Octopus RC FASTools TREx)
+ (names Parallel Octopus RC FASTools TREx)
  (libraries str unix BiOCamLib))
 
 (install
@@ -15,4 +15,5 @@
   (Parallel.exe as Parallel)
   (Octopus.exe as Octopus)
   (RC.exe as RC)
-  (FASTools.exe as FASTools)))
+  (FASTools.exe as FASTools)
+  (TREx.exe as TREx)))

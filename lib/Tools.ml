@@ -95,6 +95,9 @@ module String:
         val red: string -> string
         val green: string -> string
         val blue: string -> string
+        val clear: string
+        val column: int -> string
+        val return: string
         val make_header: string -> string -> string -> (string * string * string) list -> string
       end
   end
@@ -126,6 +129,9 @@ module String:
         let red = Printf.sprintf "\027[38;5;1m%s\027[0m"
         let green = Printf.sprintf "\027[38;5;2m%s\027[0m"
         let blue = Printf.sprintf "\027[38;5;4m%s\027[0m"
+        let clear = "\027[2K"
+        let column = Printf.sprintf "\027[%dG"
+        let return = column 1
         let make_header what version date author_info =
           let res =
             Printf.sprintf "This is the %s program (version %s as of %s)\n" (blue what) (blue version) (blue date)
@@ -228,6 +234,9 @@ module Printf:
         val red: out_channel -> string -> unit
         val green: out_channel -> string -> unit
         val blue: out_channel -> string -> unit
+        val clear: out_channel -> unit
+        val column: int -> out_channel -> unit
+        val return: out_channel -> unit
       end
   end
 = struct
@@ -281,6 +290,9 @@ module Printf:
         let red = _printer String.TermIO.red
         let green = _printer String.TermIO.green
         let blue = _printer String.TermIO.blue
+        let clear ch = Printf.fprintf ch "%s" String.TermIO.clear
+        let column n ch = String.TermIO.column n |> Printf.fprintf ch "%s"
+        let return ch = Printf.fprintf ch "%s" String.TermIO.return
       end
   end
 
@@ -355,6 +367,7 @@ module Map:
     module Make (O: Map.OrderedType):
       sig
         include module type of Map.Make(O)
+        val replace: key -> 'a -> 'a t -> 'a t
         val iteri: (int -> key -> 'a -> unit) -> 'a t -> unit
         val bindings_array: 'a t -> (key * 'a) array
         val find_next: key -> 'a t -> key * 'a
@@ -366,6 +379,8 @@ module Map:
     module Make (O: Map.OrderedType) =
       struct
         include Map.Make(O)
+        let replace k v m =
+          remove k m |> add k v
         let iteri f =
           let cntr = ref 0 in
           iter
@@ -1015,9 +1030,8 @@ module BA:
             v
         let to_floatarray v =
           let l = length v in
-          let red_l = l - 1
-          and res = Float.Array.make l 0. in
-          for i = 0 to red_l do
+          let res = Float.Array.make l 0. in
+          for i = 0 to l - 1 do
             N.to_float v.@(i) |> Float.Array.set res i
           done;
           res

@@ -33,29 +33,20 @@ module Misc =
 
   end
 
-
-module Defaults =
-  struct
-    let lines_per_block = 10000
-    let threads = Processes.Parallel.get_nproc ()
-    let verbose = false
-    let debug = false
-  end
-
 module Parameters =
   struct
     let command = ref ""
     let args = ref [||]
-    let lines_per_block = ref Defaults.lines_per_block
+    let lines_per_block = ref 10000
     let input = ref ""
     let output = ref ""
-    let threads = ref Defaults.threads
-    let verbose = ref Defaults.verbose
-    let debug = ref Defaults.debug
+    let threads = Processes.Parallel.get_nproc () |> ref
+    let verbose = ref false
+    let debug = ref false
   end
 
-let version = "4"
-and date = "18-08-2023"
+let version = "5"
+and date = "03-10-2023"
 and authors = [
   "2019-2023", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]

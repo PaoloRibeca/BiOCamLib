@@ -15,18 +15,13 @@
 
 open BiOCamLib
 
-module Defaults =
-  struct
-    let verbose = false
-  end
-
 module Parameters =
   struct
-    let [@warning "-32"] verbose = ref Defaults.verbose
+    let [@warning "-32"] verbose = ref false
   end
 
-let version = "4"
-and date = "18-08-2023"
+let version = "5"
+and date = "03-10-2023"
 and authors = [
   "2016-2023", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]

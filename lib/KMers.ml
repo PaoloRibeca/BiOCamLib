@@ -134,8 +134,8 @@ module ProteinHash (K: IntParameter_t):
       if String.length s <> k then
         Printf.sprintf "(%s): Invalid argument (string length must be k=%d, found %d)" __FUNCTION__ k (String.length s)
           |> failwith;
-      let red_k = k - 1 and res = ref 0 in
-      for i = 0 to red_k do
+      let res = ref 0 in
+      for i = 0 to k - 1 do
         res :=
           !res lsl 5 +
           encode_char begin
@@ -234,8 +234,8 @@ module DNAHashBase (K: IntParameter_t):
       if String.length s <> k then
         Printf.sprintf "(%s): Invalid argument (string length must be k=%d, found %d)" __FUNCTION__ k (String.length s)
           |> failwith;
-      let red_k = k - 1 and res = ref 0 in
-      for i = 0 to red_k do
+      let res = ref 0 in
+      for i = 0 to k - 1 do
         res :=
           !res lsl 2 +
             match s.[i] with

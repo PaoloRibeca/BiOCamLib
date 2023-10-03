@@ -41,25 +41,16 @@ and to_do_t =
   | SetOutput of string
   | SetOutputPE of string * string
 
-module Defaults =
-  struct
-    let flush = false
-(*
-    let threads = Tools.Parallel.get_nproc ()
-*)
-    let verbose = false
-  end
-
 module Parameters =
   struct
     let program = ref []
-    let flush = ref Defaults.flush
-    (*let threads = ref Defaults.threads*)
-    let verbose = ref Defaults.verbose
+    let flush = ref false
+    (*let threads = ref Tools.Parallel.get_nproc ()*)
+    let verbose = ref false
   end
 
-let version = "5"
-and date = "18-08-2023"
+let version = "6"
+and date = "03-10-2023"
 and authors = [
   "2022-2023", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
