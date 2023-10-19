@@ -229,6 +229,7 @@ module Printf:
     module TermIO:
       sig
         val bold: out_channel -> string -> unit
+        val italic: out_channel -> string -> unit
         val under: out_channel -> string -> unit
         val grey: out_channel -> string -> unit
         val red: out_channel -> string -> unit
