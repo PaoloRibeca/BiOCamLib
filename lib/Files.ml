@@ -95,7 +95,7 @@ module FASTA:
              f filename =
       let file = open_in filename and progr = ref 0 and current = ref "" and seq = Buffer.create 1048576 in
       if verbose then
-        Printf.eprintf "(%s): Reading FASTA file '%s'...%!" __FUNCTION__ filename;
+        Printf.eprintf "(%s): Reading FASTA file '%s': Begin\n%!" __FUNCTION__ filename;
       let process_current () =
         if !current <> "" then begin
           f !progr !current (Buffer.contents seq);
@@ -117,7 +117,7 @@ module FASTA:
         process_current ();
         close_in file;
         if verbose then
-          Printf.eprintf " done.\n%!"
+          Printf.eprintf "(%s): Reading FASTA file '%s': End\n%!" __FUNCTION__ filename
     let parallel_iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
                       ?(buffered_chunks_per_thread = 10) ?(max_memory = 1000000000) ?(verbose = false)
                       filename (f:int -> (string * string) list -> 'a) (g:'a -> unit) threads =
@@ -200,7 +200,7 @@ module FASTQ:
                 f file =
       let read = ref 0 and input = open_in file in
       if verbose then
-        Printf.eprintf "(%s): Reading SE FASTQ file '%s'...%!" __FUNCTION__ file;
+        Printf.eprintf "(%s): Reading SE FASTQ file '%s': Begin\n%!" __FUNCTION__ file;
       begin try
         while true do
           let tag = input_line input in
@@ -216,12 +216,12 @@ module FASTQ:
       end;
       close_in input;
       if verbose then
-        Printf.eprintf " done.\n%!"
+        Printf.eprintf "(%s): Reading SE FASTQ file '%s': End\n%!" __FUNCTION__ file
     let iter_pe ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
                 f file1 file2 =
       let read = ref 0 and input1 = open_in file1 and input2 = open_in file2 in
       if verbose then
-        Printf.eprintf "(%s): Reading PE FASTQ files '%s' and '%s'...%!" __FUNCTION__ file1 file2;
+        Printf.eprintf "(%s): Reading PE FASTQ files '%s' and '%s': Begin\n%!" __FUNCTION__ file1 file2;
       begin try
         while true do
           let tag1 = input_line input1 in
@@ -245,12 +245,12 @@ module FASTQ:
       close_in input1;
       close_in input2;
       if verbose then
-        Printf.eprintf " done.\n%!"
+        Printf.eprintf "(%s): Reading PE FASTQ files '%s' and '%s': End\n%!" __FUNCTION__ file1 file2
     let iter_il ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
                 f file =
       let read = ref 0 and input = open_in file in
       if verbose then
-        Printf.eprintf "(%s): Reading interleaved PE FASTQ file '%s'...%!" __FUNCTION__ file;
+        Printf.eprintf "(%s): Reading interleaved PE FASTQ file '%s': Begin\n%!" __FUNCTION__ file;
       begin try
         while true do
           let tag1 = input_line input in
@@ -272,7 +272,7 @@ module FASTQ:
       end;
       close_in input;
       if verbose then
-        Printf.eprintf " done.\n%!"
+        Printf.eprintf "(%s): Reading interleaved PE FASTQ file '%s': End\n%!" __FUNCTION__ file
   end
 
 module Tabular:
@@ -287,7 +287,7 @@ module Tabular:
              f g filename =
       let file = open_in filename and progr = ref 0 in
       if verbose then
-        Printf.eprintf "(%s): Reading tabular file '%s'...%!" __FUNCTION__ filename;
+        Printf.eprintf "(%s): Reading tabular file '%s': Begin\n%!" __FUNCTION__ filename;
       try
         while true do
           let line = input_line file |> Tools.Split.on_char_as_array '\t' in
@@ -307,7 +307,7 @@ module Tabular:
       with End_of_file ->
         close_in file;
         if verbose then
-          Printf.eprintf " done.\n%!"
+          Printf.eprintf "(%s): Reading tabular file '%s': End\n%!" __FUNCTION__ filename
   end
 
 module Type =

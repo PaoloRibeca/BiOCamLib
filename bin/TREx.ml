@@ -17,8 +17,10 @@ open BiOCamLib
 
 module TandemRepeatExplorer =
   struct
+    module PrefixMultimap = Tools.Multimap (Tools.ComparableString) (Tools.ComparableInt)
+    module IntervalMultimap =
+      Tools.Multimap (Tools.MakeComparable (struct type t = int * int end)) (Tools.ComparableString)
     let iter ?(maximum_repeat_length = max_int) ?(minimum_locus_length = 0) ?(verbose = false) f s =
-      let module PrefixMultimap = Tools.Multimap (Tools.ComparableString) (Tools.ComparableInt) in
       let maximum_repeat_length = (String.length s + 1) / 2 |> min maximum_repeat_length
       and k = ref 0 and old = ref PrefixMultimap.empty in
       if verbose then
@@ -27,6 +29,7 @@ module TandemRepeatExplorer =
       for i = 0 to l - 1 do
         old := PrefixMultimap.add "" i !old
       done;
+      let res = ref IntervalMultimap.empty in
       while !k < maximum_repeat_length && PrefixMultimap.cardinal !old > 0 do
         incr k;
         if verbose then
@@ -45,10 +48,10 @@ module TandemRepeatExplorer =
                   end)
                 set)
           !old;
-          old := !current;
-          if verbose then
+        old := !current;
+        if verbose then
           Printf.eprintf " (%d left)...%!" !count;
-        let k = !k and res = ref Tools.IntMap.empty in
+        let k = !k and k_res = ref Tools.IntMap.empty in
         PrefixMultimap.iter_set
           (fun k_mer set ->
             let set = ref set in
@@ -63,31 +66,53 @@ module TandemRepeatExplorer =
               done;
               let hi = !hi - k in
               if hi > lo then begin
-                (* Both lo and hi can only occur once *)
-                res := Tools.IntMap.add lo (k_mer, 1) !res |> Tools.IntMap.add hi (k_mer, -1)
+                (* Here hi is the highest position at which a repeat
+                  with length k and sequence k_mer starts *)
+                k_res := Tools.IntMap.add lo (k_mer, hi + k - 1) !k_res
               end
             done)
           !old;
-        (* We read out results *)
-        let table = ref Tools.StringMap.empty in
+        (* We merge together overlapping consecutive series of k-mers *)
+        let k_mer = ref "" and lo = ref (-1) and prev_lo = ref (-1) and hi = ref (-1) in
+        let process_it () =
+          if !k_mer <> "" && !hi - !lo + 1 >= minimum_locus_length then
+            res := IntervalMultimap.add (!lo, !hi) !k_mer !res in          
         Tools.IntMap.iter
-          (fun i (k_mer, what) ->
-            if Tools.StringMap.mem k_mer !table then begin
-              let lo, old_count = Tools.StringMap.find k_mer !table in
-              let new_count = old_count + what in
-              if new_count = 0 then begin
-                let hi = i + k - 1 in
-                (* Here i is the highest position at which a repeat
-                    with length k and sequence k_mer starts *)
-                if hi - lo + 1 >= minimum_locus_length then
-                  f k_mer lo hi;
-                table := Tools.StringMap.remove k_mer !table
-              end else
-                table := Tools.StringMap.replace k_mer (lo, new_count) !table
-            end else
-              table := Tools.StringMap.add k_mer (i, what) !table)
-          !res
-      done
+          (fun _lo (_k_mer, _hi) ->
+            if _lo <> !prev_lo + 1 then begin
+              process_it ();
+              k_mer := _k_mer;
+              lo := _lo;
+              prev_lo := _lo;
+              hi := _hi
+            end else begin
+              prev_lo := _lo;
+              hi := max !hi _hi
+            end)
+          !k_res;
+        process_it ()
+      done;
+      if verbose then
+        Printf.eprintf "%s\r%!" Tools.String.TermIO.clear;
+      let curr_lo = ref (-1) and curr_hi = ref (-1) and curr_k_mer = ref "" in
+      let process_it () =
+        if !curr_hi <> -1 then
+          f !curr_k_mer (!curr_lo + 1) (!curr_hi + 1) in
+      IntervalMultimap.iter_set
+        (fun (lo, hi) set ->
+          (* The interval must not be entirely contained into an already open one *)
+          if hi > !curr_hi then begin
+            process_it ();
+            curr_lo := lo;
+            curr_hi := hi;
+            curr_k_mer := Tools.StringSet.min_elt set
+          end else
+            if verbose then
+              Printf.eprintf "%s(%s): Discarding [%d,%d]='%s' (contained in [%d,%d]='%s')\n%!"
+                Tools.String.TermIO.clear __FUNCTION__ (lo + 1) (hi + 1) (Tools.StringSet.min_elt set)
+                (!curr_lo + 1) (!curr_hi + 1) !curr_k_mer)
+        !res;
+      process_it ()      
   end
 
 module Parameters =
