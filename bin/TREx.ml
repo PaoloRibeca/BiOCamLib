@@ -54,6 +54,7 @@ module TandemRepeatExplorer =
         let k = !k and k_res = ref Tools.IntMap.empty in
         PrefixMultimap.iter_set
           (fun k_mer set ->
+            (*Printf.eprintf "lo_set=%d k-mer='%s'\n%!" (Tools.IntSet.min_elt set) k_mer;*)
             let set = ref set in
             (* We extract all the series from the set,
                 always starting from the smallest element left *)
@@ -73,8 +74,16 @@ module TandemRepeatExplorer =
             done)
           !old;
         (* We merge together overlapping consecutive series of k-mers *)
-        let k_mer = ref "" and lo = ref (-1) and prev_lo = ref (-1) and hi = ref (-1) in
+        let k_mer = ref "" and lo = ref (-1) and prev_lo = ref (-2) and hi = ref (-1) in
         let process_it () =
+          (*if verbose && !k_mer <> "" then
+            Printf.eprintf "%s(%s): Processing [%d,%d]='%s'... %s\n%!"
+              Tools.String.TermIO.clear __FUNCTION__ !lo !hi !k_mer begin
+                if !hi - !lo + 1 >= minimum_locus_length then
+                  "added"
+                else
+                  "discarded"
+              end;*)
           if !k_mer <> "" && !hi - !lo + 1 >= minimum_locus_length then
             res := IntervalMultimap.add (!lo, !hi) !k_mer !res in          
         Tools.IntMap.iter
@@ -125,8 +134,8 @@ module Parameters =
     let verbose = ref false
   end
 
-let version = "1"
-and date = "03-10-2023"
+let version = "2"
+and date = "15-11-2023"
 and authors = [
   "2023", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
@@ -210,7 +219,9 @@ let () =
         ~maximum_repeat_length:!Parameters.maximum_repeat_length
         ~minimum_locus_length:!Parameters.minimum_locus_length ~verbose:!Parameters.verbose
         (fun k_mer lo hi ->
-          Printf.printf "%s\t%d\t%d\t%s\n%!" name lo hi k_mer)
+          let len_locus = hi - lo + 1 and len_repeat = String.length k_mer in
+          let periods = float_of_int len_locus /. float_of_int len_repeat in
+          Printf.printf "%s\t%d\t%d\t%d\t%d\t%.6g\t%s\n%!" name lo hi len_locus len_repeat periods k_mer)
         sequence)
     "/dev/stdin"
 
