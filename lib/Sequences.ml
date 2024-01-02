@@ -296,8 +296,9 @@ module Translation:
     type t =
       | Table_1 | Table_2 | Table_3 | Table_4 | Table_5 | Table_6
       | Table_9 | Table_10 | Table_11 | Table_12 | Table_13 | Table_14
-      | Table_16 | Table_21 | Table_22 | Table_23 | Table_24 | Table_25
-      | Table_26 | Table_27 | Table_28 | Table_29 | Table_30 | Table_31
+      | Table_15 | Table_16 | Table_21 | Table_22 | Table_23 | Table_24
+      | Table_25 | Table_26 | Table_27 | Table_28 | Table_29 | Table_30
+      | Table_31 | Table_33
     val of_string: string -> t
     val get_stops: ?frames:int list -> t -> string -> Tools.IntSet.t
     val get_starts:
@@ -312,11 +313,12 @@ module Translation:
   end =
   struct
     type t =
-      | Table_1 | Table_2 | Table_3 | Table_4 | Table_5 | Table_6
-      | Table_9 | Table_10 | Table_11 | Table_12 | Table_13 | Table_14
-      | Table_16 | Table_21 | Table_22 | Table_23 | Table_24 | Table_25
-      | Table_26 | Table_27 | Table_28 | Table_29 | Table_30 | Table_31
-    let of_string = function
+    | Table_1 | Table_2 | Table_3 | Table_4 | Table_5 | Table_6
+    | Table_9 | Table_10 | Table_11 | Table_12 | Table_13 | Table_14
+    | Table_15 | Table_16 | Table_21 | Table_22 | Table_23 | Table_24
+    | Table_25 | Table_26 | Table_27 | Table_28 | Table_29 | Table_30
+    | Table_31 | Table_33
+  let of_string = function
       | "1" | "Table1" | "Table_1" -> Table_1
       | "2" | "Table2" | "Table_2" -> Table_2
       | "3" | "Table3" | "Table_3" -> Table_3
@@ -329,6 +331,7 @@ module Translation:
       | "12" | "Table12" | "Table_12" -> Table_12
       | "13" | "Table13" | "Table_13" -> Table_13
       | "14" | "Table14" | "Table_14" -> Table_14
+      | "15" | "Table15" | "Table_15" -> Table_15
       | "16" | "Table16" | "Table_16" -> Table_16
       | "21" | "Table21" | "Table_21" -> Table_21
       | "22" | "Table22" | "Table_22" -> Table_22
@@ -341,6 +344,7 @@ module Translation:
       | "29" | "Table29" | "Table_29" -> Table_29
       | "30" | "Table30" | "Table_30" -> Table_30
       | "31" | "Table31" | "Table_31" -> Table_31
+      | "33" | "Table33" | "Table_33" -> Table_33
       | w ->
         Printf.sprintf "(%s): Invalid translation table '%s'" __FUNCTION__ w |> failwith
     let [@warning "-32"] describe = function
@@ -356,6 +360,7 @@ module Translation:
       | Table_12 -> "AlternativeYeastNuclear"
       | Table_13 -> "AscidianMitochondrial"
       | Table_14 -> "AlternativeFlatwormMitochondrial"
+      | Table_15 -> "BlepharismaNuclear"
       | Table_16 -> "ChlorophyceanMitochondrial"
       | Table_21 -> "TrematodeMitochondrial"
       | Table_22 -> "Scenedesmus.obliquusMitochondrial"
@@ -368,6 +373,7 @@ module Translation:
       | Table_29 -> "MesodiniumNuclear"
       | Table_30 -> "PeritrichNuclear"
       | Table_31 -> "BlastocrithidiaNuclear"
+      | Table_33 -> "CephalodiscidaeMitochondrial"
     let iterate ?(frames = [0; 1; 2]) f s =
       let max_pos = String.length s - 3 in
       List.iter
@@ -425,12 +431,12 @@ module Translation:
             | "TGA" | "NNN" -> add pos
             | _ -> ()
             end
-          | Table_14 ->
+          | Table_14 | Table_33 ->
             begin function
             | "TAG" | "NNN" -> add pos
             | _ -> ()
             end
-          | Table_16 ->
+          | Table_15 | Table_16 ->
             begin function
             | "TAA" | "TGA" | "NNN" -> add pos
             | _ -> ()
@@ -514,28 +520,28 @@ Printf.eprintf "<<<Start=%d\n%!" start;
                   | Table_1 -> Buffer.add_char buf
                     begin match triplet with
                     | "TAA" | "TAG" | "TGA" -> '*'
-                    | "GCA" | "GCC" | "GCG" | "GCT" -> 'A'
+                    | "GCA" | "GCC" | "GCG" | "GCT" | "GCN" -> 'A'
                     | "TGC" | "TGT" -> 'C'
                     | "GAC" | "GAT" -> 'D'
                     | "GAA" | "GAG" -> 'E'
                     | "TTC" | "TTT" -> 'F'
-                    | "GGA" | "GGC" | "GGG" | "GGT" -> 'G'
+                    | "GGA" | "GGC" | "GGG" | "GGT" | "GGN" -> 'G'
                     | "CAC" | "CAT" -> 'H'
                     | "ATA" | "ATC" | "ATT" -> 'I'
                     | "AAA" | "AAG" -> 'K'
-                    | "CTA" | "CTC" | "CTG" | "CTT" | "TTA" | "TTG" -> 'L'
+                    | "CTA" | "CTC" | "CTG" | "CTT" | "CTN" | "TTA" | "TTG" -> 'L'
                     | "ATG" -> 'M'
                     | "AAC" | "AAT" -> 'N'
-                    | "CCA" | "CCC" | "CCG" | "CCT" -> 'P'
+                    | "CCA" | "CCC" | "CCG" | "CCT" | "CCN" -> 'P'
                     | "CAA" | "CAG" -> 'Q'
-                    | "AGA" | "AGG" | "CGA" | "CGC" | "CGG" | "CGT" -> 'R'
-                    | "AGC" | "AGT" | "TCA" | "TCC" | "TCG" | "TCT" -> 'S'
-                    | "ACA" | "ACC" | "ACG" | "ACT" -> 'T'
-                    | "GTA" | "GTC" | "GTG" | "GTT" -> 'V'
+                    | "AGA" | "AGG" | "CGA" | "CGC" | "CGG" | "CGT" | "CGN" -> 'R'
+                    | "AGC" | "AGT" | "TCA" | "TCC" | "TCG" | "TCT" | "TCN" -> 'S'
+                    | "ACA" | "ACC" | "ACG" | "ACT" | "ACN" -> 'T'
+                    | "GTA" | "GTC" | "GTG" | "GTT" | "GTN" -> 'V'
                     | "TGG" -> 'W'
                     | "TAC" | "TAT" -> 'Y'
                     (* An assertion will not work here, because of course
-                        there can be some junk in the assembly *)
+                        there can be some junk in the sequence *)
                     | _ -> 'X' (*assert false*)
                     end
                   | _ ->

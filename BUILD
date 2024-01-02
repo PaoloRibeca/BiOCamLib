@@ -10,6 +10,9 @@ fi
 # Always erase build directory to ensure peace of mind
 rm -rf _build
 
+# Emit version info
+echo -e "include (\n  struct\n    let info = {\n      Tools.Info.name = \"BiOCamLib\";\n      version = \"$(git log --pretty=format: --name-only | awk '{if ($0!="") print}' | wc -l)\";\n      date = \"$(date -d "@$(git log -1 --format="%at")" +%d-%b-%Y)\"\n    }\n  end\n)" > lib/Info.ml
+
 #FLAGS="--verbose"
 
 dune build --profile="$PROFILE" bin/Parallel.exe $FLAGS

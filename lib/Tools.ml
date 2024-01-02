@@ -98,7 +98,6 @@ module String:
         val clear: string
         val column: int -> string
         val return: string
-        val make_header: string -> string -> string -> (string * string * string) list -> string
       end
   end
 = struct
@@ -132,17 +131,6 @@ module String:
         let clear = "\027[2K"
         let column = Printf.sprintf "\027[%dG"
         let return = column 1
-        let make_header what version date author_info =
-          let res =
-            Printf.sprintf "This is the %s program (version %s as of %s)\n" (blue what) (blue version) (blue date)
-            |> ref in
-          List.iter
-            (fun (years, name, email) ->
-              res := !res ^ begin
-                Printf.sprintf " (c) %s %s <%s>\n" years (bold name) (under email)
-              end)
-            author_info;
-          !res
       end
   end
 
@@ -1039,6 +1027,15 @@ module BA:
       end
   end
 
+module Info =
+  struct
+    type t = {
+      name: string;
+      version: string;
+      date: string
+    }
+  end
+
 module Argv:
   sig
     type class_t =
@@ -1055,6 +1052,12 @@ module Argv:
     type spec_t = string list * string option * string list * class_t * (string -> unit)
     (* Sets the header text *)
     val set_header: string -> unit
+    (* Structured header.
+       Parameters are:
+        (1) program name, version, date (as Info)
+        (2) list of authors as (year range, name, email)
+        (3) list of dependencies as (name, version, date) - each one as Info *)
+    val make_header: Info.t -> (string * string * string) list -> Info.t list -> string
     (* Sets the text following the program name *)
     val set_synopsis: string -> unit
     val header: ?output:out_channel -> unit -> unit
@@ -1088,6 +1091,28 @@ module Argv:
     type spec_t = string list * string option * string list * class_t * (string -> unit)
     let _header = ref ""
     let set_header s = _header := s
+    let make_header { Info.name; version; date } author_info depends_on =
+      let open String.TermIO in
+      let res =
+        Printf.sprintf "This is the %s program - version %s, %s\n" (blue name) (blue version) (blue date)
+        |> ref in
+      let red_l = List.length depends_on - 1 in
+      List.iteri
+        (fun i { Info.name; version; date } ->
+          res := !res ^ begin
+            Printf.sprintf " %s%s - version %s, %s%s\n"
+              (if i = 0 then "(compiled against " else "                  ")
+              (blue name) (blue version) (blue date)
+              (if i = red_l then ")" else ";")
+          end)
+        depends_on;
+      List.iter
+        (fun (years, name, email) ->
+          res := !res ^ begin
+            Printf.sprintf " (c) %s %s <%s>\n" years (bold name) (under email)
+          end)
+        author_info;
+      !res
     let _synopsis = ref ""
     let set_synopsis s = _synopsis := s
     let argv = Sys.argv
@@ -1100,8 +1125,9 @@ module Argv:
     let usage ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_usage
     let markdown ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_md
     let error ?(output = stderr) f_n msg =
+      let open String.TermIO in
       usage ~output ();
-      Stdlib.Printf.fprintf output "(%s): %s\n%!" f_n msg;
+      Stdlib.Printf.fprintf output "(%s): %s\n%!" f_n (red msg);
       exit 1
     let template_get n what f =
       (fun () ->
@@ -1149,8 +1175,8 @@ module Argv:
       res
     let parse specs =
       let open String.TermIO in
-      _usage := !_header ^ "Usage:\n  " ^ bold argv.(0) ^ " " ^ blue !_synopsis ^ "\n";
-      _md := "```\n" ^ !_header ^ "```\nUsage:\n```\n" ^ argv.(0) ^ " " ^ !_synopsis ^ "\n```\n";
+      _usage := !_header ^ red "Usage:" ^ "\n  " ^ bold argv.(0) ^ " " ^ blue !_synopsis ^ "\n";
+      _md := "```\n" ^ !_header ^ "```\n*Usage:*\n```\n" ^ argv.(0) ^ " " ^ !_synopsis ^ "\n```\n";
       let accum_usage = String.accum _usage
       and accum_md ?(escape = false) s =
         let res = ref "" in
@@ -1179,7 +1205,7 @@ module Argv:
       List.iteri
         (fun i (opts, vl, help, class_, act) ->
           if opts = [] && help = [] then
-            error "parse" ("Malformed initializer for option #" ^ string_of_int i);
+            error __FUNCTION__ ("Malformed initializer for option #" ^ string_of_int i);
           if opts = [] then begin
             (* Case of a separator *)
             accum_md "\n";
@@ -1214,7 +1240,7 @@ module Argv:
                 "`" ^ opt ^ "`" |> accum_md
               end;
               if Trie.find_string !trie opt <> "" then
-                "Clashing command line option '" ^ opt ^ "' in table" |> error "parse";
+                "Clashing command line option '" ^ opt ^ "' in table" |> error __FUNCTION__;
               trie := Trie.add !trie opt;
               if class_ = Mandatory then begin
                 let repr = List.fold_left (fun a b -> a ^ (if a = "" then "" else "|") ^ b) "" opts in
@@ -1309,16 +1335,16 @@ module Argv:
         begin try
           StringMap.find (Trie.find_string trie arg) table
         with Not_found ->
-          error "parse" ("Unknown option '" ^ argv.(!i) ^ "'")
+          error __FUNCTION__ ("Unknown option '" ^ argv.(!i) ^ "'")
         end arg;
         incr i
       done;
       if !mandatory <> StringSet.empty then
         StringSet.iter
           (fun opt ->
-            error "parse" ("Option '" ^ opt ^ "' is mandatory"))
+            error __FUNCTION__ ("Option '" ^ opt ^ "' is mandatory"))
           !mandatory
-    let parse_error ?(output = stderr) = error ~output "parse"
+    let parse_error ?(output = stderr) = error ~output __FUNCTION__
     let make_separator s =
       [], None, [ s ], Optional, (fun _ -> ())
     let make_separator_multiline a =

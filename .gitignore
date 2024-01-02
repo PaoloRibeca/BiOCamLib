@@ -1,5 +1,4 @@
+lib/Info.ml
 _build
 build
-Parallel
-FASTools
 releases

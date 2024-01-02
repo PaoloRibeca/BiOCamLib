@@ -1,5 +1,5 @@
 (*
-    Parallel.ml -- (c) 2019-2022 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    Parallel.ml -- (c) 2019-2024 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     Parallel allows to split and process an input file chunk-wise,
     using the reader/workers/writer model implemented in
@@ -45,15 +45,17 @@ module Parameters =
     let debug = ref false
   end
 
-let version = "5"
-and date = "03-10-2023"
-and authors = [
-  "2019-2023", "Paolo Ribeca", "paolo.ribeca@gmail.com"
+let info = {
+  Tools.Info.name = "Parallel";
+  version = "6";
+  date = "02-Jan-2024"
+} and authors = [
+  "2019-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 
 let () =
   let module TA = Tools.Argv in
-  Tools.String.TermIO.make_header "Parallel" version date authors |> TA.set_header;
+  TA.make_header info authors [ Info.info ] |> TA.set_header;
   TA.set_synopsis "[OPTIONS] -- [COMMAND TO PARALLELIZE AND ITS OPTIONS]";
   TA.parse [
     TA.make_separator "Command to parallelize";
@@ -99,6 +101,11 @@ let () =
       [ "output debugging information" ],
       TA.Default (fun () -> string_of_bool !Parameters.debug),
       (fun _ -> Parameters.debug := true);
+    [ "-V"; "--version" ],
+      None,
+      [ "print version and exit" ],
+      TA.Optional,
+      (fun _ -> Printf.printf "%s\n%!" info.version; exit 0);
     (* Hidden option to emit help in markdown format *)
     [ "--markdown" ], None, [], TA.Optional, (fun _ -> TA.markdown (); exit 0);
     [ "-h"; "--help" ],

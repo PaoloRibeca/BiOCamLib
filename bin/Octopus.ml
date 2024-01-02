@@ -1,4 +1,10 @@
 (*
+    Octopus.ml -- (c) 2016-2024 Paolo Ribeca, <paolo.ribeca@gmail.com>
+
+    Octopus allows to compute the transitive closure of sets of strings,
+    using the algorithm implemented in Tools.TransitiveClosure.
+    Each set must be presented on a separate line.
+
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
@@ -20,15 +26,17 @@ module Parameters =
     let [@warning "-32"] verbose = ref false
   end
 
-let version = "5"
-and date = "03-10-2023"
-and authors = [
-  "2016-2023", "Paolo Ribeca", "paolo.ribeca@gmail.com"
+let info = {
+  Tools.Info.name = "Octopus";
+  version = "6";
+  date = "02-Jan-2024"
+} and authors = [
+  "2016-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 
 let () =
   let module TA = Tools.Argv in
-  Tools.String.TermIO.make_header "Octopus" version date authors |> TA.set_header;
+  TA.make_header info authors [ Info.info ] |> TA.set_header;
   TA.set_synopsis "[OPTIONS]";
   TA.parse [
     TA.make_separator "Miscellaneous";
@@ -48,7 +56,7 @@ let () =
       None,
       [ "print version and exit" ],
       TA.Optional,
-      (fun _ -> Printf.printf "%s\n%!" version; exit 0);
+      (fun _ -> Printf.printf "%s\n%!" info.version; exit 0);
     (* Hidden option to emit help in markdown format *)
     [ "--markdown" ], None, [], TA.Optional, (fun _ -> TA.markdown (); exit 0);
     [ "-h"; "--help" ],

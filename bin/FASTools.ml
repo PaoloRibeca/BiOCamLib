@@ -1,7 +1,7 @@
 (*
-    FASTools.ml -- (c) 2022-2023 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    FASTools.ml -- (c) 2022-2024 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
-    FASTools allows to perform a number of basic manipulations on
+    FASTools allows to perform a number of essential manipulations on
     FASTA and FASTQ files.
 
     This program is free software: you can redistribute it and/or modify
@@ -49,15 +49,17 @@ module Parameters =
     let verbose = ref false
   end
 
-let version = "6"
-and date = "03-10-2023"
-and authors = [
-  "2022-2023", "Paolo Ribeca", "paolo.ribeca@gmail.com"
+let info = {
+  Tools.Info.name = "FASTools";
+  version = "7";
+  date = "02-Jan-2024"
+} and authors = [
+  "2022-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 
 let () =
   let module TA = Tools.Argv in
-  Tools.String.TermIO.make_header "FASTools" version date authors |> TA.set_header;
+  TA.make_header info authors [ Info.info ] |> TA.set_header;
   TA.set_synopsis "[OPTIONS]";
   TA.parse [
     TA.make_separator_multiline [ "Working mode."; "Executed delayed in order of specification, default='compact'." ];
@@ -197,6 +199,11 @@ let () =
       [ "set verbose execution (global option)" ],
       TA.Default (fun () -> string_of_bool !Parameters.verbose),
       (fun _ -> Parameters.verbose := true);
+    [ "-V"; "--version" ],
+      None,
+      [ "print version and exit" ],
+      TA.Optional,
+      (fun _ -> Printf.printf "%s\n%!" info.version; exit 0);
     (* Hidden option to emit help in markdown format *)
     [ "--markdown" ], None, [], TA.Optional, (fun _ -> TA.markdown (); exit 0);
     [ "-h"; "--help" ],
