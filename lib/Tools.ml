@@ -1094,15 +1094,16 @@ module Argv:
     let make_header { Info.name; version; date } author_info depends_on =
       let open String.TermIO in
       let res =
-        Printf.sprintf "This is the %s program - version %s, %s\n" (blue name) (blue version) (blue date)
+        Printf.sprintf "%s %s %s %s [%s]\n"
+          (bold "This is") (green name) (bold "version") (green version) (blue date)
         |> ref in
       let red_l = List.length depends_on - 1 in
       List.iteri
         (fun i { Info.name; version; date } ->
           res := !res ^ begin
-            Printf.sprintf " %s%s - version %s, %s%s\n"
-              (if i = 0 then "(compiled against " else "                  ")
-              (blue name) (blue version) (blue date)
+            Printf.sprintf " %s%s version %s [%s]%s\n"
+              (if i = 0 then "(compiled against: " else "                   ")
+              (green name) (green version) (blue date)
               (if i = red_l then ")" else ";")
           end)
         depends_on;
