@@ -1094,23 +1094,32 @@ module Argv:
     let make_header { Info.name; version; date } author_info depends_on =
       let open String.TermIO in
       let res =
-        Printf.sprintf "%s %s %s %s [%s]\n"
-          (bold "This is") (green name) (bold "version") (green version) (blue date)
+        let line = ref "" and spaces = ref "" in
+        for i = 1 to String.length (name ^ version ^ date) + 23 do
+          line := !line ^ "━";
+          spaces := !spaces ^ " "
+        done;
+        Printf.sprintf "%s\n%s\n%s  %s %s %s %s [%s]  %s\n%s\n%s\n"
+          ("╔━" ^ !line ^ "╗" |> grey)
+          ("┃ " ^ !spaces ^ "┃" |> grey)
+          (grey "┃") (bold "This is") (green name) (bold "version") (green version) (blue date)  (grey "┃")
+          ("┃ " ^ !spaces ^ "┃" |> grey)
+          ("╚┯" ^ !line ^ "╝" |> grey)
         |> ref in
       let red_l = List.length depends_on - 1 in
       List.iteri
         (fun i { Info.name; version; date } ->
           res := !res ^ begin
             Printf.sprintf " %s%s version %s [%s]%s\n"
-              (if i = 0 then "(compiled against: " else "                   ")
+              (if i = 0 then grey "│" ^ " compiled against: " else "                    ")
               (green name) (green version) (blue date)
-              (if i = red_l then ")" else ";")
+              (if i = red_l then "" else ";")
           end)
         depends_on;
-      List.iter
-        (fun (years, name, email) ->
+      List.iteri
+        (fun i (years, name, email) ->
           res := !res ^ begin
-            Printf.sprintf " (c) %s %s <%s>\n" years (bold name) (under email)
+            Printf.sprintf " %s (c) %s %s <%s>\n" (grey "│") years (bold name) (under email)
           end)
         author_info;
       !res
@@ -1176,7 +1185,7 @@ module Argv:
       res
     let parse specs =
       let open String.TermIO in
-      _usage := !_header ^ red "Usage:" ^ "\n  " ^ bold argv.(0) ^ " " ^ blue !_synopsis ^ "\n";
+      _usage := !_header ^ red " Usage:" ^ "\n  " ^ bold argv.(0) ^ " " ^ blue !_synopsis ^ "\n";
       _md := "```\n" ^ !_header ^ "```\n*Usage:*\n```\n" ^ argv.(0) ^ " " ^ !_synopsis ^ "\n```\n";
       let accum_usage = String.accum _usage
       and accum_md ?(escape = false) s =
@@ -1280,7 +1289,7 @@ module Argv:
             List.iteri begin
               if opts <> [] then
                 (fun i help ->
-                  "   " ^ grey "|" ^ " " ^ help ^ "\n" |> accum_usage;
+                  "   " ^ grey "│" ^ " " ^ help ^ "\n" |> accum_usage;
                   let l = String.length help in
                   let first_char =
                     if l > 0 then
@@ -1320,7 +1329,7 @@ module Argv:
               accum_md "*(mandatory)*"
             | Optional -> ()
             | Default def ->
-              "   " ^ grey "|" ^ " (default='" ^ (def () |> bold |> under) ^ "')\n" |> accum_usage;
+              "   " ^ grey "│" ^ " (default='" ^ (def () |> bold |> under) ^ "')\n" |> accum_usage;
               accum_md "<ins>default=<mark>_";
               def () |> accum_md ~escape:true;
               accum_md "_</mark></ins>"
