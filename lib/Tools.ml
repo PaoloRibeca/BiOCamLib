@@ -1119,7 +1119,8 @@ module Argv:
       List.iteri
         (fun i (years, name, email) ->
           res := !res ^ begin
-            Printf.sprintf " %s (c) %s %s <%s>\n" (grey "│") years (bold name) (under email)
+            Printf.sprintf " %s %s %s <%s>\n"
+              (if i = 0 then grey "│" ^ " (c)" else "     ") years (bold name) (under email)
           end)
         author_info;
       !res
@@ -1318,7 +1319,7 @@ module Argv:
                     else
                       ""
                   else
-                    " " ^ green ("| " ^ help) ^ "\n"
+                    " " ^ grey "│" ^ " " ^ green help ^ "\n"
                   end |> accum_usage)
             end help;
             if opts <> [] && help <> [] then
