@@ -1095,7 +1095,7 @@ module Argv:
       let open String.TermIO in
       let res =
         let line = ref "" and spaces = ref "" in
-        for i = 1 to String.length (name ^ version ^ date) + 23 do
+        for _ = 1 to String.length (name ^ version ^ date) + 23 do
           line := !line ^ "━";
           spaces := !spaces ^ " "
         done;
