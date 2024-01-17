@@ -1154,7 +1154,7 @@ module Argv:
         else
           raise Not_found)
     let get_parameter =
-      template_get __FUNCTION__ "" (fun () -> incr i; argv.(!i))
+      template_get __FUNCTION__ "a" (fun () -> incr i; argv.(!i))
     let get_parameter_boolean =
       template_get __FUNCTION__ "a boolean" (fun () -> get_parameter () |> bool_of_string)
     let get_parameter_int =
