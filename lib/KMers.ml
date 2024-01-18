@@ -70,7 +70,7 @@ module HashFrequencies:
       Base.iter (fun key occs -> f key !occs)
   end
 
-(* This type lacks iterators *)
+(* This base type doesn't have iterators *)
 module type HashBase_t =
   sig
     type t
@@ -86,7 +86,7 @@ module type Hash_t =
     include HashBase_t
     (* Iterates a function over all hashes that can be extracted from a string
         according to the specific method being used (for instance, in the case of DNA
-        iteration happens both on the string and its RC).
+        iteration can happen both on the string and its RC).
        Iteration is positional, i.e., k-mers can appear more than once *)
     type iter_t
     val iteri: (int -> iter_t -> unit) -> string -> unit
@@ -214,7 +214,7 @@ module ProteinHash (K: IntParameter_t):
       HashFrequencies.iter f res
   end
 
-(* Base type without iterators, which depend on the strand *)
+(* Base type without iterators, which depend on the strandedness *)
 module DNAHashBase (K: IntParameter_t):
   HashBase_t with type t = int
 = struct
@@ -305,7 +305,7 @@ module DNAHashSingleStranded (K: IntParameter_t):
         s;
       HashFrequencies.iter f res
   end
-module DNAHashDoubleStranded (K: IntParameter_t):
+module DNAHashDoubleStrandedLexicographic (K: IntParameter_t):
   Hash_t with type t = int and type iter_t = int * int
 = struct
     include DNAHashBase (K)
@@ -339,6 +339,18 @@ module DNAHashDoubleStranded (K: IntParameter_t):
             if incr_pos + k <= l then
               shift incr_pos (0, 0) incr_pos in
       shift 0 (0, 0) 0
+    let iterc f s =
+      let res = HashFrequencies.Base.create 64 in
+      iteri
+        (fun _ (hash_f, hash_r) ->
+          HashFrequencies.add res (min hash_f hash_r) 1)
+        s;
+      HashFrequencies.iter f res
+  end
+module DNAHashDoubleStrandedBoth (K: IntParameter_t):
+  Hash_t with type t = int and type iter_t = int * int
+= struct
+    include DNAHashDoubleStrandedLexicographic (K)
     let iterc f s =
       let res = HashFrequencies.Base.create 64 in
       iteri
