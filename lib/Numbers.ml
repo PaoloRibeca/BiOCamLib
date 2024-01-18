@@ -135,7 +135,7 @@ module Number:
   end
 
 (* Encapsulated vectors based on bigarrays *)
-module BA:
+module Bigarray:
   sig
     module type ScalarType_t =
       sig
@@ -145,7 +145,6 @@ module BA:
       end
     module type Type_t =
       sig
-        module BA1 = Bigarray.Array1
         module N: ScalarType_t
         type t
         val init: int -> N.t -> t
@@ -180,7 +179,6 @@ module BA:
       end
     module type Type_t =
       sig
-        module BA1 = Bigarray.Array1
         module N: ScalarType_t
         type t
         val init: int -> N.t -> t
