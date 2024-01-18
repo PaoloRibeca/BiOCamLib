@@ -1,5 +1,5 @@
 (*
-    Tools.ml -- (c) 2015-2023 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    Tools.ml -- (c) 2015-2024 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     This file is part of BiOCamLib, the OCaml foundations upon which
     a number of the bioinformatics tools I developed are built.
@@ -238,7 +238,7 @@ module Printf:
       let t = Unix.localtime (Unix.time ()) in
       begin match mode with
       | Time ->
-        Printf.fprintf ch "%s %s %2d %02d:%02d:%02d %4d -- " begin
+        Printf.sprintf "%s %s %2d %02d:%02d:%02d %4d" begin
           match t.Unix.tm_wday with
           | 0 -> "Sun" | 1 -> "Mon" | 2 -> "Tue" | 3 -> "Wed"
           | 4 -> "Thu" | 5 -> "Fri" | 6 -> "Sat"
@@ -250,6 +250,7 @@ module Printf:
           | 8 -> "Sep" | 9 -> "Oct" | 10 -> "Nov" | 11 -> "Dec"
           | _ -> assert false
         end t.Unix.tm_mday t.Unix.tm_hour t.Unix.tm_min t.Unix.tm_sec (1900 + t.Unix.tm_year)
+          |> String.TermIO.blue |> Printf.fprintf ch "%s -- "
       | Space -> Printf.fprintf ch "                         -- "
       | Empty -> ()
       end;
@@ -258,8 +259,8 @@ module Printf:
     let teprintf ?(mode = Time) = tfprintf ~mode stderr
     let proto_pfprintf ?(mode = Time) f ch =
       begin match mode with
-      | Time -> Unix.getpid () |> Printf.fprintf ch "[%07d] "
-      | Space -> Printf.fprintf ch "          "
+      | Time -> Unix.getpid () |> Printf.sprintf "%07d" |> String.TermIO.blue |> Printf.fprintf ch "[#%s]: "
+      | Space -> Printf.fprintf ch "            "
       | Empty -> ()
       end;
       f ch

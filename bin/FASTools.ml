@@ -212,6 +212,8 @@ let () =
       TA.Optional,
       (fun _ -> TA.usage (); exit 1)
   ];
+  if !Parameters.verbose then
+    TA.header ();
   let working_mode = ref Compact
   and linter_keep_lowercase = ref false and linter_keep_dashes = ref false
   and linter = ref None and linter_f = ref Sequences.Lint.none

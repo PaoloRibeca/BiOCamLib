@@ -208,6 +208,8 @@ let () =
       TA.Optional,
       (fun _ -> TA.usage (); exit 1)
   ];
+  if !Parameters.verbose then
+    TA.header ();
   let linter_f =
     match !Parameters.linter with
     | "none" ->
