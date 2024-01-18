@@ -1,5 +1,5 @@
 (*
-    Processes.ml -- (c) 2015-2023 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    Processes.ml -- (c) 2015-2024 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     This file is part of BiOCamLib, the OCaml foundations upon which
     a number of the bioinformatics tools I developed are built.
@@ -280,7 +280,7 @@ module Parallel:
                 Unix.close w_2_i_pipe_out;
                 Unix.close o_2_w_pipe_in;
                 Unix.close w_2_o_pipe_out;
-                exit 0
+                Unix._exit 0 (* Do not flush buffers or do anything else *)
               | 1 -> (* OK, one more token available *)
                 (* Get the chunk *)
                 let chunk_id, data = (input_value i_2_w:int * 'a) in
@@ -343,7 +343,7 @@ module Parallel:
         ignore (Unix.select [fst w_2_i_pipes.(0)] [] [] (-1.));
         close_pipes_out i_2_w_pipes;
         close_pipes_in w_2_i_pipes;
-        exit 0
+        Unix._exit 0 (* Do not flush buffers or do anything else *)
       | _ -> (* I am the output process *)
         close_pipes_in o_2_w_pipes;
         close_pipes_out w_2_o_pipes;

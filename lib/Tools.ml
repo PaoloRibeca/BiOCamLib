@@ -1027,43 +1027,37 @@ module BA:
       end
   end
 
-module Info =
-  struct
-    type t = {
+module Argv:
+  sig
+    type header_info_t = {
       name: string;
       version: string;
       date: string
     }
-  end
-
-module Argv:
-  sig
-    type class_t =
+    (* The specs from which the header is produced are a tuple with the following elements:
+        (1) program name, version, date (as Info)
+        (2) list of authors as (year range, name, email)
+        (3) list of dependencies as (name, version, date) - each one as Info.
+       We use a tuple rather than anything fancier to keep usages easier to write *)
+    type header_specs_t = header_info_t * (string * string * string) list * header_info_t list
+    type arg_t =
       | Mandatory (* Implies no default *)
       | Optional (* Implies no default *)
       | Default of (unit -> string) (* Implies optional - the function prints the default *)
-    (* The specs from which usage is produced are a tuple with the following elements:
+    (* Each spec from which the usage is produced is a tuple with the following elements:
         (1) Equivalent option names
         (2) Optional explanation for the argument(s)
         (3) Help text lines.
             An empty help means the option is private and no usage will be output for it
         (4) Class (can be mandatory, optional, default)
-        (5) Parsing action when option is encountered *)
-    type spec_t = string list * string option * string list * class_t * (string -> unit)
-    (* Sets the header text *)
-    val set_header: string -> unit
-    (* Structured header.
-       Parameters are:
-        (1) program name, version, date (as Info)
-        (2) list of authors as (year range, name, email)
-        (3) list of dependencies as (name, version, date) - each one as Info *)
-    val make_header: Info.t -> (string * string * string) list -> Info.t list -> string
+        (5) Parsing action when option is encountered.
+       We use a tuple rather than anything fancier to keep usages easier to write *)
+    type argv_spec_t = string list * string option * string list * arg_t * (string -> unit)
+    (* Compiles and sets the structured header *)
+    val set_header: header_specs_t -> unit
     (* Sets the text following the program name *)
     val set_synopsis: string -> unit
-    val header: ?output:out_channel -> unit -> unit
-    val synopsis: ?output:out_channel -> unit -> unit
-    val usage: ?output:out_channel -> unit -> unit
-    val markdown: ?output:out_channel -> unit -> unit
+    (* Functions to get arguments from within the actions given as argument to parse() *)
     val get_parameter: unit -> string
     val get_parameter_boolean: unit -> bool
     val get_parameter_int: unit -> int
@@ -1076,24 +1070,38 @@ module Argv:
     val get_parameter_float_fraction: unit -> float
     (* Consumes and returns all the parameters which are left on the command line *)
     val get_remaining_parameters: unit -> string array
-    val parse: spec_t list -> unit
+    (* Makes a textual separator between groups of options *)
+    val make_separator: string -> argv_spec_t
+    val make_separator_multiline: string list -> argv_spec_t
+    (* Parses command line options and generates usage and markdown.
+       Must be called _after_ set_header() and set_synopsis() *)
+    val parse: argv_spec_t list -> unit
     (* Can be invoked from within the actions given as argument to parse() *)
     val parse_error: ?output:out_channel -> string -> unit
-    (* Makes a textual separator between groups of options *)
-    val make_separator: string -> spec_t
-    val make_separator_multiline: string list -> spec_t
+    (* Functions to print results of parsing *)
+    val header: ?output:out_channel -> unit -> unit
+    val synopsis: ?output:out_channel -> unit -> unit
+    val usage: ?output:out_channel -> unit -> unit
+    val markdown: ?output:out_channel -> unit -> unit
   end
 = struct
-    type class_t =
+    type header_info_t = {
+      name: string;
+      version: string;
+      date: string
+    }
+    type header_specs_t = header_info_t * (string * string * string) list * header_info_t list
+    type arg_t =
       | Mandatory
       | Optional
       | Default of (unit -> string)
-    type spec_t = string list * string option * string list * class_t * (string -> unit)
+    type argv_spec_t = string list * string option * string list * arg_t * (string -> unit)
+    (* The header and its markdown version are different *)
     let _header = ref ""
-    let set_header s = _header := s
-    let make_header { Info.name; version; date } author_info depends_on =
+    let _md_header = ref ""
+    let set_header ({ name; version; date }, author_info, depends_on) =
       let open String.TermIO in
-      let res =
+      _header := begin
         let line = ref "" and spaces = ref "" in
         for _ = 1 to String.length (name ^ version ^ date) + 23 do
           line := !line ^ "━";
@@ -1105,36 +1113,49 @@ module Argv:
           (grey "┃") (bold "This is") (green name) (bold "version") (green version) (blue date)  (grey "┃")
           ("┃ " ^ !spaces ^ "┃" |> grey)
           ("╚┯" ^ !line ^ "╝" |> grey)
-        |> ref in
+      end;
+      _md_header := Printf.sprintf "This is %s version %s [%s]\n" name version date;
       let red_l = List.length depends_on - 1 in
       List.iteri
-        (fun i { Info.name; version; date } ->
-          res := !res ^ begin
+        (fun i { name; version; date } ->
+          _header := !_header ^ begin
             Printf.sprintf " %s%s version %s [%s]%s\n"
               (if i = 0 then grey "│" ^ " compiled against: " else "                    ")
               (green name) (green version) (blue date)
+              (if i = red_l then "" else ";")
+          end;
+          _md_header := !_md_header  ^ begin
+            Printf.sprintf " %s%s version %s [%s]%s\n"
+              (if i = 0 then "compiled against: " else "                  ")
+              name version date
               (if i = red_l then "" else ";")
           end)
         depends_on;
       List.iteri
         (fun i (years, name, email) ->
-          res := !res ^ begin
+          _header := !_header ^ begin
             Printf.sprintf " %s %s %s <%s>\n"
               (if i = 0 then grey "│" ^ " (c)" else "     ") years (bold name) (under email)
+          end;
+          _md_header := !_md_header ^ begin
+            Printf.sprintf " %s %s %s <%s>\n" (if i = 0 then "(c)" else "   ") years name email
           end)
-        author_info;
-      !res
+        author_info
     let _synopsis = ref ""
-    let set_synopsis s = _synopsis := s
+    let _md_synopsis = ref ""
+    let set_synopsis s =
+      (* At the moment, the synopsis and its markdown version are the same *)
+      _synopsis := s;
+      _md_synopsis := s
     let argv = Sys.argv
     let i = ref 1
     (* Both _usage and _md will be completed by parse () *)
     let _usage = ref ""
-    let _md = ref ""
+    let _md_usage = ref ""
     let header ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_header
     let synopsis ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_synopsis
     let usage ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_usage
-    let markdown ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_md
+    let markdown ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_md_usage
     let error ?(output = stderr) f_n msg =
       let open String.TermIO in
       usage ~output ();
@@ -1184,12 +1205,17 @@ module Argv:
       let res = Array.sub argv (!i + 1) (len - !i - 1) in
       i := len;
       res
+    let make_separator s =
+      [], None, [ s ], Optional, (fun _ -> ())
+    let make_separator_multiline a =
+      [], None, a, Optional, (fun _ -> ())
     let parse specs =
       let open String.TermIO in
-      _usage := !_header ^ red " Usage:" ^ "\n  " ^ bold argv.(0) ^ " " ^ blue !_synopsis ^ "\n";
-      _md := "```\n" ^ !_header ^ "```\n*Usage:*\n```\n" ^ argv.(0) ^ " " ^ !_synopsis ^ "\n```\n";
+      let basename = Filename.basename argv.(0) in
+      _usage := !_header ^ red " Usage:" ^ "\n  " ^ bold basename ^ " " ^ blue !_synopsis ^ "\n";
+      _md_usage := "```\n" ^ !_md_header ^ "```\n*Usage:*\n```\n" ^ basename ^ " " ^ !_md_synopsis ^ "\n```\n";
       let accum_usage = String.accum _usage
-      and accum_md ?(escape = false) s =
+      and accum_md_usage ?(escape = false) s =
         let res = ref "" in
         String.iter
           (function
@@ -1205,12 +1231,12 @@ module Argv:
             | c ->
               String.make 1 c |> String.accum res)
           s;
-        String.accum _md !res
+        String.accum _md_usage !res
       and need_table_header = ref false in
       let emit_table_header_if_needed () =
         if !need_table_header then begin
           need_table_header := false;
-          "\n| Option | Argument(s) | Effect | Note(s) |\n|-|-|-|-|\n" |> accum_md
+          "\n| Option | Argument(s) | Effect | Note(s) |\n|-|-|-|-|\n" |> accum_md_usage
         end
       and trie = ref Trie.empty and table = ref StringMap.empty and mandatory = ref StringSet.empty in
       List.iteri
@@ -1219,16 +1245,16 @@ module Argv:
             error __FUNCTION__ ("Malformed initializer for option #" ^ string_of_int i);
           if opts = [] then begin
             (* Case of a separator *)
-            accum_md "\n";
+            accum_md_usage "\n";
             List.iteri
               (fun i line ->
                 if line <> "" then begin
                   if i = 0 then
-                    accum_md "**";
-                  accum_md ~escape:true line;
+                    accum_md_usage "**";
+                  accum_md_usage ~escape:true line;
                   if i = 0 then
-                    accum_md "**";
-                  accum_md "\n"
+                    accum_md_usage "**";
+                  accum_md_usage "\n"
                 end)
               help;
             (* Section headers require a new table *)
@@ -1236,7 +1262,7 @@ module Argv:
           end else
             if help <> [] then begin
               emit_table_header_if_needed ();
-              accum_md "| ";
+              accum_md_usage "| ";
               accum_usage "  "
             end;
           List.iteri
@@ -1244,11 +1270,11 @@ module Argv:
               if help <> [] then begin (* The option might be hidden *)
                 if i > 0 then begin
                   grey "|" |> accum_usage;
-                  accum_md "<br>"
+                  accum_md_usage "<br>"
                 end;
                 blue opt |> accum_usage;
                 (* No escaping needed here, as the text is already surrounded by quotes *)
-                "`" ^ opt ^ "`" |> accum_md
+                "`" ^ opt ^ "`" |> accum_md_usage
               end;
               if Trie.find_string !trie opt <> "" then
                 "Clashing command line option '" ^ opt ^ "' in table" |> error __FUNCTION__;
@@ -1266,15 +1292,15 @@ module Argv:
                 table := StringMap.add opt act !table)
             opts;
           if opts <> [] && help <> [] then begin
-            accum_md " | ";
+            accum_md_usage " | ";
             begin match vl with
             | None -> ()
             | Some vl ->
-              accum_md "_";
-              accum_md ~escape:true vl;
-              accum_md "_"
+              accum_md_usage "_";
+              accum_md_usage ~escape:true vl;
+              accum_md_usage "_"
             end;
-            accum_md " | "
+            accum_md_usage " | "
           end;
           if help <> [] then begin
             begin match vl with
@@ -1297,7 +1323,7 @@ module Argv:
                       String.sub help 0 1
                     else
                       "" in
-                  accum_md begin
+                  accum_md_usage begin
                     if i > 0 && !last_char = "." && String.uppercase_ascii first_char = first_char then
                       "<br>"
                     else
@@ -1309,7 +1335,7 @@ module Argv:
                     else
                       ""
                   end;
-                  accum_md ~escape:true help)
+                  accum_md_usage ~escape:true help)
               else
                 (* Case of a separator *)
                 (fun i help ->
@@ -1323,23 +1349,23 @@ module Argv:
                   end |> accum_usage)
             end help;
             if opts <> [] && help <> [] then
-              accum_md " | ";
+              accum_md_usage " | ";
             begin match class_ with
             | Mandatory ->
               "   " ^ grey "*" ^ " (" ^ red "mandatory" ^ ")\n" |> accum_usage;
-              accum_md "*(mandatory)*"
+              accum_md_usage "*(mandatory)*"
             | Optional -> ()
             | Default def ->
               "   " ^ grey "│" ^ " (default='" ^ (def () |> bold |> under) ^ "')\n" |> accum_usage;
-              accum_md "<ins>default=<mark>_";
-              def () |> accum_md ~escape:true;
-              accum_md "_</mark></ins>"
+              accum_md_usage "<ins>default=<mark>_";
+              def () |> accum_md_usage ~escape:true;
+              accum_md_usage "_</mark></ins>"
             end;
             if opts <> [] && help <> [] then
-              accum_md " |\n"
+              accum_md_usage " |\n"
           end)
         specs;
-      (* The actual parsing :) *)
+      (* And finally, the actual parsing :) *)
       let trie = !trie and table = !table and len = Array.length argv in
       while !i < len do
         let arg = argv.(!i) in
@@ -1356,9 +1382,5 @@ module Argv:
             error __FUNCTION__ ("Option '" ^ opt ^ "' is mandatory"))
           !mandatory
     let parse_error ?(output = stderr) = error ~output __FUNCTION__
-    let make_separator s =
-      [], None, [ s ], Optional, (fun _ -> ())
-    let make_separator_multiline a =
-      [], None, a, Optional, (fun _ -> ())
   end
 

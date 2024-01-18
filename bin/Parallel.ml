@@ -21,18 +21,6 @@
 
 open BiOCamLib
 
-module Misc =
-  struct
-
-(* Should be moved to Tools.ml ? *)
-
-    let input_line_num = ref 0
-    let line__failwith s =
-      Printf.eprintf "On line %d: %s\n%!" !input_line_num s;
-      exit 1
-
-  end
-
 module Parameters =
   struct
     let command = ref ""
@@ -46,16 +34,16 @@ module Parameters =
   end
 
 let info = {
-  Tools.Info.name = "Parallel";
-  version = "6";
-  date = "02-Jan-2024"
+  Tools.Argv.name = "Parallel";
+  version = "7";
+  date = "18-Jan-2024"
 } and authors = [
   "2019-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 
 let () =
   let module TA = Tools.Argv in
-  TA.make_header info authors [ Info.info ] |> TA.set_header;
+  TA.set_header (info, authors, [ Info.info ]);
   TA.set_synopsis "[OPTIONS] -- [COMMAND TO PARALLELIZE AND ITS OPTIONS]";
   TA.parse [
     TA.make_separator "Command to parallelize";
@@ -127,31 +115,35 @@ let () =
       stdout
     else
       open_out !Parameters.output in
+  let input_line_num = ref 0 in
   let print_num_lines what =
     if verbose then
-      Printf.sprintf "%d %s %s" !Misc.input_line_num (Tools.String.pluralize_int "line" !Misc.input_line_num) what |>
+      Printf.sprintf "%d %s %s" !input_line_num (Tools.String.pluralize_int "line" !input_line_num) what |>
       Tools.Printf.pteprintf "%s\n%!"
   and wait_and_check pid =
     match let _, status = Unix.waitpid [] pid in status with
     | Unix.WEXITED 0 -> ()
     | _ ->
-      Printf.sprintf "[%07d] !!! Subprocess %d terminated with an error" (Unix.getpid ()) pid |>
-      Misc.line__failwith in
+      Printf.eprintf "On line %s: %s\n%!"
+        (!input_line_num |> string_of_int |> Tools.String.TermIO.blue)
+        (Printf.sprintf "FATAL: subprocess [#%07d->#%07d] terminated with an error" (Unix.getpid ()) pid
+          |> Tools.String.TermIO.red);
+      exit 1 in
   let lines_per_block = !Parameters.lines_per_block
   and eof = ref false and processing_buffer = Buffer.create 16777216 in
   Processes.Parallel.process_stream_chunkwise
     (fun () ->
       if not !eof then begin
-        if !Misc.input_line_num mod lines_per_block = 0 then
+        if !input_line_num mod lines_per_block = 0 then
           print_num_lines "read";
-        let buf = ref [] and base_input_line_num = !Misc.input_line_num + 1 in
+        let buf = ref [] and base_input_line_num = !input_line_num + 1 in
         begin try
           for _ = 1 to lines_per_block do
-            incr Misc.input_line_num;
+            incr input_line_num;
             input_line input |> Tools.List.accum buf
           done
         with End_of_file ->
-          decr Misc.input_line_num;
+          decr input_line_num;
           print_num_lines "read";
           eof := true
         end;
@@ -160,7 +152,7 @@ let () =
         raise End_of_file)
     (fun (base_input_line_num, input_lines) ->
       (* We want to keep counters realiable in case of error *)
-      Misc.input_line_num := base_input_line_num;
+      input_line_num := base_input_line_num;
       let input_lines_processed = ref 0 in
       Buffer.clear processing_buffer;
       (* We start the subprocess *)
@@ -204,7 +196,7 @@ let () =
           if debug then
             Tools.Printf.peprintf ">>> Pushing done.\n%!";
           (* Commit suicide *)
-          exit 0
+          Unix._exit 0 (* Do not flush buffers or do anything else *)
         | pid_grandchild -> (* Grandparent *)
           close_out process_input;
           (* We have to update the counter here, otherwise the information will be lost *)
@@ -231,11 +223,11 @@ let () =
           wait_and_check pid_grandchild;
           !input_lines_processed, Buffer.contents processing_buffer)
     (fun (processed, buf) ->
-      if !Misc.input_line_num = 0 then
+      if !input_line_num = 0 then
         print_num_lines "processed";
-      let old_periods = !Misc.input_line_num / lines_per_block in
-      Misc.input_line_num := !Misc.input_line_num + processed;
-      if !Misc.input_line_num / lines_per_block > old_periods then
+      let old_periods = !input_line_num / lines_per_block in
+      input_line_num := !input_line_num + processed;
+      if !input_line_num / lines_per_block > old_periods then
         print_num_lines "processed";
       Printf.fprintf output "%s%!" buf)
     !Parameters.threads;

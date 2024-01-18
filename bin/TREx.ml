@@ -140,7 +140,7 @@ module Parameters =
   end
 
 let info = {
-  Tools.Info.name = "TREx";
+  Tools.Argv.name = "TREx";
   version = "3";
   date = "02-Jan-2024"
 } and authors = [
@@ -149,7 +149,7 @@ let info = {
 
 let () =
   let module TA = Tools.Argv in
-  TA.make_header info authors [ Info.info ] |> TA.set_header;
+  TA.set_header (info, authors, [ Info.info ]);
   TA.set_synopsis "[OPTIONS]";
   TA.parse [
     TA.make_separator "Input/Output";
