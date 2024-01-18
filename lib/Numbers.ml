@@ -147,7 +147,8 @@ module Bigarray:
       sig
         module N: ScalarType_t
         type t
-        val init: int -> N.t -> t
+        val make: int -> N.t -> t
+        val init: int -> (int -> N.t) -> t
         val empty: t
         val length: t -> int
         val get: t -> int -> N.t
@@ -167,6 +168,7 @@ module Bigarray:
         val fill: t -> N.t -> unit
         val resize: ?is_buffer:bool -> int -> N.t -> t -> t
         val to_floatarray: t -> floatarray
+        val of_floatarray: floatarray -> t
       end
     module Vector: functor (T: ScalarType_t) -> Type_t with type N.t = T.t
   end
@@ -181,7 +183,8 @@ module Bigarray:
       sig
         module N: ScalarType_t
         type t
-        val init: int -> N.t -> t
+        val make: int -> N.t -> t
+        val init: int -> (int -> N.t) -> t
         val empty: t
         val length: t -> int
         val get: t -> int -> N.t
@@ -201,17 +204,19 @@ module Bigarray:
         val fill: t -> N.t -> unit
         val resize: ?is_buffer:bool -> int -> N.t -> t -> t
         val to_floatarray: t -> floatarray
+        val of_floatarray: floatarray -> t
       end
     module Vector (T: ScalarType_t) = (* This should work with float too *)
       struct
         module BA1 = Bigarray.Array1
         module N = T
         type t = (N.t, T.elt_t, Bigarray.c_layout) BA1.t
-        let init n a =
+        let make n a =
           let res = BA1.create T.elt Bigarray.C_layout n in
           BA1.fill res a;
           res
-        let empty = init 0 N.zero
+        let init = BA1.init T.elt Bigarray.C_layout
+        let empty = make 0 N.zero
         let length = BA1.dim
         let get = BA1.get
         let ( .@() ) = BA1.get
@@ -236,7 +241,7 @@ module Bigarray:
           let l = length v in
           if n > l then begin
             let res =
-              init begin
+              make begin
                 if is_buffer then
                   max n (l * 14 / 10)
                 else
@@ -246,7 +251,7 @@ module Bigarray:
             res
           end else if n < l && not is_buffer then
             (* We have to resize in order to honour the request *)
-            let res = init n zero in
+            let res = make n zero in
             BA1.blit (BA1.sub v 0 n) res;
             res
           else
@@ -258,6 +263,8 @@ module Bigarray:
             N.to_float v.@(i) |> Float.Array.set res i
           done;
           res
+        let of_floatarray f =
+          init (Float.Array.length f) (fun i -> Float.Array.get f i |> N.of_float)
       end
   end
 
