@@ -312,10 +312,17 @@ module IntHash =
   end
 module IntHashtbl = Hashtbl.Make (IntHash)
 
-module Set:
+(* Same as Set.OrderedType or Map.OrderedType *)
+module type ComparableType_t =
+  sig
+    type t
+    val compare: t -> t -> int
+  end
+
+  module Set:
   sig
     include module type of Set
-    module Make (O: Set.OrderedType):
+    module Make (O: ComparableType_t):
       sig
         include module type of Set.Make(O)
         val iteri: (int -> elt -> unit) -> t -> unit
@@ -326,7 +333,7 @@ module Set:
   end
 = struct
     include Set
-    module Make (O: Set.OrderedType) =
+    module Make (O: ComparableType_t) =
       struct
         include Set.Make(O)
         let iteri f =
@@ -354,7 +361,7 @@ module Set:
 module Map:
   sig
     include module type of Map
-    module Make (O: Map.OrderedType):
+    module Make (O: ComparableType_t):
       sig
         include module type of Map.Make(O)
         val replace: key -> 'a -> 'a t -> 'a t
@@ -366,7 +373,7 @@ module Map:
   end
 = struct
     include Map
-    module Make (O: Map.OrderedType) =
+    module Make (O: ComparableType_t) =
       struct
         include Map.Make(O)
         let replace k v m =
@@ -438,7 +445,7 @@ module StringRSet: module type of Set.Make (RComparableString) = Set.Make (RComp
 module StringRMap: module type of Map.Make (RComparableString) = Map.Make (RComparableString)
 
 (* An ordered multimap is a map 'key -> 'val Set (no duplications allowed) *)
-module Multimap (OrdKey: Map.OrderedType) (OrdVal: Set.OrderedType) =
+module Multimap (OrdKey: ComparableType_t) (OrdVal: ComparableType_t) =
   struct
     (* Keys have type OrdKey.t, values OrdVal.t *)
     module KeyMap = Map.Make (OrdKey)
@@ -512,7 +519,7 @@ module TransitiveClosure =
         val cardinal: t -> int
         val iter: (unit -> element_t -> unit) -> t -> unit
       end
-    module Make (O: Set.OrderedType):
+    module Make (O: ComparableType_t):
       T_t with type element_t := O.t and type set_t := Set.Make(O).t
     = struct
         type element_t = O.t
