@@ -39,6 +39,13 @@ module Option:
       | Some r -> r
   end
 
+module Int:
+  module type of Int
+= struct
+    include Int
+    let compare a b = a - b [@@inline] (* Optimisation (hopefully) *)
+  end
+
 module Float:
   sig
     include module type of Float
@@ -306,9 +313,9 @@ module Hashtbl:
 
 module IntHash =
   struct
-    type t = int
-    let equal (i: int) (j: int) = (i - j = 0) (*(i = j)*)
-    let hash (i: int) = i (* land max_int *)
+    type t = Int.t (* Our Int! *)
+    let equal (i:int) (j:int) = (i - j = 0) [@@inline] (*(i = j)*)
+    let hash (i:int) = i [@@inline] (* land max_int *)
   end
 module IntHashtbl = Hashtbl.Make (IntHash)
 
@@ -319,7 +326,7 @@ module type ComparableType_t =
     val compare: t -> t -> int
   end
 
-  module Set:
+module Set:
   sig
     include module type of Set
     module Make (O: ComparableType_t):
@@ -401,18 +408,20 @@ module Map:
   end
 
 (* Frequently used module idioms *)
+
 module type TypeContainer_t = sig type t end
-module MakeComparable (T: TypeContainer_t) =
+module type MakeComparable_t = functor (T: TypeContainer_t) -> ComparableType_t with type t = T.t
+module MakeComparable (T: TypeContainer_t): ComparableType_t with type t = T.t =
   struct
     type t = T.t
     (* Informs the compiler that polymorphism is not needed *)
-    let compare (a:t) (b:t) = compare a b
+    let compare (a:t) (b:t) = compare a b [@@inline]
   end
-module MakeRComparable (T: TypeContainer_t) =
+module MakeRComparable (T: TypeContainer_t): ComparableType_t with type t = T.t =
   struct
     type t = T.t
     (* Informs the compiler that polymorphism is not needed *)
-    let compare (a:t) (b:t) = compare b a
+    let compare (a:t) (b:t) = compare b a [@@inline]
   end
 
 (* A few frequently used modules.
@@ -423,33 +432,31 @@ module CharMap: module type of Map.Make (ComparableChar) = Map.Make (ComparableC
 module RComparableChar = MakeRComparable (struct type t = char end)
 module CharRSet: module type of Set.Make (RComparableChar) = Set.Make (RComparableChar)
 module CharRMap: module type of Map.Make (RComparableChar) = Map.Make (RComparableChar)
-(* Optimisation for integers *)
-module ComparableInt = struct type t = int let compare a b = a - b end
+module ComparableInt = MakeComparable (struct type t = Int.t end) (* Our Int! *)
 module IntSet: module type of Set.Make (ComparableInt) = Set.Make (ComparableInt)
 module IntMap: module type of Map.Make (ComparableInt) = Map.Make (ComparableInt)
-(* Optimisation for integers *)
-module RComparableInt = struct type t = int let compare a b = b - a end
+module RComparableInt = MakeRComparable (struct type t = Int.t end) (* Our Int! *)
 module IntRSet: module type of Set.Make (RComparableInt) = Set.Make (RComparableInt)
 module IntRMap: module type of Map.Make (RComparableInt) = Map.Make (RComparableInt)
-module ComparableFloat = MakeComparable (struct type t = float end)
+module ComparableFloat = MakeComparable (struct type t = Float.t end) (* Our Float! *)
 module FloatSet: module type of Set.Make (ComparableFloat) = Set.Make (ComparableFloat)
 module FloatMap: module type of Map.Make (ComparableFloat) = Map.Make (ComparableFloat)
-module RComparableFloat = MakeRComparable (struct type t = float end)
+module RComparableFloat = MakeRComparable (struct type t = Float.t end) (* Our Float! *)
 module FloatRSet: module type of Set.Make (RComparableFloat) = Set.Make (RComparableFloat)
 module FloatRMap: module type of Map.Make (RComparableFloat) = Map.Make (RComparableFloat)
-module ComparableString = MakeComparable (struct type t = string end)
+module ComparableString = MakeComparable (struct type t = String.t end) (* Our String! *)
 module StringSet: module type of Set.Make (ComparableString) = Set.Make (ComparableString)
 module StringMap: module type of Map.Make (ComparableString) = Map.Make (ComparableString)
-module RComparableString = MakeRComparable (struct type t = string end)
+module RComparableString = MakeRComparable (struct type t = String.t end) (* Our String! *)
 module StringRSet: module type of Set.Make (RComparableString) = Set.Make (RComparableString)
 module StringRMap: module type of Map.Make (RComparableString) = Map.Make (RComparableString)
 
 (* An ordered multimap is a map 'key -> 'val Set (no duplications allowed) *)
-module Multimap (OrdKey: ComparableType_t) (OrdVal: ComparableType_t) =
+module Multimap (CmpKey: ComparableType_t) (CmpVal: ComparableType_t) =
   struct
-    (* Keys have type OrdKey.t, values OrdVal.t *)
-    module KeyMap = Map.Make (OrdKey)
-    module ValSet = Set.Make (OrdVal)
+    (* Keys have type CmpKey.t, values CmpVal.t *)
+    module KeyMap = Map.Make (CmpKey)
+    module ValSet = Set.Make (CmpVal)
     (* To store the values *)
     type t = ValSet.t KeyMap.t
     let empty = KeyMap.empty
