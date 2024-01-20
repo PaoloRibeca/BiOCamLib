@@ -161,6 +161,8 @@ module Scalar (N: BasicScalar_t): Scalar_t with type t = N.t
   end
 
 module Int = Scalar(BasicInt)
+module Int32 = Scalar(BasicInt32)
+module Int64 = Scalar(BasicInt64)
 module Float = Scalar(BasicFloat)
 
 module type Vector_t =
