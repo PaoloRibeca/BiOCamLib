@@ -72,6 +72,22 @@ module BasicInt: BasicScalar_t with type t = Tools.Int.t
     let of_string_opt = int_of_string_opt
   end
 
+module BasicInt32: BasicScalar_t with type t = Int32.t
+= struct
+    include Int32
+    let round n:int32 = n [@@inline]
+    let of_int_opt n = Some (of_int n) [@@inline] (* TODO: No error checking at the moment *)
+    let of_float_opt x = Some (of_float x) [@@inline] (* TODO: No error checking at the moment *)
+  end
+
+module BasicInt64: BasicScalar_t with type t = Int64.t
+= struct
+    include Int64
+    let round n:int64 = n [@@inline]
+    let of_int_opt n = Some (of_int n) [@@inline] (* TODO: No error checking at the moment *)
+    let of_float_opt x = Some (of_float x) [@@inline] (* TODO: No error checking at the moment *)
+  end
+
 module BasicFloat: BasicScalar_t with type t = Tools.Float.t
 = struct
     include Tools.Float (* Provides round() *)
