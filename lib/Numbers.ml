@@ -362,12 +362,12 @@ module type FrequenciesVector_t =
     val sum_abs: t -> C(N).t
     val sum_log_abs: t -> C(N).t
     val median: t -> C(N).t
-    val pow_abs: t -> C(N).t -> t
+    val pow_abs: C(N).t -> t -> t
     val normalize_abs: t -> t
     exception Invalid_threshold of float
     (* Examine values in order, and null frequencies when accumulated absolute values are > threshold * sum_abs.
        Threshold must be between 0. and 1. *)
-    val accum_threshold: t -> float -> t
+    val accum_threshold: float -> t -> t
     val of_floatarray: Stdlib.Float.Array.t -> t
     val to_floatarray: t -> Stdlib.Float.Array.t
   end
@@ -497,7 +497,7 @@ module Frequencies:
             Exit -> ()
           end;
           !res
-        let pow_abs fv p =
+        let pow_abs p fv =
           if p = N.one then
             fv
           else begin
@@ -523,7 +523,7 @@ module Frequencies:
           end
         (* This function must _not_ change the total number of elements *)
         exception Invalid_threshold of float
-        let accum_threshold fv t =
+        let accum_threshold t fv =
           if t < 0. || t > 1. then
             Invalid_threshold t |> raise;
           if t = 1. then
