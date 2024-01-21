@@ -53,8 +53,9 @@ module type HashFrequencies_t =
   sig
     type hash_t
     type t
-    val length: t -> int
     val create: int -> t
+    val length: t -> int
+    val clear: t -> unit
     (* The first parameter is the hash, the second its frequency *)
     val add: t -> hash_t -> int -> unit
     val iter: (hash_t -> int -> unit) -> t -> unit
@@ -65,8 +66,9 @@ module IntHashFrequencies: HashFrequencies_t with type hash_t = int
     type hash_t = int
     module H = Tools.IntHashtbl
     type t = int ref H.t
-    let length = H.length
     let create = H.create
+    let length = H.length
+    let clear = H.clear
     let add hf key occs =
       match H.find_opt hf key with
       | None -> H.add hf key (ref occs)
