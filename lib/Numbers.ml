@@ -27,7 +27,7 @@
 
 (* A general module type to unify numbers *)
 (* module type M = sig include module type of struct include Int end end *)
-module type BasicScalar_t =
+module type BaseScalar_t =
   sig
     type t
     val zero: t
@@ -58,7 +58,7 @@ module type BasicScalar_t =
     val of_string_opt: string -> t option
   end
 
-module BasicInt: BasicScalar_t with type t = Tools.Int.t
+module BaseInt: BaseScalar_t with type t = Tools.Int.t
 = struct
     include Tools.Int (* Provides compare() *)
     let round n:int = n [@@inline]
@@ -72,7 +72,7 @@ module BasicInt: BasicScalar_t with type t = Tools.Int.t
     let of_string_opt = int_of_string_opt
   end
 
-module BasicInt32: BasicScalar_t with type t = Int32.t
+module BaseInt32: BaseScalar_t with type t = Int32.t
 = struct
     include Int32
     let round n:int32 = n [@@inline]
@@ -80,7 +80,7 @@ module BasicInt32: BasicScalar_t with type t = Int32.t
     let of_float_opt x = Some (of_float x) [@@inline] (* TODO: No error checking at the moment *)
   end
 
-module BasicInt64: BasicScalar_t with type t = Int64.t
+module BaseInt64: BaseScalar_t with type t = Int64.t
 = struct
     include Int64
     let round n:int64 = n [@@inline]
@@ -88,7 +88,7 @@ module BasicInt64: BasicScalar_t with type t = Int64.t
     let of_float_opt x = Some (of_float x) [@@inline] (* TODO: No error checking at the moment *)
   end
 
-module BasicFloat: BasicScalar_t with type t = Tools.Float.t
+module BaseFloat: BaseScalar_t with type t = Tools.Float.t
 = struct
     include Tools.Float (* Provides round() *)
     let to_int = int_of_float (* TODO: No error checking at the moment *)
@@ -102,7 +102,7 @@ module BasicFloat: BasicScalar_t with type t = Tools.Float.t
 (* A more refined scalar with additional operations and operators *)
 module type Scalar_t =
   sig
-    include BasicScalar_t
+    include BaseScalar_t
     val ( ~+ ): t -> t (* Unary plus *)
     val ( + ): t -> t -> t
     val ( ~- ): t -> t (* Unary minus *)
@@ -129,7 +129,7 @@ module type Scalar_t =
     val ( ** ): t -> t -> t
   end
 
-module Scalar (N: BasicScalar_t): Scalar_t with type t = N.t
+module Scalar (N: BaseScalar_t): Scalar_t with type t = N.t
 = struct
     include N
     let ( ~+ ) n:N.t = n [@@inline] (* We eliminate polymorphism *)
@@ -160,10 +160,10 @@ module Scalar (N: BasicScalar_t): Scalar_t with type t = N.t
     let log = _unary_float_function log
   end
 
-module Int = Scalar(BasicInt)
-module Int32 = Scalar(BasicInt32)
-module Int64 = Scalar(BasicInt64)
-module Float = Scalar(BasicFloat)
+module Int = Scalar(BaseInt)
+module Int32 = Scalar(BaseInt32)
+module Int64 = Scalar(BaseInt64)
+module Float = Scalar(BaseFloat)
 
 module type Vector_t =
   sig
@@ -202,7 +202,7 @@ module Floatarray =
     module type Type_t = Vector_t
     module Vector: Vector_t =
       struct
-        module N = Scalar(BasicFloat)
+        module N = Scalar(BaseFloat)
         module FA = Stdlib.Float.Array
         include FA
         let empty = FA.make 0 0.

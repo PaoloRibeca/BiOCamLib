@@ -48,30 +48,31 @@ module SlidingWindow:
       Bytes.sub_string w.drum w.index (len - w.index) ^ Bytes.sub_string w.drum 0 w.index
   end
 
-(* Auxiliary module to store and print k-mer frequencies *)
-module HashFrequencies:
+(* Auxiliary module type to store and query frequencies of k-mers *)
+module type HashFrequencies_t =
   sig
-    module Base = Tools.IntHashtbl
-    type t = int ref Base.t
+    type hash_t
+    type t
     (* The first parameter is the hash, the second its frequency *)
-    val add: t -> int -> int -> unit
-    val iter: (int -> int -> unit) -> t -> unit
+    val add: t -> hash_t -> int -> unit
+    val iter: (hash_t -> int -> unit) -> t -> unit
   end
+(* Implementation for integer hashes *)
+module IntHashFrequencies: HashFrequencies_t with type hash_t = int
 = struct
+    type hash_t = int
     module Base = Tools.IntHashtbl
     type t = int ref Base.t
-    let add distr key occs =
-      try
-        let found = Base.find distr key in
-        found := !found + occs
-      with Not_found ->
-        Base.add distr key (ref occs)
+    let add hf key occs =
+      match Base.find_opt hf key with
+      | None -> Base.add hf key (ref occs)
+      | Some r -> r := !r + occs
     let iter f =
       Base.iter (fun key occs -> f key !occs)
   end
 
 (* This base type doesn't have iterators *)
-module type HashBase_t =
+module type BaseHash_t =
   sig
     type t
     val k: int
@@ -80,25 +81,25 @@ module type HashBase_t =
     val encode_char: (char -> t) -> char -> t
     val decode: t -> string
   end
-(* The following one is the complete one *)
+(* The following one is the complete type *)
 module type Hash_t =
   sig
-    include HashBase_t
+    include BaseHash_t
     (* Iterates a function over all hashes that can be extracted from a string
         according to the specific method being used (for instance, in the case of DNA
         iteration can happen both on the string and its RC).
        Iteration is positional, i.e., k-mers can appear more than once *)
     type iter_t
     val iteri: (int -> iter_t -> unit) -> string -> unit
-    (* Iteration with collection - k-mers can appear only once.
-       The second argument to the function is the frequency of the k-mer *)
-    val iterc: (t -> int -> unit) -> string -> unit
+    (* Iteration with counter update *)
+    module HashFrequencies: HashFrequencies_t
+    val iterc: HashFrequencies.t -> string -> unit
   end
 
 module type IntParameter_t = sig val value: int end
 
 module ProteinHash (K: IntParameter_t):
-  Hash_t with type t = int and type iter_t = int
+  Hash_t with type t = int and type iter_t = int and module HashFrequencies = IntHashFrequencies
 = struct
     type t = int
     let k =
@@ -205,18 +206,17 @@ module ProteinHash (K: IntParameter_t):
               shift incr_pos 0 incr_pos
         end in
       shift 0 0 0
-    let iterc f s =
-      let res = HashFrequencies.Base.create 64 in
+    module HashFrequencies = IntHashFrequencies
+    let iterc hf s =
       iteri
         (fun _ hash ->
-          HashFrequencies.add res hash 1)
-        s;
-      HashFrequencies.iter f res
+          HashFrequencies.add hf hash 1)
+        s
   end
 
 (* Base type without iterators, which depend on the strandedness *)
-module DNAHashBase (K: IntParameter_t):
-  HashBase_t with type t = int
+module DNABaseHash (K: IntParameter_t):
+  BaseHash_t with type t = int
 = struct
     type t = int
     let k =
@@ -266,9 +266,9 @@ module DNAHashBase (K: IntParameter_t):
   end
 
 module DNAHashSingleStranded (K: IntParameter_t):
-  Hash_t with type t = int and type iter_t = int
+  Hash_t with type t = int and type iter_t = int and module HashFrequencies = IntHashFrequencies
 = struct
-    include DNAHashBase (K)
+    include DNABaseHash (K)
     (* Iterates over all k-mers.
        For each position it presents the forward hash only *)
     type iter_t = int
@@ -297,18 +297,17 @@ module DNAHashSingleStranded (K: IntParameter_t):
             if incr_pos + k <= l then
               shift incr_pos 0 incr_pos in
       shift 0 0 0
-    let iterc f s =
-      let res = HashFrequencies.Base.create 64 in
+    module HashFrequencies = IntHashFrequencies
+    let iterc hf s =
       iteri
         (fun _ hash ->
-          HashFrequencies.add res hash 1)
-        s;
-      HashFrequencies.iter f res
+          HashFrequencies.add hf hash 1)
+        s
   end
 module DNAHashDoubleStrandedLexicographic (K: IntParameter_t):
-  Hash_t with type t = int and type iter_t = int * int
+  Hash_t with type t = int and type iter_t = int * int and module HashFrequencies = IntHashFrequencies
 = struct
-    include DNAHashBase (K)
+    include DNABaseHash (K)
     (* Iterates over all k-mers.
        For each position it presents both forward and reverse hash *)
     type iter_t = int * int
@@ -339,29 +338,27 @@ module DNAHashDoubleStrandedLexicographic (K: IntParameter_t):
             if incr_pos + k <= l then
               shift incr_pos (0, 0) incr_pos in
       shift 0 (0, 0) 0
-    let iterc f s =
-      let res = HashFrequencies.Base.create 64 in
+    module HashFrequencies = IntHashFrequencies
+    let iterc hf s =
       iteri
         (fun _ (hash_f, hash_r) ->
-          HashFrequencies.add res (min hash_f hash_r) 1)
-        s;
-      HashFrequencies.iter f res
+          HashFrequencies.add hf (min hash_f hash_r) 1)
+        s
   end
 module DNAHashDoubleStrandedBoth (K: IntParameter_t):
-  Hash_t with type t = int and type iter_t = int * int
+  Hash_t with type t = int and type iter_t = int * int and module HashFrequencies = IntHashFrequencies
 = struct
     include DNAHashDoubleStrandedLexicographic (K)
-    let iterc f s =
-      let res = HashFrequencies.Base.create 64 in
+    module HashFrequencies = IntHashFrequencies
+    let iterc hf s =
       iteri
         (fun _ (hash_f, hash_r) ->
-          HashFrequencies.add res hash_f 1;
-          HashFrequencies.add res hash_r 1)
-        s;
-      HashFrequencies.iter f res
+          HashFrequencies.add hf hash_f 1;
+          HashFrequencies.add hf hash_r 1)
+        s
   end
 
-module LevenshteinBall (H: HashBase_t with type t = int):
+module LevenshteinBall (H: BaseHash_t with type t = int):
   sig
     (* Iterators all have repetitions *)
     val iter: ?radius:int -> (string -> unit) -> string -> string -> string -> unit
