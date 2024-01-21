@@ -101,11 +101,11 @@ module type Hash_t =
     module HashFrequencies: HashFrequencies_t
     val iterc: HashFrequencies.t -> string -> unit
   end
+module type IntHash_t = Hash_t with type t = int and module HashFrequencies = IntHashFrequencies
 
 module type IntParameter_t = sig val value: int end
 
-module ProteinHash (K: IntParameter_t):
-  Hash_t with type t = int and type iter_t = int and module HashFrequencies = IntHashFrequencies
+module ProteinHash (K: IntParameter_t): IntHash_t with type iter_t = int
 = struct
     type t = int
     let k =
@@ -221,8 +221,7 @@ module ProteinHash (K: IntParameter_t):
   end
 
 (* Base type without iterators, which depend on the strandedness *)
-module DNABaseHash (K: IntParameter_t):
-  BaseHash_t with type t = int
+module DNABaseHash (K: IntParameter_t): BaseHash_t with type t = int
 = struct
     type t = int
     let k =
@@ -271,8 +270,7 @@ module DNABaseHash (K: IntParameter_t):
       Bytes.to_string res
   end
 
-module DNAHashSingleStranded (K: IntParameter_t):
-  Hash_t with type t = int and type iter_t = int and module HashFrequencies = IntHashFrequencies
+module DNAHashSingleStranded (K: IntParameter_t): IntHash_t with type iter_t = int
 = struct
     include DNABaseHash (K)
     (* Iterates over all k-mers.
@@ -310,8 +308,7 @@ module DNAHashSingleStranded (K: IntParameter_t):
           HashFrequencies.add hf hash 1)
         s
   end
-module DNAHashDoubleStrandedLexicographic (K: IntParameter_t):
-  Hash_t with type t = int and type iter_t = int * int and module HashFrequencies = IntHashFrequencies
+module DNAHashDoubleStrandedLexicographic (K: IntParameter_t): IntHash_t with type iter_t = int * int
 = struct
     include DNABaseHash (K)
     (* Iterates over all k-mers.
@@ -351,8 +348,7 @@ module DNAHashDoubleStrandedLexicographic (K: IntParameter_t):
           HashFrequencies.add hf (min hash_f hash_r) 1)
         s
   end
-module DNAHashDoubleStrandedBoth (K: IntParameter_t):
-  Hash_t with type t = int and type iter_t = int * int and module HashFrequencies = IntHashFrequencies
+module DNAHashDoubleStrandedBoth (K: IntParameter_t): IntHash_t with type iter_t = int * int
 = struct
     include DNAHashDoubleStrandedLexicographic (K)
     module HashFrequencies = IntHashFrequencies
