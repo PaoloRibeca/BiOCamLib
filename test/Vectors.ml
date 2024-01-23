@@ -13,7 +13,7 @@ let () =
   print_fvf a;
   FV.median a |> Printf.printf "median=%g\n%!";
   FV.sum_abs a |> Printf.printf "sum_abs=%g\n%!";
-  FV.accum_threshold a 0.5 |> print_fvf;
+  FV.threshold_accum_abs 0.5 a |> print_fvf;
   FV.to_floatarray a |> print_fa;
   let module FV = Frequencies.Vector(Float)(MakeRComparableNumber) in
   let print_fvf fv = Printf.printf "["; FV.iter (Printf.printf " %g*%d") fv; Printf.printf " ]\n%!" in
@@ -21,15 +21,22 @@ let () =
   assert (FV.is_non_negative a);
   print_fvf a;
   FV.add a 0.5;
+  FV.add a 1.;
+  print_fvf a;
+  FV.median a |> Printf.printf "median=%g\n%!";
+  FV.add a 0.5;
+  print_fvf a;
+  FV.median a |> Printf.printf "median=%g\n%!";
+  FV.add a 0.5;
   print_fvf a;
   FV.median a |> Printf.printf "median=%g\n%!";
   FV.sum_abs a |> Printf.printf "sum_abs=%g\n%!";
-  FV.accum_threshold a 0.5 |> print_fvf;
+  FV.threshold_accum_abs 0.5 a |> print_fvf;
   FV.to_floatarray a |> print_fa;
   let module IV = Frequencies.Vector(Int)(MakeComparableNumber) in
   let print_iv iv = Printf.printf "["; IV.iter (Printf.printf " %d*%d") iv; Printf.printf " ]\n%!" in
   let a = IV.of_floatarray init in
   assert (IV.is_non_negative a);
   print_iv a;
-  IV.pow_abs a 2 |> print_iv
+  IV.pow_abs 2 a |> print_iv
   

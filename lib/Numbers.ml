@@ -483,20 +483,33 @@ module Frequencies:
             fv.data;
           !acc
         let median { length; data; _ } =
-          let pos = (length + 1) / 2 and acc = ref 0 and res = ref N.zero in
+          let pos_1 = (length - 1) / 2 and pos_2 = length / 2
+          and acc = ref 0 and res_1 = ref N.zero and res_2 = ref N.zero in
           begin try
             M.iter
               (fun el freq ->
-                acc := !acc + !freq;
-                if !acc >= pos then begin
-                  res := el;
+                let new_acc = !acc + !freq in
+                (* The bin comprises indices from acc to acc + freq - 1 *)
+                if pos_1 >= !acc && pos_1 < new_acc then begin
+                  res_1 := el
+                end;
+                if pos_2 >= !acc && pos_2 < new_acc then begin
+                  (* If pos_1 and pos_2 are different and belong to the same bin, res_2 is assigned
+                      at the same time as res_1, and iteration immediately stops.
+                     For this second condition not to be true at the same time as the previous one,
+                      it must be that pos_2 = new_acc, i.e., pos_1 + 1 = new_acc or new_acc = pos_1 + 1.
+                     At the next cycle, acc will be pos_1 + 1, which invalidates the condition pos_1 >= acc.
+                     That guarantees that the first condition is satisfied only once,
+                      and pos_1 and pos_2 have different values when they are not in the same bin *)
+                  res_2 := el;
                   raise_notrace Exit
-                end)
+                end;
+                acc := new_acc)
               data
           with
             Exit -> ()
           end;
-          !res
+          N.((!res_1 + !res_2) / N.of_int 2)
         let pow_abs p fv =
           if p = N.one then
             fv
