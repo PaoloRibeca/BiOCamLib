@@ -57,8 +57,9 @@ $ RC -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is the RC program (version 0.2)
- (c) 2023 Paolo Ribeca, <paolo.ribeca@gmail.com>
+This is RC version 3 [02-Jan-2024]
+ compiled against: BiOCamLib version 242 [23-Jan-2024]
+ (c) 2023-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
 ```
@@ -107,8 +108,9 @@ $ Octopus -h
 in your terminal. You will see a header containing information about the version:
 
 ```
-This is the Octopus program (version 0.4)
- (c) 2016-2023 Paolo Ribeca, <paolo.ribeca@gmail.com>
+This is Octopus version 6 [02-Jan-2024]
+ compiled against: BiOCamLib version 242 [23-Jan-2024]
+ (c) 2016-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
 ```
@@ -130,8 +132,9 @@ $ Parallel -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is the Parallel program (version 0.4)
- (c) 2019-2022 Paolo Ribeca, <paolo.ribeca@gmail.com>
+This is Parallel version 8 [18-Jan-2024]
+ compiled against: BiOCamLib version 242 [23-Jan-2024]
+ (c) 2019-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
 ```
@@ -148,17 +151,18 @@ Parallel [OPTIONS] -- [COMMAND TO PARALLELIZE AND ITS OPTIONS]
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-l`<br>`--lines-per-block` | _&lt;positive\_integer&gt;_ |  number of lines to be processed per block | <ins>default=<mark>_10000_</mark></ins> |
-| `-i`<br>`--input` | _&lt;input\_file&gt;_ |  name of input file | <ins>default=<mark>_stdin_</mark></ins> |
-| `-o`<br>`--output` | _&lt;output\_file&gt;_ |  name of output file | <ins>default=<mark>_stdout_</mark></ins> |
+| `-l`<br>`--lines-per-block` | _positive\_integer_ |  number of lines to be processed per block | <ins>default=<mark>_10000_</mark></ins> |
+| `-i`<br>`--input` | _input\_file_ |  name of input file | <ins>default=<mark>_stdin_</mark></ins> |
+| `-o`<br>`--output` | _output\_file_ |  name of output file | <ins>default=<mark>_stdout_</mark></ins> |
 
 **Miscellaneous**
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-t`<br>`--threads` | _&lt;positive\_integer&gt;_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_nproc_</mark></ins> |
+| `-t`<br>`--threads` | _positive\_integer_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_nproc_</mark></ins> |
 | `-v`<br>`--verbose` |  |  set verbose execution | <ins>default=<mark>_false_</mark></ins> |
 | `-d`<br>`--debug` |  |  output debugging information | <ins>default=<mark>_false_</mark></ins> |
+| `-V`<br>`--version` |  |  print version and exit |  |
 | `-h`<br>`--help` |  |  print syntax and exit |  |
 
 ## Command line options for `FASTools`
@@ -169,8 +173,9 @@ $ FASTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is the FASTools program (version 0.5)
- (c) 2022-2023 Paolo Ribeca, <paolo.ribeca@gmail.com>
+This is FASTools version 7 [02-Jan-2024]
+ compiled against: BiOCamLib version 242 [23-Jan-2024]
+ (c) 2022-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
 ```
@@ -184,7 +189,7 @@ Executed delayed in order of specification, default=<mark>_compact_</mark>.
 |-|-|-|-|
 | `compact`<br>`-c`<br>`--compact` |  |  put each FASTA/FASTQ record on one tab\-separated line |  |
 | `expand`<br>`-e`<br>`--expand` |  |  split each tab\-separated line into one or more FASTA/FASTQ records |  |
-| `match`<br>`-m`<br>`--match` | _&lt;regexp&gt;_ |  select matching sequence names in FASTA/FASTQ records or tab\-separated lines\.<br>For paired\-end files, the pair matches when at least one name matches |  |
+| `match`<br>`-m`<br>`--match` | _regexp_ |  select matching sequence names in FASTA/FASTQ records or tab\-separated lines\.<br>For paired\-end files, the pair matches when at least one name matches |  |
 | `revcom`<br>`-r`<br>`--revcom` |  |  reverse\-complement sequences in FASTA/FASTQ records or tab\-separated lines |  |
 | `dropq`<br>`-d`<br>`--dropq` |  |  drop qualities in FASTA/FASTQ records or tab\-separated lines |  |
 
@@ -193,19 +198,19 @@ Executed delayed in order of specification, default=<mark>_-F_</mark>.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-f`<br>`--fasta` | _&lt;fasta\_file\_name&gt;_ |  process FASTA input file containing sequences |  |
+| `-f`<br>`--fasta` | _fasta\_file\_name_ |  process FASTA input file containing sequences |  |
 | `-F` |  |  process FASTA sequences from standard input |  |
-| `-s`<br>`--single-end` | _&lt;fastq\_file\_name&gt;_ |  process FASTQ input file containing single\-end sequencing reads |  |
+| `-s`<br>`--single-end` | _fastq\_file\_name_ |  process FASTQ input file containing single\-end sequencing reads |  |
 | `-S` |  |  process single\-end FASTQ sequencing reads from standard input |  |
-| `-p`<br>`--paired-end` | _&lt;fastq\_file\_name1&gt; &lt;fastq\_file\_name2&gt;_ |  process FASTQ input files containing paired\-end sequencing reads |  |
+| `-p`<br>`--paired-end` | _fastq\_file\_name1 fastq\_file\_name2_ |  process FASTQ input files containing paired\-end sequencing reads |  |
 | `-P` |  |  process interleaved FASTQ sequencing reads from standard input |  |
-| `-t`<br>`--tabular` | _&lt;tabular\_file\_name&gt;_ |  process input file containing FAST\[A&#124;Q\] records as tab\-separated lines |  |
+| `-t`<br>`--tabular` | _tabular\_file\_name_ |  process input file containing FAST\[A&#124;Q\] records as tab\-separated lines |  |
 | `-T` |  |  process FAST\[A&#124;Q\] records in tabular form from standard input |  |
-| `-l`<br>`--linter` | _'none'&#124;'DNA'&#124;'dna'&#124;'protein'_ |  sets linter for sequence\.<br>All non\-base \(for DNA\) or non\-AA \(for protein\) characters  are converted to unknowns | <ins>default=<mark>_none_</mark></ins> |
-| `--linter-keep-lowercase` | _&lt;bool&gt;_ |  sets whether the linter should keep lowercase DNA/protein characters  appearing in sequences rather than capitalise them | <ins>default=<mark>_false_</mark></ins> |
-| `--linter-keep-dashes` | _&lt;bool&gt;_ |  sets whether the linter should keep dashes appearing in sequences  or convert them to unknowns | <ins>default=<mark>_false_</mark></ins> |
-| `-o`<br>`--output` | _&lt;output\_file\_name&gt;_ |  set the name of the output file\.<br>Files are kept open, and it is possible to switch between them  by repeatedly using this option\.<br>Use '/dev/stdout' for standard output | <ins>default=<mark>_/dev/stdout_</mark></ins> |
-| `-O`<br>`--paired-end-output` | _&lt;output\_file\_name\_1&gt; &lt;output\_file\_name\_2&gt;_ |  set the names of paired\-end FASTQ output files\.<br>Files are kept open, and it is possible to switch between them  by repeatedly using this option\.<br>Use '/dev/stdout' for standard output | <ins>default=<mark>_/dev/stdout /dev/stdout_</mark></ins> |
+| `-l`<br>`--linter` | `none` _&#124;_ `DNA` _&#124;_ `dna` _&#124;_ `protein` |  sets linter for sequence\.<br>All non\-base \(for DNA\) or non\-AA \(for protein\) characters  are converted to unknowns | <ins>default=<mark>_none_</mark></ins> |
+| `--linter-keep-lowercase` | `true` _&#124;_ `false` |  sets whether the linter should keep lowercase DNA/protein characters  appearing in sequences rather than capitalise them | <ins>default=<mark>_false_</mark></ins> |
+| `--linter-keep-dashes` | `true` _&#124;_ `false` |  sets whether the linter should keep dashes appearing in sequences  rather than convert them to unknowns | <ins>default=<mark>_false_</mark></ins> |
+| `-o`<br>`--output` | _output\_file\_name_ |  set the name of the output file\.<br>Files are kept open, and it is possible to switch between them  by repeatedly using this option\.<br>Use `/dev/stdout` for standard output | <ins>default=<mark>_/dev/stdout_</mark></ins> |
+| `-O`<br>`--paired-end-output` | _output\_file\_name\_1 output\_file\_name\_2_ |  set the names of paired\-end FASTQ output files\.<br>Files are kept open, and it is possible to switch between them  by repeatedly using this option\.<br>Use `/dev/stdout` for standard output | <ins>default=<mark>_/dev/stdout_</mark></ins> |
 | `--flush`<br>`--flush-output` |  |  flush output after each record \(global option\) | <ins>default=<mark>_do not flush_</mark></ins> |
 
 **Miscellaneous**
@@ -213,5 +218,6 @@ Executed delayed in order of specification, default=<mark>_-F_</mark>.
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
 | `-v`<br>`--verbose` |  |  set verbose execution \(global option\) | <ins>default=<mark>_false_</mark></ins> |
+| `-V`<br>`--version` |  |  print version and exit |  |
 | `-h`<br>`--help` |  |  print syntax and exit |  |
 

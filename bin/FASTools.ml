@@ -150,13 +150,13 @@ let () =
             assert false (* Just to please the compiler *)
         end |> Tools.List.accum Parameters.program);
     [ "--linter-keep-lowercase" ],
-      Some "<bool>",
+      Some "'true'|'false'",
       [ "sets whether the linter should keep lowercase DNA/protein characters";
         " appearing in sequences rather than capitalise them" ],
       TA.Default (fun () -> "false"),
       (fun _ -> SetLinterKeepLowercase (TA.get_parameter_boolean ()) |> Tools.List.accum Parameters.program);
     [ "--linter-keep-dashes" ],
-      Some "<bool>",
+      Some "'true'|'false'",
       [ "sets whether the linter should keep dashes appearing in sequences";
         " rather than convert them to unknowns" ],
       TA.Default (fun () -> "false"),
