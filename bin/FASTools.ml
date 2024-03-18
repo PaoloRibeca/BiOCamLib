@@ -51,8 +51,8 @@ module Parameters =
 
 let info = {
   Tools.Argv.name = "FASTools";
-  version = "7";
-  date = "02-Jan-2024"
+  version = "8";
+  date = "18-Mar-2024"
 } and authors = [
   "2022-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
@@ -75,13 +75,16 @@ let () =
       (fun _ -> SetWorkingMode Expand |> Tools.List.accum Parameters.program);
     [ "match"; "-m"; "--match" ],
       Some "<regexp>",
-      [ "select matching sequence names in FASTA/FASTQ records or tab-separated lines.";
-        "For paired-end files, the pair matches when at least one name matches" ],
+      [ "select sequence names matching the specified regexp";
+        "in FASTA/FASTQ records or tab-separated lines.";
+        "The regexp must be defined according to <https://ocaml.org/api/Str.html>.";
+        "For paired-end files, the pair matches when at least one name matches." ],
       TA.Optional,
       (fun _ -> SetWorkingMode (Match (TA.get_parameter () |> Str.regexp)) |> Tools.List.accum Parameters.program);
     [ "revcom"; "-r"; "--revcom" ],
       None,
-      [ "reverse-complement sequences in FASTA/FASTQ records or tab-separated lines" ],
+      [ "reverse-complement sequences (and reverse qualities if present)";
+        "in FASTA/FASTQ records or tab-separated lines" ],
       TA.Optional,
       (fun _ -> SetWorkingMode RevCom |> Tools.List.accum Parameters.program);
     [ "dropq"; "-d"; "--dropq" ],
@@ -236,11 +239,11 @@ let () =
       output := o
   and output_1 = ref stdout and output_2 = ref stdout in
   let output_fast_record ?(rc = false) _ segm { Files.ReadsIterate.tag; seq; qua } =
-    let seq =
+    let seq, qua =
       if rc then
-        Sequences.Lint.rc seq
+        Sequences.Lint.rc seq, Tools.String.rev qua
       else
-        seq
+        seq, qua
     and output =
       match segm with
       | 0 -> !output_1
@@ -264,11 +267,11 @@ let () =
     if !Parameters.flush then
       flush output
   and output_tabular_record ?(pe = false) ?(rc = false) _ segm { Files.ReadsIterate.tag; seq; qua } =
-    let seq =
+    let seq, qua =
       if rc then
-        Sequences.Lint.rc seq
+        Sequences.Lint.rc seq, Tools.String.rev qua
       else
-        seq
+        seq, qua
     and output =
       match segm with
       | 0 -> !output_1
