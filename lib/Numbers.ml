@@ -424,6 +424,9 @@ module Frequencies:
               f el !r)
             fv.data
           [@@inline]
+        let length { length } =
+          length
+          [@@inline]
         exception Empty
         let min_by_comparison fv =
           match M.min_binding_opt fv.data with
