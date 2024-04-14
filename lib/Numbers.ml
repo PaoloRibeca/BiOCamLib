@@ -348,6 +348,7 @@ module type FrequenciesVector_t =
     val add: t -> C(N).t -> unit
     val remove: t -> C(N).t -> unit
     val iter: (C(N).t -> int -> unit) -> t -> unit
+    val length: t -> int
     exception Empty
     (* The results of the next four functions depend on the definition of the comparison function *)
     val min_by_comparison: t -> C(N).t
@@ -424,7 +425,7 @@ module Frequencies:
               f el !r)
             fv.data
           [@@inline]
-        let length { length } =
+        let length { length; _ } =
           length
           [@@inline]
         exception Empty
