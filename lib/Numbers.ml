@@ -167,6 +167,8 @@ module Int32 = Scalar(BaseInt32)
 module Int64 = Scalar(BaseInt64)
 module Float = Scalar(BaseFloat)
 
+(* As we have redefined Float, from now on Float.Array will be Better.Float.Array *)
+
 module type Vector_t =
   sig
     module N: Scalar_t
@@ -205,7 +207,7 @@ module Floatarray =
     module Vector: Vector_t =
       struct
         module N = Scalar(BaseFloat)
-        module FA = Stdlib.Float.Array
+        module FA = Better.Float.Array
         include FA
         let empty = FA.make 0 0.
         let ( .@() ) = get
@@ -314,13 +316,13 @@ module Bigarray:
             v
         let to_floatarray v =
           let l = length v in
-          let res = Stdlib.Float.Array.make l 0. in
+          let res = Better.Float.Array.make l 0. in
           for i = 0 to l - 1 do
-            N.to_float v.@(i) |> Stdlib.Float.Array.set res i
+            N.to_float v.@(i) |> Better.Float.Array.set res i
           done;
           res
         let of_floatarray f =
-          init (Stdlib.Float.Array.length f) (fun i -> N.of_float Stdlib.Float.Array.(get f i))
+          init (Better.Float.Array.length f) (fun i -> N.of_float Better.Float.Array.(get f i))
       end
   end
 
@@ -371,8 +373,8 @@ module type FrequenciesVector_t =
     (* Examine values in order, and null frequencies when accumulated absolute values are > threshold * sum_abs.
        Threshold must be between 0. and 1. *)
     val threshold_accum_abs: float -> t -> t
-    val of_floatarray: Stdlib.Float.Array.t -> t (* The Stdlib. is needed *)
-    val to_floatarray: t -> Stdlib.Float.Array.t (* The Stdlib. is needed *)
+    val of_floatarray: Better.Float.Array.t -> t
+    val to_floatarray: t -> Better.Float.Array.t
   end
 
 module Frequencies:
@@ -567,7 +569,7 @@ module Frequencies:
           end
         let of_floatarray fa =
           let non_negative = ref true and res = ref M.empty in
-          Stdlib.Float.Array.iter
+          Better.Float.Array.iter
             (fun el ->
               if el < 0. then
                 non_negative := false;
@@ -578,14 +580,14 @@ module Frequencies:
                     | Some r -> incr r; Some r)
                   !res)
             fa;
-          { non_negative = !non_negative; length = Stdlib.Float.Array.length fa; data = !res }
+          { non_negative = !non_negative; length = Better.Float.Array.length fa; data = !res }
         (* The exported floatarray will have sorted elements *)
         let to_floatarray { length; data; _ } =
-          let res = Stdlib.Float.Array.create length and idx = ref 0 in
+          let res = Better.Float.Array.create length and idx = ref 0 in
           M.iter
             (fun el freq ->
               for i = !idx to !idx + !freq - 1 do
-                Stdlib.Float.Array.set res i N.(to_float el)
+                Better.Float.Array.set res i N.(to_float el)
               done;
               idx := !idx + !freq)
             data;

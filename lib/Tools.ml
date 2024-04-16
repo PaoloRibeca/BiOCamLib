@@ -449,14 +449,14 @@ module Argv:
     (* Both _usage and _md will be completed by parse () *)
     let _usage = ref ""
     let _md_usage = ref ""
-    let header ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_header
-    let synopsis ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_synopsis
-    let usage ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_usage
-    let markdown ?(output = stderr) () = Stdlib.Printf.fprintf output "%s%!" !_md_usage
+    let header ?(output = stderr) () = Printf.fprintf output "%s%!" !_header
+    let synopsis ?(output = stderr) () = Printf.fprintf output "%s%!" !_synopsis
+    let usage ?(output = stderr) () = Printf.fprintf output "%s%!" !_usage
+    let markdown ?(output = stderr) () = Printf.fprintf output "%s%!" !_md_usage
     let error ?(output = stderr) f_n msg =
       let open String.TermIO in
       usage ~output ();
-      Stdlib.Printf.fprintf output "(%s): %s\n%!" f_n (red msg);
+      Printf.fprintf output "(%s): %s\n%!" f_n (red msg);
       exit 1
     let template_get n what f =
       (fun () ->
