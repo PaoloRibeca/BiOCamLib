@@ -20,6 +20,7 @@
 *)
 
 open BiOCamLib
+open Better
 
 module Parameters =
   struct
@@ -28,8 +29,8 @@ module Parameters =
 
 let info = {
   Tools.Argv.name = "RC";
-  version = "3";
-  date = "02-Jan-2024"
+  version = "4";
+  date = "16-Apr-2024"
 } and authors = [
   "2023-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
@@ -61,7 +62,7 @@ let () =
   ];
   let f =
     if !Parameters.no_complement then
-      Tools.String.rev
+      String.rev
     else
       Sequences.Lint.rc in
   try

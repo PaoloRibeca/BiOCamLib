@@ -22,6 +22,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 *)
 
+open Better
+
 (* Abstraction for filenames to be used in scripts *)
 module QuotedName:
   sig
@@ -50,7 +52,7 @@ module QuotedName:
     (* Marshalling. We use double escaping of tabs *)
     let to_string { unquoted; quoted } = String.escaped unquoted ^ "\t" ^ String.escaped quoted |> String.escaped
     let of_string s =
-      let s = Scanf.unescaped s |> Tools.Split.on_char_as_array '\t' in
+      let s = Scanf.unescaped s |> String.Split.on_char_as_array '\t' in
       assert (Array.length s = 2);
       { unquoted = Scanf.unescaped s.(0); quoted = Scanf.unescaped s.(1) }
     exception Could_not_get_quoted_name of string
@@ -62,9 +64,9 @@ module QuotedName:
       with _ ->
         exc_f s |> raise
     let get_quoted s =
-      get_from_shell (fun s -> Could_not_get_quoted_name s) (Stdlib.Printf.sprintf "bash -c 'printf \"%%q\" \"%s\"'" s)
+      get_from_shell (fun s -> Could_not_get_quoted_name s) (Printf.sprintf "bash -c 'printf \"%%q\" \"%s\"'" s)
     let get_in_path s =
-      get_from_shell (fun s -> Executable_not_found_in_path s) (Stdlib.Printf.sprintf "bash -c 'command -v \"%s\"'" s)
+      get_from_shell (fun s -> Executable_not_found_in_path s) (Printf.sprintf "bash -c 'command -v \"%s\"'" s)
     (* PUBLIC *)
     let get_absolute s =
       let unquoted =
@@ -144,7 +146,7 @@ module FASTA:
         done;
         current := !res in
       if verbose then
-        Tools.Printf.teprintf "0 lines read%!\n";
+        Printf.teprintf "0 lines read%!\n";
       read_up_to_next_sequence_name ();
       if Buffer.contents seq <> "" then
         Buffer.contents seq |>
@@ -168,11 +170,11 @@ module FASTA:
                   |> failwith
                 end;
                 incr seqs;
-                Tools.List.accum chunk (current, seq);
+                List.accum chunk (current, seq);
                 bytes := !bytes + String.length current + String.length seq
               done;
               if verbose then
-                Tools.Printf.teprintf "%d %s read%!\n" !read (Tools.String.pluralize_int "line" !read);
+                Printf.teprintf "%d %s read%!\n" !read (String.pluralize_int "line" !read);
               seqs_base, !chunk
             end else
               raise End_of_file)
@@ -180,7 +182,7 @@ module FASTA:
             let res = List.rev chunk |> f seqs_base in
             if verbose then begin
               let seqs = List.length chunk in
-              Tools.Printf.teprintf "%d more %s processed%!\n" seqs (Tools.String.pluralize_int "sequence" seqs)
+              Printf.teprintf "%d more %s processed%!\n" seqs (String.pluralize_int "sequence" seqs)
             end;
             res)
           g threads
@@ -290,7 +292,7 @@ module Tabular:
         Printf.eprintf "(%s): Reading tabular file '%s': Begin\n%!" __FUNCTION__ filename;
       try
         while true do
-          let line = input_line file |> Tools.Split.on_char_as_array '\t' in
+          let line = input_line file |> String.Split.on_char_as_array '\t' in
           incr progr;
           match Array.length line with
           | 2 -> (* FASTA *)
@@ -439,32 +441,32 @@ module ReadsStore:
       | Type.FASTA file ->
         FASTA.iter ~linter ~verbose
           (fun _ tag seq ->
-            SingleEndRead { tag; seq; qua = "" } |> Tools.List.accum res)
+            SingleEndRead { tag; seq; qua = "" } |> List.accum res)
           file
       | SingleEndFASTQ file ->
         FASTQ.iter_se ~linter ~verbose
           (fun _ tag seq qua ->
-            SingleEndRead { tag; seq; qua } |> Tools.List.accum res)
+            SingleEndRead { tag; seq; qua } |> List.accum res)
           file
       | PairedEndFASTQ (file1, file2) ->
         FASTQ.iter_pe ~linter ~verbose
           (fun _ tag1 seq1 qua1 tag2 seq2 qua2 ->
             PairedEndRead ({ tag = tag1; seq = seq1; qua = qua1 }, { tag = tag2; seq = seq2; qua = qua2 })
-              |> Tools.List.accum res)
+              |> List.accum res)
           file1 file2
       | InterleavedFASTQ file ->
         FASTQ.iter_il ~linter ~verbose
           (fun _ tag1 seq1 qua1 tag2 seq2 qua2 ->
             PairedEndRead ({ tag = tag1; seq = seq1; qua = qua1 }, { tag = tag2; seq = seq2; qua = qua2 })
-              |> Tools.List.accum res)
+              |> List.accum res)
           file
       | Tabular file ->
         Tabular.iter ~linter ~verbose
           (fun _ tag seq qua ->
-            SingleEndRead { tag; seq; qua } |> Tools.List.accum res)
+            SingleEndRead { tag; seq; qua } |> List.accum res)
           (fun _ tag1 seq1 qua1 tag2 seq2 qua2 ->
             PairedEndRead ({ tag = tag1; seq = seq1; qua = qua1 }, { tag = tag2; seq = seq2; qua = qua2 })
-              |> Tools.List.accum res)
+              |> List.accum res)
           file
       end;
       let res = Array.append orig (Array.of_list !res) in

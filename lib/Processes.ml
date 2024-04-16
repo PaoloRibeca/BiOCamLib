@@ -25,6 +25,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 *)
 
+open Better
+
 (* Simple wrapper around Unix sub-processes *)
 module Subprocess:
   sig
@@ -46,22 +48,22 @@ module Subprocess:
     let handle_termination_status command stderr_contents = function
       | Unix.WEXITED 0 -> ()
       | e ->
-        Tools.Printf.eprintf "%s%!" stderr_contents;
+        Printf.eprintf "%s%!" stderr_contents;
         match e with
         | WEXITED n ->
-          Some_problem_occurred (command, Tools.Printf.sprintf "Process exit status was %d" n) |> raise
+          Some_problem_occurred (command, Printf.sprintf "Process exit status was %d" n) |> raise
         | WSIGNALED n ->
-          Some_problem_occurred (command, Tools.Printf.sprintf "Process killed by signal %d" n) |> raise
+          Some_problem_occurred (command, Printf.sprintf "Process killed by signal %d" n) |> raise
         | WSTOPPED n ->
-          Some_problem_occurred (command, Tools.Printf.sprintf "Process stopped by signal %d" n) |> raise
+          Some_problem_occurred (command, Printf.sprintf "Process stopped by signal %d" n) |> raise
     (* PUBLIC *)
     let spawn ?(verbose = false) command =
       if verbose then
-        Tools.Printf.eprintf "Subprocess.spawn: Executing command '%s'...\n%!" command;
+        Printf.eprintf "Subprocess.spawn: Executing command '%s'...\n%!" command;
       Unix.system command |> handle_termination_status command ""
     let spawn_and_read_single_line ?(verbose = false) command =
       if verbose then
-        Tools.Printf.eprintf "Subprocess.spawn_and_read_single_line: Executing command '%s'...\n%!" command;
+        Printf.eprintf "Subprocess.spawn_and_read_single_line: Executing command '%s'...\n%!" command;
       let process_out = Unix.open_process_in command in
       let res =
         try
@@ -72,16 +74,16 @@ module Subprocess:
     let spawn_with_args_and_process_output ?(verbose = false) pre f post command args =
       if verbose then begin
         let command = Array.fold_left (fun accum arg -> accum ^ " " ^ arg) command args in
-        Tools.Printf.eprintf "Subprocess.spawn_with_args_and_process_output: Executing command '%s'...\n%!" command
+        Printf.eprintf "Subprocess.spawn_with_args_and_process_output: Executing command '%s'...\n%!" command
       end;
       let process_out, process_in, process_err =
         Unix.unsafe_environment () |> Unix.open_process_args_full command args in
       close_out process_in;
       if verbose then
-        Tools.Printf.eprintf "Subprocess.spawn_with_args_and_process_output: Executing initialization function...\n%!";
+        Printf.eprintf "Subprocess.spawn_with_args_and_process_output: Executing initialization function...\n%!";
       pre ();
       if verbose then
-        Tools.Printf.eprintf "Subprocess.spawn_with_args_and_process_output: Processing contents of standard output...\n%!";
+        Printf.eprintf "Subprocess.spawn_with_args_and_process_output: Processing contents of standard output...\n%!";
       begin try
         let line_cntr = ref 0 in
         while true do
@@ -92,11 +94,11 @@ module Subprocess:
       with End_of_file -> ()
       end;
       if verbose then
-        Tools.Printf.eprintf "Subprocess.spawn_with_args_and_process_output: Executing finalization function...\n%!";
+        Printf.eprintf "Subprocess.spawn_with_args_and_process_output: Executing finalization function...\n%!";
       post ();
       (* There might be content on the stderr - we collect it here, and output it in case of error *)
       if verbose then
-        Tools.Printf.eprintf "Subprocess.spawn_with_args_and_process_output: Collecting contents of standard error...\n%!";
+        Printf.eprintf "Subprocess.spawn_with_args_and_process_output: Collecting contents of standard error...\n%!";
       let stderr_contents = Buffer.create 1024 in
       begin try
         while true do
@@ -351,7 +353,7 @@ module Parallel:
         and w_2_o = Array.map (fun (pipe_in, _) -> Unix.in_channel_of_descr pipe_in) w_2_o_pipes
         and o_2_w = Array.map (fun (_, pipe_out) -> Unix.out_channel_of_descr pipe_out) o_2_w_pipes
         and buffered_chunks = buffered_chunks_per_thread * threads
-        and next = ref 0 and queue = ref Tools.IntMap.empty and buf = ref Tools.IntMap.empty
+        and next = ref 0 and queue = ref IntMap.empty and buf = ref IntMap.empty
         and off = ref 0 in
         while !off < threads do
           (* Harvest new notifications *)
@@ -363,37 +365,37 @@ module Parallel:
               if chunk_id = -1 then (* EOF has been reached *)
                 incr off
               else
-                if not (Tools.IntMap.mem chunk_id !queue) then
-                  queue := Tools.IntMap.add chunk_id w_id !queue
+                if not (IntMap.mem chunk_id !queue) then
+                  queue := IntMap.add chunk_id w_id !queue
                 else
-                  assert (w_id = Tools.IntMap.find chunk_id !queue))
+                  assert (w_id = IntMap.find chunk_id !queue))
             ready;
           (* Fill the buffer *)
-          let available = ref (buffered_chunks - Tools.IntMap.cardinal !buf) in
+          let available = ref (buffered_chunks - IntMap.cardinal !buf) in
           assert (!available >= 0);
           (* If the needed chunk is there, we always fetch it *)
-          if !queue <> Tools.IntMap.empty && fst (Tools.IntMap.min_binding !queue) = !next then
+          if !queue <> IntMap.empty && fst (IntMap.min_binding !queue) = !next then
             incr available;
-          while !available > 0 && !queue <> Tools.IntMap.empty do
-            let chunk_id, w_id = Tools.IntMap.min_binding !queue in
+          while !available > 0 && !queue <> IntMap.empty do
+            let chunk_id, w_id = IntMap.min_binding !queue in
             (* Tell the worker to send data *)
             output_byte o_2_w.(w_id) 0;
             flush o_2_w.(w_id);
-            assert (not (Tools.IntMap.mem chunk_id !buf));
-            buf := Tools.IntMap.add chunk_id (input_value w_2_o.(w_id):'b) !buf;
+            assert (not (IntMap.mem chunk_id !buf));
+            buf := IntMap.add chunk_id (input_value w_2_o.(w_id):'b) !buf;
             (* Tell the worker to send the next notification *)
             output_byte o_2_w.(w_id) 0;
             flush o_2_w.(w_id);
-            queue := Tools.IntMap.remove chunk_id !queue;
+            queue := IntMap.remove chunk_id !queue;
             decr available
           done;
           (* Output at most as many chunks at the number of workers *)
           available := threads;
-          while !available > 0 && !buf <> Tools.IntMap.empty do
-            let chunk_id, data = Tools.IntMap.min_binding !buf in
+          while !available > 0 && !buf <> IntMap.empty do
+            let chunk_id, data = IntMap.min_binding !buf in
             if chunk_id = !next then begin
               h data;
-              buf := Tools.IntMap.remove chunk_id !buf;
+              buf := IntMap.remove chunk_id !buf;
               incr next;
               decr available
             end else
@@ -401,11 +403,11 @@ module Parallel:
           done
         done;
         (* There might be chunks left in the buffer *)
-        while !buf <> Tools.IntMap.empty do
-          let chunk_id, data = Tools.IntMap.min_binding !buf in
+        while !buf <> IntMap.empty do
+          let chunk_id, data = IntMap.min_binding !buf in
           assert (chunk_id = !next);
           h data;
-          buf := Tools.IntMap.remove chunk_id !buf;
+          buf := IntMap.remove chunk_id !buf;
           incr next
         done;
         (* Switch off all the workers *)
@@ -425,7 +427,7 @@ module Parallel:
       and processing_buffer = Buffer.create string_buffer_memory and processed = ref 0
       and written = ref 0 in
       if verbose then
-        Tools.Printf.teprintf "0 lines read\n";
+        Printf.teprintf "0 lines read\n";
       process_stream_chunkwise ~buffered_chunks_per_thread:buffered_chunks_per_thread
         (fun () ->
           if not !eof_reached then begin
@@ -433,7 +435,7 @@ module Parallel:
             begin try
               while !bytes < max_block_bytes do (* We read at least one line *)
                 let line = input_line input in
-                Tools.List.accum buf line;
+                List.accum buf line;
                 bytes := String.length line + !bytes;
                 incr read
               done
@@ -441,7 +443,7 @@ module Parallel:
               eof_reached := true
             end;
             if verbose then
-              Tools.Printf.teprintf "%d %s read\n" !read (Tools.String.pluralize_int "line" !read);
+              Printf.teprintf "%d %s read\n" !read (String.pluralize_int "line" !read);
             read_base, !read - read_base, !buf
           end else
             raise End_of_file)
@@ -455,16 +457,16 @@ module Parallel:
             (List.rev buf);
           assert (!processed = lines);
           if verbose then
-            Tools.Printf.teprintf "%d more %s processed\n" lines (Tools.String.pluralize_int "line" lines);
+            Printf.teprintf "%d more %s processed\n" lines (String.pluralize_int "line" lines);
           lines_base, lines, Buffer.contents processing_buffer)
         (fun (_, buf_len, buf) ->
           written := !written + buf_len;
-          Tools.Printf.fprintf output "%s%!" buf;
+          Printf.fprintf output "%s%!" buf;
           if verbose then
-            Tools.Printf.teprintf "%d %s written\n" !written (Tools.String.pluralize_int "line" !written))
+            Printf.teprintf "%d %s written\n" !written (String.pluralize_int "line" !written))
         threads;
       flush output;
       if verbose then
-        Tools.Printf.teprintf "%d %s out\n" !written (Tools.String.pluralize_int "line" !written)
+        Printf.teprintf "%d %s out\n" !written (String.pluralize_int "line" !written)
   end
 

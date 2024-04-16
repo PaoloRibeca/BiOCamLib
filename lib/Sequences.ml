@@ -22,6 +22,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 *)
 
+open Better
+
 module Lint:
   sig
     val none: 'a -> 'a
@@ -54,17 +56,17 @@ module Lint:
           | 'T' | 't' -> 'T'
           | '-' when keep_dashes -> '-'
           | _ -> 'N' in
-      let open Tools.Bytes in
+      let open Bytes in
       for i = 0 to length b - 1 do
         b.@(i) <- dnaize b.@(i)
       done
     let dnaize ?(keep_lowercase = false) ?(keep_dashes = false) s =
       (* This function allocates memory *)
-      let b = Tools.Bytes.of_string s in
+      let b = Bytes.of_string s in
       dnaize_bytes ~keep_lowercase ~keep_dashes b;
-      Tools.Bytes.unsafe_to_string b
+      Bytes.unsafe_to_string b
     let rc_bytes b =
-      let open Tools.Bytes in
+      let open Bytes in
       rev b;
       iteri
         (fun i c ->
@@ -79,9 +81,9 @@ module Lint:
         b
     let rc s =
       (* This function allocates memory *)
-      let b = Tools.Bytes.of_string s in
+      let b = Bytes.of_string s in
       rc_bytes b;
-      Tools.Bytes.unsafe_to_string b
+      Bytes.unsafe_to_string b
     let proteinize_bytes ?(keep_lowercase = false) ?(keep_dashes = false) b =
       let proteinize =
         if keep_lowercase then
@@ -138,15 +140,15 @@ module Lint:
           | '*' -> '*'
           | '-' when keep_dashes -> '-'
           | _ -> 'X' in
-      let open Tools.Bytes in
+      let open Bytes in
       for i = 0 to length b - 1 do
         b.@(i) <- proteinize b.@(i)
       done
     let proteinize ?(keep_lowercase = false) ?(keep_dashes = false) s =
       (* This function allocates memory *)
-      let b = Tools.Bytes.of_string s in
+      let b = Bytes.of_string s in
       proteinize_bytes ~keep_lowercase ~keep_dashes b;
-      Tools.Bytes.unsafe_to_string b
+      Bytes.unsafe_to_string b
   end
 
 module Types =
@@ -194,7 +196,7 @@ module Types =
     (* We silently convert from 1- to 0-based *)
     let stranded_pointer_of_string s =
       try
-        let fields = Tools.Split.on_char_as_array ':' s in
+        let fields = String.Split.on_char_as_array ':' s in
         if Array.length fields <> 3 then
           raise Exit;
         let str = strand_of_string fields.(1)
@@ -206,9 +208,9 @@ module Types =
         Printf.sprintf "(%s): Syntax error" __FUNCTION__ |> failwith
     (*
     module StrandedPointerSet =
-      Set.Make (Tools.MakeComparable (struct type t = stranded_pointer_t end))
+      Set.Make (MakeComparable (struct type t = stranded_pointer_t end))
     module StrandedPointerMap =
-      Map.Make (Tools.MakeComparable (struct type t = stranded_pointer_t end))
+      Map.Make (MakeComparable (struct type t = stranded_pointer_t end))
     *)
     type simple_interval_t = { low: zero_based_coord_t;
                                length: int }
@@ -229,7 +231,7 @@ module Types =
       Printf.sprintf "%s:%s:%s:%d"
         name (string_of_strand str) (string_of_coord str_ivl.low.position) str_ivl.length
     (* The module of things associated with a set of stranded sequence names *)
-    module StrandedStringMap = Map.Make (Tools.MakeComparable (struct type t = string stranded_t end))
+    module StrandedStringMap = Map.Make (MakeComparable (struct type t = string stranded_t end))
   end
 
 module Junctions:
@@ -242,7 +244,7 @@ module Junctions:
       let introns = open_in introns and cntr = ref 0 in
       try
         while true do
-          let line = Tools.Split.on_char_as_array '\t' (input_line introns) in
+          let line = String.Split.on_char_as_array '\t' (input_line introns) in
           incr cntr;
           let error what =
             Printf.sprintf "(%s): On line %d: %s\n%!" __FUNCTION__ !cntr what |> failwith in
@@ -300,9 +302,9 @@ module Translation:
       | Table_25 | Table_26 | Table_27 | Table_28 | Table_29 | Table_30
       | Table_31 | Table_33
     val of_string: string -> t
-    val get_stops: ?frames:int list -> t -> string -> Tools.IntSet.t
+    val get_stops: ?frames:int list -> t -> string -> IntSet.t
     val get_starts:
-          ?frames:int list -> ?get_alternative_start_codons:bool -> t -> string -> Tools.IntSet.t
+          ?frames:int list -> ?get_alternative_start_codons:bool -> t -> string -> IntSet.t
     val get_translations:
           ?get_alternative_start_codons: bool ->
           ?replace_alternative_start_codons_with_methionine:bool ->
@@ -384,7 +386,6 @@ module Translation:
             i := !i + 3
           done)
         frames
-    module IntSet = Tools.IntSet
     let get_starts ?(frames = [0; 1; 2]) ?(get_alternative_start_codons = false) table s =
       let starts = ref IntSet.empty in
       let add pos =
@@ -453,7 +454,6 @@ module Translation:
             end)
         s;
       !stops
-    module IntMap = Tools.IntMap
     type feature_t =
       | StartCodon
       | StopCodon
@@ -559,7 +559,7 @@ Printf.eprintf "!!!%s\n%!" (Buffer.contents buf);
 *)
             let contents = Buffer.contents buf in
             if String.length contents >= min_length then
-              Tools.List.accum results (start, contents))
+              List.accum results (start, contents))
         starts;
       Array.of_list (List.rev !results)
   end
@@ -585,7 +585,7 @@ module Reference:
     (* To each sequence name we associate a sequence and a translation table *)
     type t = (string * Translation.t) StrandedStringMap.t
     let empty = StrandedStringMap.empty
-    module StringMap = Map.Make(String)
+    let fasta_name_re = Str.regexp "^>"
     let add_from_fasta ?(linter = Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(tables = "")
                        obj input =
       let tables =
@@ -594,7 +594,7 @@ module Reference:
           let tables = open_in tables and cntr = ref 0 in
           try
             while true do
-              let line = Tools.Split.on_char_as_array '\t' (input_line tables) in
+              let line = String.Split.on_char_as_array '\t' (input_line tables) in
               incr cntr;
               (* Format is <name> <table> *)
               let name, table =
@@ -637,7 +637,7 @@ module Reference:
               String.sub line 0 red_len
             else
               line in
-          if Str.string_match Tools.Split.fasta_name_re line 0 then begin
+          if Str.string_match fasta_name_re line 0 then begin
             process_seq ();
             name := String.sub line 1 (String.length line - 1);
             Buffer.clear seq

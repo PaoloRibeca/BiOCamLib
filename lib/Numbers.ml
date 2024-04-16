@@ -25,6 +25,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 *)
 
+open Better
+
 (* A general module type to unify numbers *)
 (* module type M = sig include module type of struct include Int end end *)
 module type BaseScalar_t =
@@ -58,9 +60,9 @@ module type BaseScalar_t =
     val of_string_opt: string -> t option
   end
 
-module BaseInt: BaseScalar_t with type t = Tools.Int.t
+module BaseInt: BaseScalar_t with type t = Int.t
 = struct
-    include Tools.Int (* Provides compare() *)
+    include Int (* Provides compare() *)
     let round n:int = n [@@inline]
     let to_int n:int = n [@@inline]
     let of_int n:int = n [@@inline]
@@ -88,9 +90,9 @@ module BaseInt64: BaseScalar_t with type t = Int64.t
     let of_float_opt x = Some (of_float x) [@@inline] (* TODO: No error checking at the moment *)
   end
 
-module BaseFloat: BaseScalar_t with type t = Tools.Float.t
+module BaseFloat: BaseScalar_t with type t = Float.t
 = struct
-    include Tools.Float (* Provides round() *)
+    include Float (* Provides round() *)
     let to_int = int_of_float (* TODO: No error checking at the moment *)
     let of_int = float_of_int
     let of_int_opt n = Some (float_of_int n) [@@inline]
@@ -323,14 +325,14 @@ module Bigarray:
   end
 
 (* Functor to wrap uniform numbers into comparable types *)
-module type MakeComparableNumber_t = functor (N: Scalar_t) -> Tools.ComparableType_t with type t = N.t
-module MakeComparableNumber (N: Scalar_t): Tools.ComparableType_t with type t = N.t =
+module type MakeComparableNumber_t = functor (N: Scalar_t) -> ComparableType_t with type t = N.t
+module MakeComparableNumber (N: Scalar_t): ComparableType_t with type t = N.t =
   struct
     type t = N.t
     (* Informs the compiler that polymorphism is not needed *)
     let compare (a:t) (b:t) = compare a b [@@inline]
   end
-module MakeRComparableNumber (N: Scalar_t): Tools.ComparableType_t with type t = N.t =
+module MakeRComparableNumber (N: Scalar_t): ComparableType_t with type t = N.t =
   struct
     type t = N.t
     (* Informs the compiler that polymorphism is not needed *)
@@ -369,8 +371,8 @@ module type FrequenciesVector_t =
     (* Examine values in order, and null frequencies when accumulated absolute values are > threshold * sum_abs.
        Threshold must be between 0. and 1. *)
     val threshold_accum_abs: float -> t -> t
-    val of_floatarray: Stdlib.Float.Array.t -> t
-    val to_floatarray: t -> Stdlib.Float.Array.t
+    val of_floatarray: Stdlib.Float.Array.t -> t (* The Stdlib. is needed *)
+    val to_floatarray: t -> Stdlib.Float.Array.t (* The Stdlib. is needed *)
   end
 
 module Frequencies:
@@ -384,7 +386,7 @@ module Frequencies:
       struct
         module N = NT
         module C = MCN
-        module M = Tools.Map.Make(C(N))
+        module M = Map.Make(C(N))
         type t = {
           non_negative: bool;
           mutable length: int;

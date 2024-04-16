@@ -19,17 +19,18 @@
 *)
 
 open BiOCamLib
+open Better
 
 module TandemRepeatExplorer =
   struct
-    module PrefixMultimap = Tools.Multimap (Tools.ComparableString) (Tools.ComparableInt)
+    module PrefixMultimap = Tools.Multimap (ComparableString) (ComparableInt)
     module IntervalMultimap =
-      Tools.Multimap (Tools.MakeComparable (struct type t = int * int end)) (Tools.ComparableString)
+      Tools.Multimap (MakeComparable (struct type t = int * int end)) (ComparableString)
     let iter ?(maximum_repeat_length = max_int) ?(minimum_locus_length = 0) ?(verbose = false) f s =
       let maximum_repeat_length = (String.length s + 1) / 2 |> min maximum_repeat_length
       and k = ref 0 and old = ref PrefixMultimap.empty in
       if verbose then
-        Printf.eprintf "%s\r(%s): Initializing...%!" Tools.String.TermIO.clear __FUNCTION__;
+        Printf.eprintf "%s\r(%s): Initializing...%!" String.TermIO.clear __FUNCTION__;
       let l = String.length s in
       for i = 0 to l - 1 do
         old := PrefixMultimap.add "" i !old
@@ -38,14 +39,14 @@ module TandemRepeatExplorer =
       while !k < maximum_repeat_length && PrefixMultimap.cardinal !old > 0 do
         incr k;
         if verbose then
-          Printf.eprintf "%s\r(%s): Processing k=%d%!" Tools.String.TermIO.clear __FUNCTION__ !k;
+          Printf.eprintf "%s\r(%s): Processing k=%d%!" String.TermIO.clear __FUNCTION__ !k;
         let red_k = !k - 1 and max_i = l - !k and current = ref PrefixMultimap.empty and count = ref 0 in
         PrefixMultimap.iter_set
           (fun k_mer set ->
-            let card = Tools.IntSet.cardinal set in
+            let card = IntSet.cardinal set in
             count := !count + card;
             if card > 1 then
-              Tools.IntSet.iter
+              IntSet.iter
                 (fun i ->
                   if i <= max_i then begin
                     let k_mer = k_mer ^ String.make 1 s.[i + red_k] in
@@ -56,25 +57,25 @@ module TandemRepeatExplorer =
         old := !current;
         if verbose then
           Printf.eprintf " (%d left)...%!" !count;
-        let k = !k and k_res = ref Tools.IntMap.empty in
+        let k = !k and k_res = ref IntMap.empty in
         PrefixMultimap.iter_set
           (fun k_mer set ->
             (*Printf.eprintf "lo_set=%d k-mer='%s'\n%!" (Tools.IntSet.min_elt set) k_mer;*)
             let set = ref set in
             (* We extract all the series from the set,
                 always starting from the smallest element left *)
-            while Tools.IntSet.cardinal !set > 0 do
-              let lo = Tools.IntSet.min_elt !set in
+            while IntSet.cardinal !set > 0 do
+              let lo = IntSet.min_elt !set in
               let hi = ref lo in
-              while Tools.IntSet.mem !hi !set do
-                set := Tools.IntSet.remove !hi !set;
+              while IntSet.mem !hi !set do
+                set := IntSet.remove !hi !set;
                 hi := !hi + k
               done;
               let hi = !hi - k in
               if hi > lo then begin
                 (* Here hi is the highest position at which a repeat
                   with length k and sequence k_mer starts *)
-                k_res := Tools.IntMap.add lo (k_mer, hi + k - 1) !k_res
+                k_res := IntMap.add lo (k_mer, hi + k - 1) !k_res
               end
             done)
           !old;
@@ -90,8 +91,8 @@ module TandemRepeatExplorer =
                   "discarded"
               end;*)
           if !k_mer <> "" && !hi - !lo + 1 >= minimum_locus_length then
-            res := IntervalMultimap.add (!lo, !hi) !k_mer !res in          
-        Tools.IntMap.iter
+            res := IntervalMultimap.add (!lo, !hi) !k_mer !res in
+        IntMap.iter
           (fun _lo (_k_mer, _hi) ->
             if _lo <> !prev_lo + 1 then begin
               process_it ();
@@ -107,7 +108,7 @@ module TandemRepeatExplorer =
         process_it ()
       done;
       if verbose then
-        Printf.eprintf "%s\r%!" Tools.String.TermIO.clear;
+        Printf.eprintf "%s\r%!" String.TermIO.clear;
       let curr_lo = ref (-1) and curr_hi = ref (-1) and curr_k_mer = ref "" in
       let process_it () =
         if !curr_hi <> -1 then
@@ -119,14 +120,14 @@ module TandemRepeatExplorer =
             process_it ();
             curr_lo := lo;
             curr_hi := hi;
-            curr_k_mer := Tools.StringSet.min_elt set
+            curr_k_mer := StringSet.min_elt set
           end else
             if verbose then
               Printf.eprintf "%s(%s): Discarding [%d,%d]='%s' (contained in [%d,%d]='%s')\n%!"
-                Tools.String.TermIO.clear __FUNCTION__ (lo + 1) (hi + 1) (Tools.StringSet.min_elt set)
+                String.TermIO.clear __FUNCTION__ (lo + 1) (hi + 1) (StringSet.min_elt set)
                 (!curr_lo + 1) (!curr_hi + 1) !curr_k_mer)
         !res;
-      process_it ()      
+      process_it ()
   end
 
 module Parameters =
@@ -141,8 +142,8 @@ module Parameters =
 
 let info = {
   Tools.Argv.name = "TREx";
-  version = "3";
-  date = "02-Jan-2024"
+  version = "4";
+  date = "16-Apr-2024"
 } and authors = [
   "2023-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]

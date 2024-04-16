@@ -20,6 +20,7 @@
 *)
 
 open BiOCamLib
+open Better
 
 module Parameters =
   struct
@@ -28,8 +29,8 @@ module Parameters =
 
 let info = {
   Tools.Argv.name = "Octopus";
-  version = "6";
-  date = "02-Jan-2024"
+  version = "7";
+  date = "16-Apr-2024"
 } and authors = [
   "2016-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
@@ -65,12 +66,12 @@ let () =
       TA.Optional,
       (fun _ -> TA.usage (); exit 1)
   ];
-  let module TC = Tools.TransitiveClosure.Make (Tools.ComparableString) in
+  let module TC = Tools.TransitiveClosure.Make (ComparableString) in
   let re_whitespace = Str.regexp "[ \t]+" and res = TC.empty () in
   try
     while true do
       (* Note that whitespace at the beginning or the end of the line will be ignored *)
-      let line = input_line stdin |> Tools.Split.as_list re_whitespace |> Tools.StringSet.of_list in
+      let line = input_line stdin |> String.Split.as_list re_whitespace |> StringSet.of_list in
       TC.add_equivalences res line
     done
   with End_of_file ->

@@ -20,6 +20,7 @@
 *)
 
 open BiOCamLib
+open Better
 
 module Parameters =
   struct
@@ -35,8 +36,8 @@ module Parameters =
 
 let info = {
   Tools.Argv.name = "Parallel";
-  version = "8";
-  date = "18-Jan-2024"
+  version = "9";
+  date = "16-Apr-2024"
 } and authors = [
   "2019-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
@@ -119,16 +120,16 @@ let () =
     let input_line_num = ref 0 in
     let print_num_lines what =
       if verbose then
-        Printf.sprintf "%d %s %s" !input_line_num (Tools.String.pluralize_int "line" !input_line_num) what |>
-        Tools.Printf.pteprintf "%s\n%!"
+        Printf.sprintf "%d %s %s" !input_line_num (String.pluralize_int "line" !input_line_num) what |>
+        Printf.pteprintf "%s\n%!"
     and wait_and_check pid =
       match let _, status = Unix.waitpid [] pid in status with
       | Unix.WEXITED 0 -> ()
       | _ ->
         Printf.eprintf "%s: %s\n%!"
-          (Printf.sprintf "On line %d" !input_line_num |> Tools.String.TermIO.blue)
+          (Printf.sprintf "On line %d" !input_line_num |> String.TermIO.blue)
           (Printf.sprintf "FATAL: subprocess [#%07d->#%07d] terminated with an error" (Unix.getpid ()) pid
-            |> Tools.String.TermIO.red);
+            |> String.TermIO.red);
         exit 1 in
     let lines_per_block = !Parameters.lines_per_block
     and eof = ref false and processing_buffer = Buffer.create 16777216 in
@@ -141,7 +142,7 @@ let () =
           begin try
             for _ = 1 to lines_per_block do
               incr input_line_num;
-              input_line input |> Tools.List.accum buf
+              input_line input |> List.accum buf
             done
           with End_of_file ->
             decr input_line_num;
@@ -187,7 +188,7 @@ let () =
             List.iter
               (fun line ->
                 if debug then
-                  Tools.Printf.peprintf ">>> Pushing line '%s'\n%!" line;
+                  Printf.peprintf ">>> Pushing line '%s'\n%!" line;
                 output_string process_input line;
                 output_char process_input '\n')
               (List.rev input_lines);
@@ -195,7 +196,7 @@ let () =
             close_out process_input;
     (*        Unix.close in_pipe_in; *)
             if debug then
-              Tools.Printf.peprintf ">>> Pushing done.\n%!";
+              Printf.peprintf ">>> Pushing done.\n%!";
             (* Commit suicide *)
             Unix._exit 0 (* Do not flush buffers or do anything else *)
           | pid_grandchild -> (* Grandparent *)
@@ -209,14 +210,14 @@ let () =
               while true do
                 let line = input_line process_output in
                 if debug then
-                  Tools.Printf.peprintf "<<< Pulling line '%s'\n%!" line;
+                  Printf.peprintf "<<< Pulling line '%s'\n%!" line;
                 Buffer.add_string processing_buffer line;
                 Buffer.add_char processing_buffer '\n'
               done
             with End_of_file -> ()
             end;
             if debug then
-              Tools.Printf.peprintf "<<< Pulling done.\n%!";
+              Printf.peprintf "<<< Pulling done.\n%!";
     (*        Unix.close out_pipe_out; *)
             close_in process_output;
             (* We make sure that the children are not zombying around *)
@@ -237,6 +238,6 @@ let () =
     close_in input;
     close_out output
   with exc ->
-    Tools.Printf.peprintf "(%s): %s\n%!" __FUNCTION__
-      ("FATAL: Uncaught exception: " ^ Printexc.to_string exc |> Tools.String.TermIO.red)
+    Printf.peprintf "(%s): %s\n%!" __FUNCTION__
+      ("FATAL: Uncaught exception: " ^ Printexc.to_string exc |> String.TermIO.red)
 

@@ -19,8 +19,7 @@
 *)
 
 open BiOCamLib
-
-module StringMap = Tools.StringMap
+open Better
 
 type linter_t =
   | None
@@ -51,8 +50,8 @@ module Parameters =
 
 let info = {
   Tools.Argv.name = "FASTools";
-  version = "8";
-  date = "18-Mar-2024"
+  version = "9";
+  date = "16-Apr-2024"
 } and authors = [
   "2022-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
@@ -67,12 +66,12 @@ let () =
       None,
       [ "put each FASTA/FASTQ record on one tab-separated line" ],
       TA.Optional,
-      (fun _ -> SetWorkingMode Compact |> Tools.List.accum Parameters.program);
+      (fun _ -> SetWorkingMode Compact |> List.accum Parameters.program);
     [ "expand"; "-e"; "--expand" ],
       None,
       [ "split each tab-separated line into one or more FASTA/FASTQ records" ],
       TA.Optional,
-      (fun _ -> SetWorkingMode Expand |> Tools.List.accum Parameters.program);
+      (fun _ -> SetWorkingMode Expand |> List.accum Parameters.program);
     [ "match"; "-m"; "--match" ],
       Some "<regexp>",
       [ "select sequence names matching the specified regexp";
@@ -80,39 +79,39 @@ let () =
         "The regexp must be defined according to <https://ocaml.org/api/Str.html>.";
         "For paired-end files, the pair matches when at least one name matches." ],
       TA.Optional,
-      (fun _ -> SetWorkingMode (Match (TA.get_parameter () |> Str.regexp)) |> Tools.List.accum Parameters.program);
+      (fun _ -> SetWorkingMode (Match (TA.get_parameter () |> Str.regexp)) |> List.accum Parameters.program);
     [ "revcom"; "-r"; "--revcom" ],
       None,
       [ "reverse-complement sequences (and reverse qualities if present)";
         "in FASTA/FASTQ records or tab-separated lines" ],
       TA.Optional,
-      (fun _ -> SetWorkingMode RevCom |> Tools.List.accum Parameters.program);
+      (fun _ -> SetWorkingMode RevCom |> List.accum Parameters.program);
     [ "dropq"; "-d"; "--dropq" ],
       None,
       [ "drop qualities in FASTA/FASTQ records or tab-separated lines" ],
       TA.Optional,
-      (fun _ -> SetWorkingMode UnQuals |> Tools.List.accum Parameters.program);
+      (fun _ -> SetWorkingMode UnQuals |> List.accum Parameters.program);
     TA.make_separator_multiline [ "Input/Output."; "Executed delayed in order of specification, default='-F'." ];
     [ "-f"; "--fasta" ],
       Some "<fasta_file_name>",
       [ "process FASTA input file containing sequences" ],
       TA.Optional,
-      (fun _ -> ProcessInput (FASTA (TA.get_parameter ())) |> Tools.List.accum Parameters.program);
+      (fun _ -> ProcessInput (FASTA (TA.get_parameter ())) |> List.accum Parameters.program);
     [ "-F" ],
       None,
       [ "process FASTA sequences from standard input" ],
       TA.Optional,
-      (fun _ -> ProcessInput (FASTA "/dev/stdin") |> Tools.List.accum Parameters.program);
+      (fun _ -> ProcessInput (FASTA "/dev/stdin") |> List.accum Parameters.program);
     [ "-s"; "--single-end" ],
       Some "<fastq_file_name>",
       [ "process FASTQ input file containing single-end sequencing reads" ],
       TA.Optional,
-      (fun _ -> ProcessInput (SingleEndFASTQ (TA.get_parameter ())) |> Tools.List.accum Parameters.program);
+      (fun _ -> ProcessInput (SingleEndFASTQ (TA.get_parameter ())) |> List.accum Parameters.program);
     [ "-S" ],
       None,
       [ "process single-end FASTQ sequencing reads from standard input" ],
       TA.Optional,
-      (fun _ -> ProcessInput (SingleEndFASTQ "/dev/stdin") |> Tools.List.accum Parameters.program);
+      (fun _ -> ProcessInput (SingleEndFASTQ "/dev/stdin") |> List.accum Parameters.program);
     [ "-p"; "--paired-end" ],
       Some "<fastq_file_name1> <fastq_file_name2>",
       [ "process FASTQ input files containing paired-end sequencing reads" ],
@@ -120,22 +119,22 @@ let () =
       (fun _ ->
         let name1 = TA.get_parameter () in
         let name2 = TA.get_parameter () in
-        ProcessInput (PairedEndFASTQ (name1, name2)) |> Tools.List.accum Parameters.program);
+        ProcessInput (PairedEndFASTQ (name1, name2)) |> List.accum Parameters.program);
     [ "-P" ],
       None,
       [ "process interleaved FASTQ sequencing reads from standard input" ],
       TA.Optional,
-      (fun _ -> ProcessInput (InterleavedFASTQ "/dev/stdin") |> Tools.List.accum Parameters.program);
+      (fun _ -> ProcessInput (InterleavedFASTQ "/dev/stdin") |> List.accum Parameters.program);
     [ "-t"; "--tabular" ],
       Some "<tabular_file_name>",
       [ "process input file containing FAST[A|Q] records as tab-separated lines" ],
       TA.Optional,
-      (fun _ -> ProcessInput (Tabular (TA.get_parameter ())) |> Tools.List.accum Parameters.program);
+      (fun _ -> ProcessInput (Tabular (TA.get_parameter ())) |> List.accum Parameters.program);
     [ "-T" ],
       None,
       [ "process FAST[A|Q] records in tabular form from standard input" ],
       TA.Optional,
-      (fun _ -> ProcessInput (Tabular "/dev/stdin") |> Tools.List.accum Parameters.program);
+      (fun _ -> ProcessInput (Tabular "/dev/stdin") |> List.accum Parameters.program);
     [ "-l"; "--linter" ],
       Some "'none'|'DNA'|'dna'|'protein'",
       [ "sets linter for sequence.";
@@ -151,19 +150,19 @@ let () =
           | w ->
             Printf.sprintf "Unknown linter '%s'" w |> TA.parse_error;
             assert false (* Just to please the compiler *)
-        end |> Tools.List.accum Parameters.program);
+        end |> List.accum Parameters.program);
     [ "--linter-keep-lowercase" ],
       Some "'true'|'false'",
       [ "sets whether the linter should keep lowercase DNA/protein characters";
         " appearing in sequences rather than capitalise them" ],
       TA.Default (fun () -> "false"),
-      (fun _ -> SetLinterKeepLowercase (TA.get_parameter_boolean ()) |> Tools.List.accum Parameters.program);
+      (fun _ -> SetLinterKeepLowercase (TA.get_parameter_boolean ()) |> List.accum Parameters.program);
     [ "--linter-keep-dashes" ],
       Some "'true'|'false'",
       [ "sets whether the linter should keep dashes appearing in sequences";
         " rather than convert them to unknowns" ],
       TA.Default (fun () -> "false"),
-      (fun _ -> SetLinterKeepDashes (TA.get_parameter_boolean ()) |> Tools.List.accum Parameters.program);
+      (fun _ -> SetLinterKeepDashes (TA.get_parameter_boolean ()) |> List.accum Parameters.program);
     [ "-o"; "--output" ],
       Some "<output_file_name>",
       [ "set the name of the output file.";
@@ -171,7 +170,7 @@ let () =
         " by repeatedly using this option.";
         "Use '/dev/stdout' for standard output" ],
       TA.Default (fun () -> "/dev/stdout"),
-      (fun _ -> SetOutput (TA.get_parameter ()) |> Tools.List.accum Parameters.program);
+      (fun _ -> SetOutput (TA.get_parameter ()) |> List.accum Parameters.program);
     [ "-O"; "--paired-end-output" ],
       Some "<output_file_name_1> <output_file_name_2>",
       [ "set the names of paired-end FASTQ output files.";
@@ -182,7 +181,7 @@ let () =
       (fun _ ->
         let output_1 = TA.get_parameter () in
         let output_2 = TA.get_parameter () in
-        SetOutputPE (output_1, output_2) |> Tools.List.accum Parameters.program);
+        SetOutputPE (output_1, output_2) |> List.accum Parameters.program);
     [ "--flush"; "--flush-output" ],
       None,
       [ "flush output after each record (global option)" ],
@@ -241,7 +240,7 @@ let () =
   let output_fast_record ?(rc = false) _ segm { Files.ReadsIterate.tag; seq; qua } =
     let seq, qua =
       if rc then
-        Sequences.Lint.rc seq, Tools.String.rev qua
+        Sequences.Lint.rc seq, String.rev qua
       else
         seq, qua
     and output =
@@ -269,7 +268,7 @@ let () =
   and output_tabular_record ?(pe = false) ?(rc = false) _ segm { Files.ReadsIterate.tag; seq; qua } =
     let seq, qua =
       if rc then
-        Sequences.Lint.rc seq, Tools.String.rev qua
+        Sequences.Lint.rc seq, String.rev qua
       else
         seq, qua
     and output =
@@ -300,7 +299,7 @@ let () =
         ())
     !Parameters.program;
   if not !has_at_least_one_input then
-    ProcessInput (FASTA "/dev/stdin") |> Tools.List.accum Parameters.program;
+    ProcessInput (FASTA "/dev/stdin") |> List.accum Parameters.program;
   List.iter
     (function
       | SetWorkingMode mode ->
@@ -330,12 +329,12 @@ let () =
           Files.ReadsIterate.add_from_files Files.ReadsIterate.empty input |>
             Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose
               (fun i segm ({ tag; _ } as record) ->
-                if Tools.Str.matches regexp tag then
+                if Str.matches regexp tag then
                   output_fast_record i segm record)
         | Match regexp, PairedEndFASTQ (file_1, file_2) ->
           Files.FASTQ.iter_pe ~linter:!linter_f ~verbose:!Parameters.verbose
             (fun i tag_1 seq_1 qua_1 tag_2 seq_2 qua_2 ->
-              if Tools.Str.matches regexp tag_1 || Tools.Str.matches regexp tag_2 then begin
+              if Str.matches regexp tag_1 || Str.matches regexp tag_2 then begin
                 output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = qua_1 };
                 output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = qua_2 }
               end)
@@ -343,7 +342,7 @@ let () =
         | Match regexp, InterleavedFASTQ file ->
           Files.FASTQ.iter_il ~linter:!linter_f ~verbose:!Parameters.verbose
             (fun i tag_1 seq_1 qua_1 tag_2 seq_2 qua_2 ->
-              if Tools.Str.matches regexp tag_1 || Tools.Str.matches regexp tag_2 then begin
+              if Str.matches regexp tag_1 || Str.matches regexp tag_2 then begin
                 output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = qua_1 };
                 output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = qua_2 }
               end)
@@ -351,10 +350,10 @@ let () =
         | Match regexp, Tabular file ->
           Files.Tabular.iter ~linter:!linter_f ~verbose:!Parameters.verbose
             (fun i tag seq qua ->
-              if Tools.Str.matches regexp tag then
+              if Str.matches regexp tag then
                 output_fast_record i 0 { tag; seq; qua })
             (fun i tag_1 seq_1 qua_1 tag_2 seq_2 qua_2 ->
-              if Tools.Str.matches regexp tag_1 || Tools.Str.matches regexp tag_2 then begin
+              if Str.matches regexp tag_1 || Str.matches regexp tag_2 then begin
                 output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = qua_1 };
                 output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = qua_2 }
               end)

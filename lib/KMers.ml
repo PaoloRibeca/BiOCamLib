@@ -20,6 +20,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 *)
 
+open Better
+
 module SlidingWindow:
   sig
     type t
@@ -64,7 +66,7 @@ module type HashFrequencies_t =
 module IntHashFrequencies: HashFrequencies_t with type hash_t = int
 = struct
     type hash_t = int
-    module H = Tools.IntHashtbl
+    module H = IntHashtbl
     type t = int ref H.t
     let create = H.create
     let length = H.length
@@ -156,7 +158,7 @@ module ProteinHash (K: IntParameter_t): IntHash_t with type iter_t = int
       let res = Bytes.create k in
       let red_k = k - 1 and rem = ref hash in
       for i = 0 to red_k do
-        res.Tools.Bytes.@(red_k - i) <-
+        res.Bytes.@(red_k - i) <-
           begin match !rem land 31 with
           | 0 -> 'A'
           | 1 -> 'C'
@@ -257,7 +259,7 @@ module DNABaseHash (K: IntParameter_t): BaseHash_t with type t = int
       let res = Bytes.create k in
       let red_k = k - 1 and rem = ref hash in
       for i = 0 to red_k do
-        res.Tools.Bytes.@(red_k - i) <-
+        res.Bytes.@(red_k - i) <-
           begin match !rem land 3 with
           | 0 -> 'A'
           | 1 -> 'C'
@@ -368,7 +370,7 @@ module LevenshteinBall (H: BaseHash_t with type t = int):
     val iterk: ?radius:int -> (string -> unit) -> string -> unit
     val iterkh: ?radius:int -> (H.t -> unit) -> string -> unit
     (* Constructors are repeat-free *)
-    module Base = Tools.StringSet
+    module Base = StringSet
     type t = Base.t
     val make: ?radius:int -> string -> string -> string -> t
     val makek: ?radius:int -> string -> t
@@ -380,7 +382,7 @@ module LevenshteinBall (H: BaseHash_t with type t = int):
       and encode = H.encode_char (fun _ -> -1) in
       Bytes.iteri
         (fun i c ->
-          Tools.Bytes.(
+          Bytes.(
             s.@(i) <-
               if encode c = -1 then
                 ' '
@@ -402,7 +404,7 @@ module LevenshteinBall (H: BaseHash_t with type t = int):
       let hi = radius + len - 1 in
       let last = hi + radius in
       let rec expand level orig_s =
-        let open Tools.Bytes in
+        let open Bytes in
         if level = 0 then
           (* We eliminate contexts *)
           String.sub orig_s radius len |> f
@@ -503,7 +505,7 @@ module LevenshteinBall (H: BaseHash_t with type t = int):
             H.encode s |> f
           with _ ->
             ())
-    module Base = Tools.StringSet
+    module Base = StringSet
     type t = Base.t
     let make ?(radius = 1) l_ctxt s r_ctxt =
       let res = ref Base.empty in
