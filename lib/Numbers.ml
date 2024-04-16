@@ -92,7 +92,7 @@ module BaseInt64: BaseScalar_t with type t = Int64.t
 
 module BaseFloat: BaseScalar_t with type t = Float.t
 = struct
-    include Float (* Provides round() *)
+    include Float (* Our Float! Provides round() *)
     let to_int = int_of_float (* TODO: No error checking at the moment *)
     let of_int = float_of_int
     let of_int_opt n = Some (float_of_int n) [@@inline]

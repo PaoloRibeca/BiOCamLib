@@ -138,15 +138,13 @@ module type Hash_t =
   end
 module type IntHash_t = Hash_t with type t = int and module HashFrequencies = IntHashFrequencies
 
-module type IntParameter_t = sig val value: int end
-
 module ProteinHash (K: IntParameter_t): IntHash_t with type iter_t = int
 = struct
     type t = int
     let k =
-      if K.value > 12 then
-        Printf.sprintf "(%s): Invalid argument (k must be <= 12, found %d)" __FUNCTION__ K.value |> failwith;
-      K.value
+      if K.n > 12 then
+        Printf.sprintf "(%s): Invalid argument (k must be <= 12, found %d)" __FUNCTION__ K.n |> failwith;
+      K.n
     let alphabet = "ACDEFGHIKLMNOPQRSTUVWY"
     let encode_char err_f = function
       | 'A' | 'a' -> 0
@@ -260,9 +258,9 @@ module DNABaseHash (K: IntParameter_t): BaseHash_t with type t = int
 = struct
     type t = int
     let k =
-      if K.value > 30 then
-        Printf.sprintf "(%s): Invalid argument (k must be <= 30, found %d)" __FUNCTION__ K.value |> failwith;
-      K.value
+      if K.n > 30 then
+        Printf.sprintf "(%s): Invalid argument (k must be <= 30, found %d)" __FUNCTION__ K.n |> failwith;
+      K.n
     let alphabet = "ACGT"
     let encode_char err_f = function
       | 'A' | 'a' -> 0

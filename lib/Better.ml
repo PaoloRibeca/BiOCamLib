@@ -92,7 +92,7 @@ module Str =
       with Not_found ->
         false
   end
-  
+
 module String:
   sig
     include module type of String
@@ -356,31 +356,10 @@ module Iterator:
       | Cons (_, next) -> it := next
   end
 
-module Hashtbl:
-  sig
-    include module type of Hashtbl
-    val map: ?random:bool -> ('a -> 'b) -> ('c, 'a) Hashtbl.t -> ('c, 'b) Hashtbl.t
-    val mapi: ?random:bool -> ('a -> 'b -> 'c) -> ('a, 'b) Hashtbl.t -> ('a, 'c) Hashtbl.t
-  end
-= struct
-    include Hashtbl
-    let map ?(random = false) f h =
-      let res = Hashtbl.create ~random (Hashtbl.length h) in
-      Hashtbl.iter (fun k v -> f v |> Hashtbl.add res k) h;
-      res
-    let mapi ?(random = false) f h =
-      let res = Hashtbl.create ~random (Hashtbl.length h) in
-      Hashtbl.iter (fun k v -> f k v |> Hashtbl.add res k) h;
-      res
-  end
+(* Frequently used module idioms *)
 
-module IntHash =
-  struct
-    type t = Int.t (* Our Int! *)
-    let equal (i:int) (j:int) = (i - j = 0) [@@inline] (*(i = j)*)
-    let hash (i:int) = i [@@inline] (* land max_int *)
-  end
-module IntHashtbl = Hashtbl.Make (IntHash)
+module type IntParameter_t = sig val n: int end
+module type TypeContainer_t = sig type t end
 
 (* Same as Set.OrderedType or Map.OrderedType *)
 module type ComparableType_t =
@@ -470,9 +449,6 @@ module Map:
       end
   end
 
-(* Frequently used module idioms *)
-
-module type TypeContainer_t = sig type t end
 module type MakeComparable_t = functor (T: TypeContainer_t) -> ComparableType_t with type t = T.t
 module MakeComparable (T: TypeContainer_t): ComparableType_t with type t = T.t =
   struct
@@ -513,4 +489,56 @@ module StringMap: module type of Map.Make (ComparableString) = Map.Make (Compara
 module RComparableString = MakeRComparable (struct type t = String.t end) (* Our String! *)
 module StringRSet: module type of Set.Make (RComparableString) = Set.Make (RComparableString)
 module StringRMap: module type of Map.Make (RComparableString) = Map.Make (RComparableString)
+
+(* Same as Hashtbl.HashedType *)
+module type HashableType_t =
+  sig
+    type t
+    val equal: t -> t -> bool
+    val hash: t -> int
+  end
+(* Optimisation for integers *)
+module IntHash: HashableType_t with type t = Int.t =
+  struct
+    type t = Int.t (* Our Int! *)
+    let equal (i:int) (j:int) = (i - j = 0) [@@inline] (*(i = j)*)
+    let hash (i:int) = i [@@inline] (* land max_int *)
+  end
+
+module type MakeHashable_t = functor (T: TypeContainer_t) -> HashableType_t with type t = T.t
+module MakeHashable (T: TypeContainer_t): HashableType_t with type t = T.t =
+  struct
+    type t = T.t
+    (* Informs the compiler that polymorphism is not needed *)
+    let equal (a:t) (b:t) = a = b [@@inline]
+    let hash (a:t) = Hashtbl.hash a [@@inline]
+  end
+module MakeSeededHashable (T: TypeContainer_t) (I: IntParameter_t): HashableType_t with type t = T.t =
+  struct
+    type t = T.t
+    (* Informs the compiler that polymorphism is not needed *)
+    let equal (a:t) (b:t) = a = b [@@inline]
+    let hash (a:t) = Hashtbl.seeded_hash I.n a [@@inline]
+  end
+
+module Hashtbl:
+  sig
+    include module type of Hashtbl
+    val map: ?random:bool -> ('a -> 'b) -> ('c, 'a) Hashtbl.t -> ('c, 'b) Hashtbl.t
+    val mapi: ?random:bool -> ('a -> 'b -> 'c) -> ('a, 'b) Hashtbl.t -> ('a, 'c) Hashtbl.t
+  end
+= struct
+    include Hashtbl
+    let map ?(random = false) f h =
+      let res = Hashtbl.create ~random (Hashtbl.length h) in
+      Hashtbl.iter (fun k v -> f v |> Hashtbl.add res k) h;
+      res
+    let mapi ?(random = false) f h =
+      let res = Hashtbl.create ~random (Hashtbl.length h) in
+      Hashtbl.iter (fun k v -> f k v |> Hashtbl.add res k) h;
+      res
+  end
+
+module IntHashtbl = Hashtbl.Make (IntHash)
+module StringHashtbl = Hashtbl.Make (MakeHashable(String))
 
