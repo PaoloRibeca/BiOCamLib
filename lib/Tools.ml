@@ -87,124 +87,129 @@ module Multimap (CmpKey: ComparableType_t) (CmpVal: ComparableType_t) =
     let min_binding = KeyMap.min_binding
   end
 
-module TransitiveClosure =
-  struct
-    module type T_t =
-      sig
-        type element_t
-        type set_t
-        type t
-        val empty: unit -> t
-        val add_equivalences: t -> set_t -> unit
-        val cardinal: t -> int
-        val iter: (unit -> element_t -> unit) -> t -> unit
-      end
-    module Make (O: ComparableType_t):
-      T_t with type element_t := O.t and type set_t := Set.Make(O).t
-    = struct
-        type element_t = O.t
-        module ValueSet = Set.Make (O)
-        type t = {
-          (* We need this, which is also the ID of the next element,
-              because vectors will be buffers and hence
-              the size of id_to_element might not coincide with it *)
-          mutable cardinal: int;
-          (* Elements having a general type are hashed to integers.
-             The hash contains:
-              (1) The element ID (a progressive integer)
-              (2) The index of the first relation the element appears in *)
-          hash: (element_t, int * int) Hashtbl.t;
-          (* The inverse of the previous one *)
-          mutable id_to_element: element_t array;
-          (* We need this because vectors will be buffers and hence
-              the size of relations_to_classes might not coincide with it *)
-          mutable relation_number: int;
-          (* We keep track of relations as they are progressively added.
-             The class of a relation is the lowest relation index of its elements *)
-          mutable relation_to_class: int array;
-          (* The classes *)
-          mutable classes: IntSet.t IntMap.t
-        }
-        let empty () = {
-          cardinal = 0;
-          hash = Hashtbl.create 128;
-          id_to_element = [||];
-          relation_number = 0;
-          relation_to_class = [||];
-          classes = IntMap.empty
-        }
-        let add_equivalences tc set =
-          if set <> ValueSet.empty then begin
-            (* We'll need the new relation when inserting new elements,
-                so we have to initialise it immediately *)            
-            (*Printf.eprintf "Processing relation #%d...\n%!" tc.relation_number;*)
-            (* We make sure there is enough space in relations_to_classes *)
-            tc.relation_to_class <- Array.resize ~is_buffer:true (tc.relation_number + 1) (-1) tc.relation_to_class;
-            (* For the time being, the new relations are in a class of their own *)
-            tc.relation_to_class.(tc.relation_number) <- tc.relation_number;
-            (* Here new_class are the new elements appearing in the relation,
-                and new_relation are the classes to be merged *)
-            let new_class = ref IntSet.empty and new_relation = ref IntSet.empty in
-            ValueSet.iter
-              (fun element ->
-                if Hashtbl.mem tc.hash element |> not then begin
-                  Hashtbl.add tc.hash element (tc.cardinal, tc.relation_number);
-                  (* We make sure there is enough space in id_to_element *)
-                  tc.id_to_element <- Array.resize ~is_buffer:true (tc.cardinal + 1) element tc.id_to_element;
-                  tc.id_to_element.(tc.cardinal) <- element;
-                  new_class := IntSet.add tc.cardinal !new_class;
-                  tc.cardinal <- tc.cardinal + 1
-                end;
-                let _, relation = Hashtbl.find tc.hash element in
-                if relation <> tc.relation_number then begin
-                  (* Update dangling links *)
-                  let dangling = ref IntSet.empty in
-                  while IntMap.mem tc.relation_to_class.(relation) tc.classes |> not do
-                    dangling := IntSet.add relation !dangling;
-                    tc.relation_to_class.(relation) <- tc.relation_to_class.(tc.relation_to_class.(relation))
-                  done;
-                  let ok = tc.relation_to_class.(relation) in
-                  IntSet.iter
-                    (fun relation ->
-                      tc.relation_to_class.(relation) <- ok)
-                    !dangling
-                end;
-                new_relation := IntSet.add tc.relation_to_class.(relation) !new_relation)
-              set;
-            let new_class = !new_class and new_relation = !new_relation in
-            (*Printf.eprintf " New class: %d -> {" tc.relation_number;
-            IntSet.iter (Printf.eprintf " %d") new_class;
-            Printf.eprintf " } (elements)\n%!";
-            Printf.eprintf " New relation: %d -> {" tc.relation_number;
-            IntSet.iter (Printf.eprintf " %d") new_relation;
-            Printf.eprintf " } (classes)\n%!";*)
-            if new_class <> IntSet.empty then
-              tc.classes <- IntMap.add tc.relation_number new_class tc.classes;
-            (* We can update the relations ID now - DON'T MOVE *)
-            tc.relation_number <- tc.relation_number + 1;
-            (* We merge and update classes *)
-            let min_class = IntSet.min_elt new_relation in
-            (*Printf.eprintf " Minimum class is %d\n%!" min_class;*)
-            let union = ref IntSet.empty in
-            IntSet.iter
-              (fun class_ ->
-                tc.relation_to_class.(class_) <- min_class;
-                union := IntMap.find class_ tc.classes |> IntSet.union !union;
-                tc.classes <- IntMap.remove class_ tc.classes)
-              new_relation;
-            tc.classes <- IntMap.add min_class !union tc.classes
-          end
-        let cardinal tc = tc.cardinal
-        let iter f' tc =
-          IntMap.iter
-            (fun _ elements ->
-              let f = f' () in
-              IntSet.iter
-                (fun id -> f tc.id_to_element.(id))
-                elements)
-            tc.classes
-      end
-  end
+(* An indexed stack, with additional get() and reverse (bottom-to-top) iterators.
+   The interface is compatible with that of Stdlib.Stack *)
+module StackArray:
+sig
+  type !'a t
+  exception Empty
+  val create: unit -> 'a t
+  val push: 'a -> 'a t -> unit
+  val pop: 'a t -> 'a
+  val pop_opt: 'a t -> 'a option
+  val pop_n: 'a t -> int -> 'a
+  val top: 'a t -> 'a
+  val top_opt: 'a t -> 'a option
+  val clear: 'a t -> unit
+  val reset: 'a t -> unit
+  val copy: 'a t -> 'a t
+  val is_empty: 'a t -> bool
+  val length: 'a t -> int
+  val iter: ('a -> unit) -> 'a t -> unit
+  val iter_top: ('a -> unit) -> 'a t -> unit
+  val riter: ('a -> unit) -> 'a t -> unit
+  val iter_bottom: ('a -> unit) -> 'a t -> unit
+  val fold: ('b -> 'a -> 'b) -> 'b -> 'a t -> 'b
+  val fold_top: ('b -> 'a -> 'b) -> 'b -> 'a t -> 'b
+  val rfold: ('b -> 'a -> 'b) -> 'b -> 'a t -> 'b
+  val fold_bottom: ('b -> 'a -> 'b) -> 'b -> 'a t -> 'b
+  exception Not_found
+  val get: 'a t -> int -> 'a
+  val ( .@() ): 'a t -> int -> 'a
+end
+= struct
+  type 'a t = {
+    mutable storage: 'a array;
+    mutable length: int
+  }
+  exception Empty
+  let create () = { storage = [||]; length = 0 }
+  let push el s =
+    let aug_length = s.length + 1 in
+    if Array.length s.storage >= aug_length then begin
+      s.storage.(s.length) <- el;
+      s.length <- s.length + 1
+    end else begin
+      s.storage <- Array.resize ~is_buffer:true aug_length el s.storage;
+      s.length <- s.length + 1
+    end
+  let pop s =
+    if s.length > 0 then begin
+      s.length <- s.length - 1;
+      s.storage.(s.length)
+    end else
+      raise Empty
+  let pop_opt s =
+    if s.length > 0 then begin
+      s.length <- s.length - 1;
+      Some s.storage.(s.length)
+    end else
+      None
+  let pop_n s n =
+    if s.length >= n then begin
+      s.length <- s.length - n;
+      s.storage.(s.length)
+    end else
+      raise Empty
+  let top s =
+    if s.length > 0 then
+      s.storage.(s.length - 1)
+    else
+      raise Empty
+  let top_opt s =
+    if s.length > 0 then
+      Some s.storage.(s.length - 1)
+    else
+      None
+  let clear s =
+    s.length <- 0
+  let reset s =
+    s.storage <- [||];
+    s.length <- 0
+  let copy s = {
+    storage = Array.copy s.storage;
+    length = s.length
+  }
+  let is_empty { length; _ } =
+    length = 0
+  let length { length; _ } = length
+  let iter f s =
+    for i = s.length - 1 downto 0 do
+      f s.storage.(i)
+    done
+  let riter f s =
+    for i = 0 to s.length - 1 do
+      f s.storage.(i)
+    done
+  let iter_top = iter
+  let iter_bottom = riter
+  let fold f start s =
+    let rec _fold last rem =
+      if rem = 0 then
+        last
+      else begin
+        let red_rem = rem - 1 in
+        _fold (f last s.storage.(red_rem)) red_rem
+      end in
+    _fold start s.length
+  let rfold f start s =
+    let rec _fold last idx =
+      if idx = s.length then
+        last
+      else
+        _fold (f last s.storage.(idx)) (idx + 1) in
+    _fold start 0
+  let fold_top = fold
+  let fold_bottom = rfold
+  exception Not_found
+  let get s idx =
+    if idx < s.length then
+      s.storage.(idx)
+    else
+      raise Not_found
+  let ( .@() ) = get
+
+end
 
 module Trie:
   sig
@@ -317,44 +322,6 @@ module Trie:
       | Ambiguous _ -> ""
       | Contained _ -> s
       | Unique s -> s
-  end
-
-(* General C++-style iterator *)
-module type Iterator_t =
-  sig
-    type 'a init_t
-    type 'a t
-    type 'a ret_t
-    val empty: unit -> 'a t
-    val is_empty: 'a t -> bool
-    val make: 'a init_t -> 'a t
-    val assign: 'a t -> 'a t -> unit
-    (* None means there are no elements left *)
-    val get: 'a t -> 'a ret_t option
-    val get_and_incr: 'a t -> 'a ret_t option
-    val incr: 'a t -> unit
-  end
-(* Implementation for Stdlib modules built upon Seq *)
-module Iterator:
-  Iterator_t with type 'a init_t := 'a Seq.t and type 'a ret_t := 'a
-= struct
-    type 'a t = 'a Seq.t ref
-    let empty () = ref Seq.empty
-    let is_empty it = !it () = Seq.Nil
-    let make seq = ref seq
-    let assign it seq = it := !seq
-    let get it =
-      match !it () with
-      | Seq.Nil -> None
-      | Cons (deref, _) -> Some deref
-    let get_and_incr it =
-      match !it () with
-      | Seq.Nil -> None
-      | Cons (deref, next) -> it := next; Some deref
-    let incr it =
-      match !it () with
-      | Seq.Nil -> ()
-      | Cons (_, next) -> it := next
   end
 
 module Argv:
@@ -712,5 +679,124 @@ module Argv:
             error __FUNCTION__ ("Option '" ^ opt ^ "' is mandatory"))
           !mandatory
     let parse_error ?(output = stderr) = error ~output __FUNCTION__
+  end
+
+module TransitiveClosure =
+  struct
+    module type T_t =
+      sig
+        type element_t
+        type set_t
+        type t
+        val empty: unit -> t
+        val add_equivalences: t -> set_t -> unit
+        val cardinal: t -> int
+        val iter: (unit -> element_t -> unit) -> t -> unit
+      end
+    module Make (O: ComparableType_t):
+      T_t with type element_t := O.t and type set_t := Set.Make(O).t
+    = struct
+        type element_t = O.t
+        module ValueSet = Set.Make (O)
+        type t = {
+          (* We need this, which is also the ID of the next element,
+              because vectors will be buffers and hence
+              the size of id_to_element might not coincide with it *)
+          mutable cardinal: int;
+          (* Elements having a general type are hashed to integers.
+             The hash contains:
+              (1) The element ID (a progressive integer)
+              (2) The index of the first relation the element appears in *)
+          hash: (element_t, int * int) Hashtbl.t;
+          (* The inverse of the previous one *)
+          mutable id_to_element: element_t array;
+          (* We need this because vectors will be buffers and hence
+              the size of relations_to_classes might not coincide with it *)
+          mutable relation_number: int;
+          (* We keep track of relations as they are progressively added.
+             The class of a relation is the lowest relation index of its elements *)
+          mutable relation_to_class: int array;
+          (* The classes *)
+          mutable classes: IntSet.t IntMap.t
+        }
+        let empty () = {
+          cardinal = 0;
+          hash = Hashtbl.create 128;
+          id_to_element = [||];
+          relation_number = 0;
+          relation_to_class = [||];
+          classes = IntMap.empty
+        }
+        let add_equivalences tc set =
+          if set <> ValueSet.empty then begin
+            (* We'll need the new relation when inserting new elements,
+                so we have to initialise it immediately *)
+            (*Printf.eprintf "Processing relation #%d...\n%!" tc.relation_number;*)
+            (* We make sure there is enough space in relations_to_classes *)
+            tc.relation_to_class <- Array.resize ~is_buffer:true (tc.relation_number + 1) (-1) tc.relation_to_class;
+            (* For the time being, the new relations are in a class of their own *)
+            tc.relation_to_class.(tc.relation_number) <- tc.relation_number;
+            (* Here new_class are the new elements appearing in the relation,
+                and new_relation are the classes to be merged *)
+            let new_class = ref IntSet.empty and new_relation = ref IntSet.empty in
+            ValueSet.iter
+              (fun element ->
+                if Hashtbl.mem tc.hash element |> not then begin
+                  Hashtbl.add tc.hash element (tc.cardinal, tc.relation_number);
+                  (* We make sure there is enough space in id_to_element *)
+                  tc.id_to_element <- Array.resize ~is_buffer:true (tc.cardinal + 1) element tc.id_to_element;
+                  tc.id_to_element.(tc.cardinal) <- element;
+                  new_class := IntSet.add tc.cardinal !new_class;
+                  tc.cardinal <- tc.cardinal + 1
+                end;
+                let _, relation = Hashtbl.find tc.hash element in
+                if relation <> tc.relation_number then begin
+                  (* Update dangling links *)
+                  let dangling = ref IntSet.empty in
+                  while IntMap.mem tc.relation_to_class.(relation) tc.classes |> not do
+                    dangling := IntSet.add relation !dangling;
+                    tc.relation_to_class.(relation) <- tc.relation_to_class.(tc.relation_to_class.(relation))
+                  done;
+                  let ok = tc.relation_to_class.(relation) in
+                  IntSet.iter
+                    (fun relation ->
+                      tc.relation_to_class.(relation) <- ok)
+                    !dangling
+                end;
+                new_relation := IntSet.add tc.relation_to_class.(relation) !new_relation)
+              set;
+            let new_class = !new_class and new_relation = !new_relation in
+            (*Printf.eprintf " New class: %d -> {" tc.relation_number;
+            IntSet.iter (Printf.eprintf " %d") new_class;
+            Printf.eprintf " } (elements)\n%!";
+            Printf.eprintf " New relation: %d -> {" tc.relation_number;
+            IntSet.iter (Printf.eprintf " %d") new_relation;
+            Printf.eprintf " } (classes)\n%!";*)
+            if new_class <> IntSet.empty then
+              tc.classes <- IntMap.add tc.relation_number new_class tc.classes;
+            (* We can update the relations ID now - DON'T MOVE *)
+            tc.relation_number <- tc.relation_number + 1;
+            (* We merge and update classes *)
+            let min_class = IntSet.min_elt new_relation in
+            (*Printf.eprintf " Minimum class is %d\n%!" min_class;*)
+            let union = ref IntSet.empty in
+            IntSet.iter
+              (fun class_ ->
+                tc.relation_to_class.(class_) <- min_class;
+                union := IntMap.find class_ tc.classes |> IntSet.union !union;
+                tc.classes <- IntMap.remove class_ tc.classes)
+              new_relation;
+            tc.classes <- IntMap.add min_class !union tc.classes
+          end
+        let cardinal tc = tc.cardinal
+        let iter f' tc =
+          IntMap.iter
+            (fun _ elements ->
+              let f = f' () in
+              IntSet.iter
+                (fun id -> f tc.id_to_element.(id))
+                elements)
+            tc.classes
+      end
   end
 

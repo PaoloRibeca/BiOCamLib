@@ -318,6 +318,44 @@ module Printf:
       end
   end
 
+(* General C++-style iterator *)
+module type Iterator_t =
+  sig
+    type 'a init_t
+    type 'a t
+    type 'a ret_t
+    val empty: unit -> 'a t
+    val is_empty: 'a t -> bool
+    val make: 'a init_t -> 'a t
+    val assign: 'a t -> 'a t -> unit
+    (* None means there are no elements left *)
+    val get: 'a t -> 'a ret_t option
+    val get_and_incr: 'a t -> 'a ret_t option
+    val incr: 'a t -> unit
+  end
+(* Implementation for Stdlib modules built upon Seq *)
+module Iterator:
+  Iterator_t with type 'a init_t := 'a Seq.t and type 'a ret_t := 'a
+= struct
+    type 'a t = 'a Seq.t ref
+    let empty () = ref Seq.empty
+    let is_empty it = !it () = Seq.Nil
+    let make seq = ref seq
+    let assign it seq = it := !seq
+    let get it =
+      match !it () with
+      | Seq.Nil -> None
+      | Cons (deref, _) -> Some deref
+    let get_and_incr it =
+      match !it () with
+      | Seq.Nil -> None
+      | Cons (deref, next) -> it := next; Some deref
+    let incr it =
+      match !it () with
+      | Seq.Nil -> ()
+      | Cons (_, next) -> it := next
+  end
+
 module Hashtbl:
   sig
     include module type of Hashtbl
