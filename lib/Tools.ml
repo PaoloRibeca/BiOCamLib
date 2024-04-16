@@ -94,7 +94,7 @@ sig
   type !'a t
   exception Empty
   val create: unit -> 'a t
-  val push: 'a -> 'a t -> unit
+  val push: 'a t -> 'a -> unit (* We depart from Stdlib conventions here and swap arguments *)
   val pop: 'a t -> 'a
   val pop_opt: 'a t -> 'a option
   val pop_n: 'a t -> int -> 'a
@@ -124,7 +124,7 @@ end
   }
   exception Empty
   let create () = { storage = [||]; length = 0 }
-  let push el s =
+  let push s el =
     let aug_length = s.length + 1 in
     if Array.length s.storage >= aug_length then begin
       s.storage.(s.length) <- el;
