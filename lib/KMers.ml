@@ -49,6 +49,39 @@ module SlidingWindow:
       let len = Bytes.length w.drum in
       Bytes.sub_string w.drum w.index (len - w.index) ^ Bytes.sub_string w.drum 0 w.index
   end
+module DoubleSlidingWindow:
+  sig
+    type t
+    val make: string -> t
+    val support: t -> int
+    val diffs: t -> int
+    val add_char: t -> char -> char -> int
+    val to_string: t -> string
+  end
+= struct
+    type t = {
+      one: SlidingWindow.t;
+      two: SlidingWindow.t;
+      mutable support: int;
+      mutable diffs: int
+    }
+    let make s = {
+      one = SlidingWindow.make s;
+      two = SlidingWindow.make s;
+      support = 0;
+      diffs = 0
+    }
+    let support d = d.support
+    let diffs d = d.diffs
+    let add_char d c1 c2 =
+      let old_c1 = SlidingWindow.add_char d.one c1
+      and old_c2 = SlidingWindow.add_char d.two c2 in
+      d.support <- min (d.support + 1) (SlidingWindow.length d.one);
+      d.diffs <- d.diffs - (if old_c1 <> old_c2 then 1 else 0) + (if c1 <> c2 then 1 else 0);
+      d.diffs
+    let to_string d =
+      Printf.sprintf "|%s| <-> |%s|" (SlidingWindow.contents d.one) (SlidingWindow.contents d.two)
+  end
 
 (* Auxiliary module type to store and query frequencies of k-mers *)
 module type HashFrequencies_t =
