@@ -332,7 +332,7 @@ module ReadsIterate:
     }
     val empty: t
     val length: t -> int
-    val add_from_files: t -> Type.t -> t
+    val add_from_files: t -> Type.t array -> t
     (* Arguments to the function are read id, segment id, payload *)
     val iter: ?linter:(string -> string) -> ?verbose:bool -> (int -> int -> read_t -> unit) -> t -> unit
   end
@@ -345,8 +345,8 @@ module ReadsIterate:
     type t = Type.t array
     let empty = [||]
     let length = Array.length
-    let add_from_files files file =
-      Array.append files [| file |]
+    let add_from_files old_files new_files =
+      Array.append old_files new_files
     let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false) f =
       Array.iter
         (function

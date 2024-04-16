@@ -50,7 +50,7 @@ module Parameters =
 
 let info = {
   Tools.Argv.name = "FASTools";
-  version = "9";
+  version = "10";
   date = "16-Apr-2024"
 } and authors = [
   "2022-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
@@ -316,17 +316,17 @@ let () =
       | ProcessInput input ->
         begin match !working_mode, input with
         | Compact, PairedEndFASTQ _ | Compact, InterleavedFASTQ _ | Compact, Tabular _ ->
-          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty input |>
+          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
             Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose (output_tabular_record ~pe:true)
         | Compact, _ ->
-          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty input |>
+          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
             Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose output_tabular_record
         | Expand, _ ->
-          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty input |>
+          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
             Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose output_fast_record
         | Match regexp, FASTA _
         | Match regexp, SingleEndFASTQ _ ->
-          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty input |>
+          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
             Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose
               (fun i segm ({ tag; _ } as record) ->
                 if Str.matches regexp tag then
@@ -362,14 +362,14 @@ let () =
         | RevCom, SingleEndFASTQ _
         | RevCom, PairedEndFASTQ _
         | RevCom, InterleavedFASTQ _ ->
-          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty input |>
+          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
             Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose (output_fast_record ~rc:true)
         | RevCom, Tabular _ ->
-          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty input |>
+          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
             Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose (output_tabular_record ~rc:true)
         | UnQuals, FASTA _
         | UnQuals, SingleEndFASTQ _ ->
-          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty input |>
+          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
             Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose
               (fun i segm record ->
                 output_fast_record i segm { record with qua = "" })
