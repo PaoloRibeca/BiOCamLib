@@ -87,7 +87,7 @@ module Multimap (CmpKey: ComparableType_t) (CmpVal: ComparableType_t) =
     let min_binding = KeyMap.min_binding
   end
 
-(* An indexed stack, with additional get() and reverse (bottom-to-top) iterators.
+(* An indexed stack, or extensible array, with additional get() and reverse (bottom-to-top) iterators.
    The interface is compatible with that of Stdlib.Stack *)
 module StackArray:
 sig
@@ -116,70 +116,71 @@ sig
   exception Not_found
   val get: 'a t -> int -> 'a
   val ( .@() ): 'a t -> int -> 'a
+  val contents: 'a t -> 'a array
 end
 = struct
   type 'a t = {
-    mutable storage: 'a array;
-    mutable length: int
+    mutable data: 'a array;
+    mutable size: int
   }
   exception Empty
-  let create () = { storage = [||]; length = 0 }
+  let create () = { data = [||]; size = 0 }
   let push s el =
-    let aug_length = s.length + 1 in
-    if Array.length s.storage >= aug_length then begin
-      s.storage.(s.length) <- el;
-      s.length <- s.length + 1
+    let aug_length = s.size + 1 in
+    if Array.length s.data >= aug_length then begin
+      s.data.(s.size) <- el;
+      s.size <- s.size + 1
     end else begin
-      s.storage <- Array.resize ~is_buffer:true aug_length el s.storage;
-      s.length <- s.length + 1
+      s.data <- Array.resize ~is_buffer:true aug_length el s.data;
+      s.size <- s.size + 1
     end
   let pop s =
-    if s.length > 0 then begin
-      s.length <- s.length - 1;
-      s.storage.(s.length)
+    if s.size > 0 then begin
+      s.size <- s.size - 1;
+      s.data.(s.size)
     end else
       raise Empty
   let pop_opt s =
-    if s.length > 0 then begin
-      s.length <- s.length - 1;
-      Some s.storage.(s.length)
+    if s.size > 0 then begin
+      s.size <- s.size - 1;
+      Some s.data.(s.size)
     end else
       None
   let pop_n s n =
-    if s.length >= n then begin
-      s.length <- s.length - n;
-      s.storage.(s.length)
+    if s.size >= n then begin
+      s.size <- s.size - n;
+      s.data.(s.size)
     end else
       raise Empty
   let top s =
-    if s.length > 0 then
-      s.storage.(s.length - 1)
+    if s.size > 0 then
+      s.data.(s.size - 1)
     else
       raise Empty
   let top_opt s =
-    if s.length > 0 then
-      Some s.storage.(s.length - 1)
+    if s.size > 0 then
+      Some s.data.(s.size - 1)
     else
       None
   let clear s =
-    s.length <- 0
+    s.size <- 0
   let reset s =
-    s.storage <- [||];
-    s.length <- 0
+    s.data <- [||];
+    s.size <- 0
   let copy s = {
-    storage = Array.copy s.storage;
-    length = s.length
+    data = Array.copy s.data;
+    size = s.size
   }
-  let is_empty { length; _ } =
-    length = 0
-  let length { length; _ } = length
+  let is_empty { size; _ } =
+    size = 0
+  let length { size; _ } = size
   let iter f s =
-    for i = s.length - 1 downto 0 do
-      f s.storage.(i)
+    for i = s.size - 1 downto 0 do
+      f s.data.(i)
     done
   let riter f s =
-    for i = 0 to s.length - 1 do
-      f s.storage.(i)
+    for i = 0 to s.size - 1 do
+      f s.data.(i)
     done
   let iter_top = iter
   let iter_bottom = riter
@@ -189,26 +190,27 @@ end
         last
       else begin
         let red_rem = rem - 1 in
-        _fold (f last s.storage.(red_rem)) red_rem
+        _fold (f last s.data.(red_rem)) red_rem
       end in
-    _fold start s.length
+    _fold start s.size
   let rfold f start s =
     let rec _fold last idx =
-      if idx = s.length then
+      if idx = s.size then
         last
       else
-        _fold (f last s.storage.(idx)) (idx + 1) in
+        _fold (f last s.data.(idx)) (idx + 1) in
     _fold start 0
   let fold_top = fold
   let fold_bottom = rfold
   exception Not_found
   let get s idx =
-    if idx < s.length then
-      s.storage.(idx)
+    if idx < s.size then
+      s.data.(idx)
     else
       raise Not_found
   let ( .@() ) = get
-
+  let contents s =
+    Array.sub s.data 0 s.size
 end
 
 module Trie:
