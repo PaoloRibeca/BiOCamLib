@@ -4,7 +4,7 @@
     This file is part of BiOCamLib, the OCaml foundations upon which
     a number of the bioinformatics tools I developed are built.
 
-    Processes.ml implements a number of tools useful to implement OCaml
+    Processes.ml implements a number of tools useful to write OCaml
      programs. In particular, it contains:
      * a module to spawn and query subprocesses
      * a module to profile memory usage

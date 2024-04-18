@@ -109,6 +109,10 @@ module String:
         val as_array: Str.regexp -> string -> string array
         val on_char_as_list: char -> string -> string list
         val on_char_as_array: char -> string -> string array
+        val delim_as_list: Str.regexp -> string -> string list
+        val delim_as_array: Str.regexp -> string -> string array
+        val full_as_list: Str.regexp -> string -> Str.split_result list
+        val full_as_array: Str.regexp -> string -> Str.split_result array
       end
     module TermIO:
       sig
@@ -150,6 +154,10 @@ module String:
         (* All splits that were previously done with one-char regexps can now be done with the following two *)
         let on_char_as_list = String.split_on_char
         let on_char_as_array c s = String.split_on_char c s |> Array.of_list
+        let delim_as_list = Str.split_delim
+        let delim_as_array re s = Str.split_delim re s |> Array.of_list
+        let full_as_list = Str.full_split
+        let full_as_array re s = Str.full_split re s |> Array.of_list
       end
     module TermIO =
       struct
