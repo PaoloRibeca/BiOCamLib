@@ -34,17 +34,54 @@ include (
     exception IncompatibleLengthOnLine of int
     let of_alignment ?(tip_gap_multiplier = 2.5) ?(max_tip_threshold = 30) al =
       let remove_tips s =
-        let split_at_dashes = String.Split.full_as_array dashes_re s in
-        let max_non_dash_len =
+        let split_at_dashes = String.Split.full_as_list dashes_re s in
+        let max_deleted_len =
           begin
-            Array.fold_left
+            List.fold_left
               (fun sum -> function
                 | Str.Text s -> sum + String.length s
                 | Str.Delim _ -> sum) 0
               split_at_dashes
           end * max_tip_threshold / 100 in
-  
-        s in
+        let rec process_rec rem res acc_seq_len acc_len =
+          (* The invariant is to have rem as Str.Delim :: tl where the delimiter has already been processed *)
+          match rem with
+          | [] -> res
+          | Str.Text _ :: [] -> (* Can only happen at the beginning *)
+            assert (res = []);
+            rem
+          | Str.Text s :: Str.Delim d :: tl -> (* Can only happen at the beginning *)
+            assert (res = []);
+            process_rec (Str.Delim "" :: Str.Text s :: Str.Delim d :: tl) res acc_seq_len acc_len
+          | Str.Delim _ :: [] -> rem
+          | Str.Delim _ :: Str.Text _ :: [] -> rem
+          | Str.Delim d_1 :: Str.Text s :: Str.Delim d_2 :: tl ->
+            (* Not that at this point the first gap has already been processed *)
+            let l_d_1 = String.length d_1 and l_s = String.length s and l_d_2 = String.length d_2 in
+            let l_d_2_f = float_of_int l_d_2 and acc_seq_len = acc_seq_len + l_s in
+            if acc_seq_len > max_deleted_len then
+              List.rev_append rem res
+            else begin
+              if l_d_2_f >= tip_gap_multiplier *. float_of_int acc_seq_len then begin
+                (* Replace everything with dashes *)
+                let l_d = acc_len + l_d_1 + l_s + l_d_2 in
+                (* We keep track of the length of the sequence we've erased *)
+                process_rec (Str.Delim (String.make l_d '-') :: tl) [] acc_seq_len 0
+              end else
+                (* Carry on *)
+                process_rec (Str.Delim d_2 :: tl) (Str.Text s :: Str.Delim d_1 :: res)
+                  acc_seq_len (acc_len + l_d_1 + l_s)
+            end
+          | _ ->
+            assert false in
+        (* As we are processing things twice, from left to right and from right to left,
+            the final order will be correct *)
+        let res = process_rec split_at_dashes [] 0 0 in
+        let res = process_rec res [] 0 0 and buf = Buffer.create 1024 in
+        List.iter
+          (function Str.Delim s | Str.Text s -> Buffer.add_string buf s)
+          res;
+        Buffer.contents buf in
       let len =
         if Array.length al > 0 then
           String.length al.(0)
@@ -53,11 +90,12 @@ include (
       let al =
         Array.mapi
           (fun i seq ->
-            if Array.length seq <> len then
+            if String.length seq <> len then
               IncompatibleLengthOnLine i |> raise;
-            Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:true seq |> remove_tips |> Bytes.of_string) al in
-      
-      
+            Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:true seq |> remove_tips |> Bytes.of_string)
+          al in
+
+
 
 
       Array.map Bytes.to_string al
