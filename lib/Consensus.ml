@@ -29,59 +29,72 @@ include (
   struct
     (* PRIVATE *)
     let dashes_re = Str.regexp "[-]+"
-    (* PUBLIC.
-       Processes a string.t array *)
+    let check_percentage arg_name n =
+      if n < 0 || n >= 100 then
+        Printf.sprintf "(%s): Invalid value %d to percentage argument '%s'" __FUNCTION__ n arg_name
+          |> failwith
+    (* PUBLIC *)
+    let remove_tips ?(tip_gap_multiplier = 2.5) ?(max_tip_threshold = 30) s =
+      if tip_gap_multiplier < 0. then
+        Printf.sprintf "(%s): Negative value %g to argument 'tip_gap_multiplier'" __FUNCTION__ tip_gap_multiplier
+          |> failwith;
+      check_percentage "max_tip_threshold" max_tip_threshold;
+      let split_at_dashes = String.Split.full_as_list dashes_re s in
+      let max_deleted_len =
+        begin
+          List.fold_left
+            (fun sum -> function
+              | Str.Text s -> sum + String.length s
+              | Str.Delim _ -> sum) 0
+            split_at_dashes
+        end * max_tip_threshold / 100 in
+      let rec process_rec rem res acc_seq_len acc_len =
+        (* The invariant is to have rem as Str.Delim :: tl where the delimiter has already been processed *)
+        match rem with
+        | [] -> res
+        | Str.Text _ :: [] -> (* Can only happen at the beginning *)
+          assert (res = []);
+          rem
+        | Str.Text s :: Str.Delim d :: tl -> (* Can only happen at the beginning *)
+          assert (res = []);
+          process_rec (Str.Delim "" :: Str.Text s :: Str.Delim d :: tl) res acc_seq_len acc_len
+        | Str.Delim _ :: [] -> rem
+        | Str.Delim _ :: Str.Text _ :: [] -> rem
+        | Str.Delim d_1 :: Str.Text s :: Str.Delim d_2 :: tl ->
+          (* Not that at this point the first gap has already been processed *)
+          let l_d_1 = String.length d_1 and l_s = String.length s and l_d_2 = String.length d_2 in
+          let l_d_2_f = float_of_int l_d_2 and acc_seq_len = acc_seq_len + l_s in
+          if acc_seq_len > max_deleted_len then
+            List.rev_append rem res
+          else begin
+            if l_d_2_f >= tip_gap_multiplier *. float_of_int acc_seq_len then begin
+              (* Replace everything with dashes *)
+              let l_d = acc_len + l_d_1 + l_s + l_d_2 in
+              (* We keep track of the length of the sequence we've erased *)
+              process_rec (Str.Delim (String.make l_d '-') :: tl) [] acc_seq_len 0
+            end else
+              (* Carry on *)
+              process_rec (Str.Delim d_2 :: tl) (Str.Text s :: Str.Delim d_1 :: res)
+                acc_seq_len (acc_len + l_d_1 + l_s)
+          end
+        | _ ->
+          assert false in
+      (* As we are processing things twice, from left to right and from right to left,
+          the final order will be correct *)
+      let res = process_rec split_at_dashes [] 0 0 in
+      let res = process_rec res [] 0 0 and buf = Buffer.create 1024 in
+      List.iter
+        (function Str.Delim s | Str.Text s -> Buffer.add_string buf s)
+        res;
+      Buffer.contents buf
+    (* Processes a string.t array *)
     exception IncompatibleLengthOnLine of int
-    let of_alignment ?(tip_gap_multiplier = 2.5) ?(max_tip_threshold = 30) al =
-      let remove_tips s =
-        let split_at_dashes = String.Split.full_as_list dashes_re s in
-        let max_deleted_len =
-          begin
-            List.fold_left
-              (fun sum -> function
-                | Str.Text s -> sum + String.length s
-                | Str.Delim _ -> sum) 0
-              split_at_dashes
-          end * max_tip_threshold / 100 in
-        let rec process_rec rem res acc_seq_len acc_len =
-          (* The invariant is to have rem as Str.Delim :: tl where the delimiter has already been processed *)
-          match rem with
-          | [] -> res
-          | Str.Text _ :: [] -> (* Can only happen at the beginning *)
-            assert (res = []);
-            rem
-          | Str.Text s :: Str.Delim d :: tl -> (* Can only happen at the beginning *)
-            assert (res = []);
-            process_rec (Str.Delim "" :: Str.Text s :: Str.Delim d :: tl) res acc_seq_len acc_len
-          | Str.Delim _ :: [] -> rem
-          | Str.Delim _ :: Str.Text _ :: [] -> rem
-          | Str.Delim d_1 :: Str.Text s :: Str.Delim d_2 :: tl ->
-            (* Not that at this point the first gap has already been processed *)
-            let l_d_1 = String.length d_1 and l_s = String.length s and l_d_2 = String.length d_2 in
-            let l_d_2_f = float_of_int l_d_2 and acc_seq_len = acc_seq_len + l_s in
-            if acc_seq_len > max_deleted_len then
-              List.rev_append rem res
-            else begin
-              if l_d_2_f >= tip_gap_multiplier *. float_of_int acc_seq_len then begin
-                (* Replace everything with dashes *)
-                let l_d = acc_len + l_d_1 + l_s + l_d_2 in
-                (* We keep track of the length of the sequence we've erased *)
-                process_rec (Str.Delim (String.make l_d '-') :: tl) [] acc_seq_len 0
-              end else
-                (* Carry on *)
-                process_rec (Str.Delim d_2 :: tl) (Str.Text s :: Str.Delim d_1 :: res)
-                  acc_seq_len (acc_len + l_d_1 + l_s)
-            end
-          | _ ->
-            assert false in
-        (* As we are processing things twice, from left to right and from right to left,
-            the final order will be correct *)
-        let res = process_rec split_at_dashes [] 0 0 in
-        let res = process_rec res [] 0 0 and buf = Buffer.create 1024 in
-        List.iter
-          (function Str.Delim s | Str.Text s -> Buffer.add_string buf s)
-          res;
-        Buffer.contents buf in
+    let of_alignment ?(tip_gap_multiplier = 2.5) ?(max_tip_threshold = 30) ?(min_branch_threshold = 40) al =
+      if tip_gap_multiplier < 0. then
+        Printf.sprintf "(%s): Negative value %g to argument 'tip_gap_multiplier'" __FUNCTION__ tip_gap_multiplier
+          |> failwith;
+      check_percentage "max_tip_threshold" max_tip_threshold;
+      check_percentage "min_branch_threshold" min_branch_threshold;
       let len =
         if Array.length al > 0 then
           String.length al.(0)
@@ -92,8 +105,58 @@ include (
           (fun i seq ->
             if String.length seq <> len then
               IncompatibleLengthOnLine i |> raise;
-            Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:true seq |> remove_tips |> Bytes.of_string)
+            Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:true seq
+              |> remove_tips ~tip_gap_multiplier ~max_tip_threshold |> Bytes.of_string)
           al in
+      (* We replace stretches of dashes on the sides with spaces and compute coverage *)
+      let cov = Array.make len 0 in
+      Array.iter
+        (fun seq ->
+          let first_non_dash_idx = ref 0 in
+          while !first_non_dash_idx < len && seq.Bytes.@(!first_non_dash_idx) = '-' do
+            seq.Bytes.@(!first_non_dash_idx) <- ' ';
+            incr first_non_dash_idx
+          done;
+          let last_non_dash_idx = len - 1 |> ref in
+          while !last_non_dash_idx >= 0 && seq.Bytes.@(!last_non_dash_idx) = '-' do
+            seq.Bytes.@(!last_non_dash_idx) <- ' ';
+            decr last_non_dash_idx
+          done;
+          for i = !first_non_dash_idx to !last_non_dash_idx do
+            cov.(i) <- cov.(i) + 1            
+          done)
+        al;
+      let max_res = Array.make len 0 and res = Bytes.make len 'n' in
+      (* We instate gaps *)
+      for i = 0 to len - 1 do
+        (* We compute the most frequent character in the column *)
+        let stats = ref CharMap.empty in
+        Array.iter
+          (fun seq ->
+            let c = seq.Bytes.@(i) in
+            match CharMap.find_opt c !stats with
+            | None ->
+              stats := CharMap.add c (ref 1) !stats
+            | Some n ->
+            incr n)
+          al;
+        let max_n = ref 0 and max_c = ref 'n' in
+        CharMap.iter
+          (fun c n ->
+            if !n > !max_n then begin
+              max_n := !n;
+              max_c := c
+            end)
+          !stats;
+        let max_n = !max_n and max_c = !max_c in
+        if max_c = '-' && 100 * max_n >= min_branch_threshold * cov.(i) then begin
+          max_res.(i) <- max_n;
+          res.Bytes.@(i) <- max_c
+        end
+      done;
+      (* We compute the consensus by sliding k-mer window *)
+
+
 
 
 
@@ -121,7 +184,9 @@ include (
        * max_tip_threshold:
           eliminate terminal alignment segment if its number of non-gaps is no more than
           max_tip_threshold / 100 of the total number of non-gaps in the line *)
-    val of_alignment: ?tip_gap_multiplier:float -> ?max_tip_threshold:int -> string array -> string array
+    val remove_tips: ?tip_gap_multiplier:float -> ?max_tip_threshold:int -> string -> string
+    exception IncompatibleLengthOnLine of int
+    val of_alignment: ?tip_gap_multiplier:float -> ?max_tip_threshold:int -> ?min_branch_threshold:int -> string array -> string array
   
 
 
