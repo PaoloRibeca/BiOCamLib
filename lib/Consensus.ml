@@ -109,6 +109,7 @@ include (
         if consensus_window < 0 || consensus_window > seq_len then
           Printf.sprintf "(%s): Argument 'consensus_window' must be non-negative and no greater than alignment length"
             __FUNCTION__ |> failwith;
+        (* We lint sequences and remove tips *)
         let al =
           Array.mapi
             (fun i seq ->
@@ -196,7 +197,7 @@ include (
               end;
               let k = KMers.SlidingWindow.contents kmer in
               (* Side k-mers containing spaces are not taken into account *)
-              if n_spaces.(i_seq) <> 0 then begin
+              if n_spaces.(i_seq) = 0 then begin
                 match StringMap.find_opt k !stats with
                 | None ->
                   stats := StringMap.add k (ref 1) !stats
@@ -216,9 +217,9 @@ include (
           String.iteri
             (fun i c ->
               let i_c = i_col + i in
-              if max_n > max_res.(i_c) && 100 * max_n >= min_branch_threshold * cov.(i) then begin
-                max_res.(i) <- max_n;
-                res.Bytes.@(i) <-
+              if max_n > max_res.(i_c) && 100 * max_n >= min_branch_threshold * cov.(i_c) then begin
+                max_res.(i_c) <- max_n;
+                res.Bytes.@(i_c) <-
                   (* The case conveys information about coverage *)
                   if max_n >= min_coverage then
                     Char.uppercase_ascii c
