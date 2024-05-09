@@ -197,7 +197,7 @@ module type Vector_t =
     val resize: ?is_buffer:bool -> ?fill_with:N.t -> int -> t -> t
     val to_floatarray: t -> floatarray
     val of_floatarray: floatarray -> t
-end
+  end
 
 (* Uniform vector based on floatarrays.
    For consistency with the rest, we encapsulate things in a module *)
@@ -590,4 +590,4 @@ module Frequencies:
           res
       end
   end
-  
+
