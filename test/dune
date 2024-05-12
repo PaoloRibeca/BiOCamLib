@@ -5,6 +5,6 @@
     (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static))))
 
 (executables
- (public_names Vectors)
- (names Vectors)
+ (public_names Vectors Trees)
+ (names Vectors Trees)
  (libraries str unix BiOCamLib))
