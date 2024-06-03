@@ -31,7 +31,7 @@ let () =
       leaf_info in
   let nodes = Array.make (Array.length node_info) leaves.(0) in
   Array.iteri
-    (fun node_i (subs, edges, parents, keys) ->
+    (fun node_i (subs, edges, hybrid, keys) ->
       let make_edge i =
         let (length, bootstrap, probability, is_ghost) = edges.(i) in
         Trees.Newick.edge ~length ~bootstrap ~probability ~is_ghost () in
@@ -42,11 +42,13 @@ let () =
             | Node n -> make_edge i, nodes.(n))
           subs in
       let node =
-        Trees.Newick.set_parents
+        Trees.Newick.set_hybrid
           (Trees.Newick.join ~keys:(List.to_seq keys |> StringMap.of_seq) subs)
-          parents in
+          hybrid in
       nodes.(node_i) <- node)
     node_info;
-  Trees.Newick.to_string nodes.(Array.length nodes - 1) |> Printf.printf "%s\n%!";
-  Trees.Newick.to_string ~rich_format:false nodes.(Array.length nodes - 1) |> Printf.printf "%s\n%!"
+  let t = nodes.(Array.length nodes - 1) in
+  Trees.Newick.to_string t |> Printf.printf "%s\n%!";
+  Trees.Newick.to_string ~rich_format:false t |> Printf.printf "%s\n%!";
+  Trees.Newick.set_is_root (Trees.Newick.to_string t |> Trees.Newick.of_string) true |> Trees.Newick.to_string |> Printf.printf "%s\n%!"
 
