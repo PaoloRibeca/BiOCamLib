@@ -25,6 +25,7 @@ module Newick:
   sig
     include module type of Trees_Base.Newick
     val of_string: ?rich_format:bool -> string -> t
+    val of_file: ?rich_format:bool -> string -> t array
   end
 = struct
     include Trees_Base.Newick
@@ -32,6 +33,34 @@ module Newick:
       (* This adds an implicit rooted token to the first tree *)
       let s = "\n" ^ s and state = Trees_Lex.Newick.create ~rich_format () in
       Trees_Parse.newick_tree (Trees_Lex.newick state) (Lexing.from_string ~with_positions:true s)
-
+    let of_file ?(rich_format = true) s =
+      (* Here we have to reimplement buffering due to the initial rooted tag *)
+      let buf = ref "[&U]" and ic = open_in s and eof_reached = ref false in
+      let lexbuf payload n =
+        let res = ref 0 in
+        while !res = 0 && not !eof_reached do
+          let len = String.length !buf in
+          if len > 0 then begin
+            res := min len n;
+            (*Printf.eprintf "READ='%s'\n%!" !buf;*)
+            String.blit !buf 0 payload 0 !res;
+            buf := String.sub !buf !res (len - !res)
+          end else begin
+            (* Here buf is empty *)
+            res := input ic payload 0 n;
+            (*Printf.eprintf "READ='%s'\n%!" (String.sub payload 0 !res);*)
+            if !res = 0 then begin
+              close_in ic;
+              eof_reached := true
+            end
+          end
+        done;
+        (* Here either res > 0 or !eof_reached == true *)
+        (*Printf.eprintf "RES(%d)='%s'\n%!" !res (String.escaped (String.sub payload 0 !res));*)
+        !res
+      and state = Trees_Lex.Newick.create ~rich_format () in
+      Trees_Parse.zero_or_more_newick_trees (Trees_Lex.newick state) (Lexing.from_function ~with_positions:true lexbuf)
+        |> Array.of_list
+    
   end
 

@@ -50,5 +50,7 @@ let () =
   let t = nodes.(Array.length nodes - 1) in
   Trees.Newick.to_string t |> Printf.printf "%s\n%!";
   Trees.Newick.to_string ~rich_format:false t |> Printf.printf "%s\n%!";
-  Trees.Newick.set_is_root (Trees.Newick.to_string t |> Trees.Newick.of_string) true |> Trees.Newick.to_string |> Printf.printf "%s\n%!"
+  Trees.Newick.set_is_root (Trees.Newick.to_string t |> Trees.Newick.of_string) true |> Trees.Newick.to_string |> Printf.printf "%s\n%!";
+  let t = (Trees.Newick.of_file "test/phylo_tb_truth.nwk").(0) in
+  Trees.Newick.to_string ~rich_format:false t |> Printf.printf "%s\n%!"
 

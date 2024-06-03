@@ -127,13 +127,13 @@ ignore (node_keys);
                 end ^
                   match edge.edge_length, edge.edge_bootstrap, edge.edge_probability with
                   | -1., -1., -1. -> ""
-                  | -1., -1., p -> Printf.sprintf ":::%g" p
-                  | -1., b, -1. -> Printf.sprintf "::%g" b
-                  | l, -1., -1. -> Printf.sprintf ":%g" l
-                  | -1., b, p -> Printf.sprintf "::%g:%g" b p
-                  | l, -1., p -> Printf.sprintf ":%g::%g" l p
-                  | l, b, -1. -> Printf.sprintf ":%g:%g" l b
-                  | l, b, p -> Printf.sprintf ":%g:%g:%g" l b p)
+                  | -1., -1., p -> Printf.sprintf ":::%.10g" p
+                  | -1., b, -1. -> Printf.sprintf "::%.10g" b
+                  | l, -1., -1. -> Printf.sprintf ":%.10g" l
+                  | -1., b, p -> Printf.sprintf "::%.10g:%.10g" b p
+                  | l, -1., p -> Printf.sprintf ":%.10g::%.10g" l p
+                  | l, b, -1. -> Printf.sprintf ":%.10g:%.10g" l b
+                  | l, b, p -> Printf.sprintf ":%.10g:%.10g:%.10g" l b p)
               ""
               edges
           end ^ ")"
