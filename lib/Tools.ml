@@ -40,17 +40,22 @@ module Multimap (CmpKey: ComparableType_t) (CmpVal: ComparableType_t) =
         KeyMap.add k (ValSet.add v s) (KeyMap.remove k om)
       with Not_found ->
         KeyMap.add k (ValSet.singleton v) om
-    let remove_set =
-      KeyMap.remove
+    let mem k v om =
+      match KeyMap.find_opt k om with
+      | Some s ->
+        ValSet.mem v s
+      | None ->
+        false
+    let remove_set = KeyMap.remove
     let remove k v om =
-      try
-        let s = KeyMap.find k om in
+      match KeyMap.find_opt k om with
+      | Some s ->
         let s = ValSet.remove v s in
         if ValSet.is_empty s then
           KeyMap.remove k om
         else
           KeyMap.add k (ValSet.remove v s) (KeyMap.remove k om)
-      with Not_found ->
+      | None ->
         om
     let cardinal_set = KeyMap.cardinal
     let cardinal om =
@@ -116,6 +121,8 @@ sig
   exception Not_found
   val get: 'a t -> int -> 'a
   val ( .@() ): 'a t -> int -> 'a
+  val set: 'a t -> int -> 'a -> unit
+  val ( .@() <- ): 'a t -> int -> 'a -> unit
   val contents: 'a t -> 'a array
 end
 = struct
@@ -209,6 +216,12 @@ end
     else
       raise Not_found
   let ( .@() ) = get
+  let set s idx el =
+    if idx < s.size then
+      s.data.(idx) <- el
+    else
+      raise Not_found
+  let ( .@() <- ) = set
   let contents s =
     Array.sub s.data 0 s.size
 end

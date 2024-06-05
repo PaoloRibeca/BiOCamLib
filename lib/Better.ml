@@ -39,10 +39,25 @@ module Option:
   end
 
 module Int:
-  module type of Int
+  sig
+    include module type of Int
+    val get_and_incr: int ref -> int
+    val ( !++ ): int ref -> int
+    val incr_and_get: int ref -> int
+    val ( ++! ): int ref -> int
+  end
 = struct
     include Int
     let compare a b = a - b [@@inline] (* Optimisation (hopefully) *)
+    let get_and_incr ir =
+      let res = !ir in
+      incr ir;
+      res
+    let ( !++ ) = get_and_incr
+    let incr_and_get ir =
+      incr ir;
+      !ir
+    let ( ++! ) = incr_and_get
   end
 
 module Float:
