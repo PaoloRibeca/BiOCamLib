@@ -52,5 +52,20 @@ let () =
   Trees.Newick.to_string ~rich_format:false t |> Printf.printf "%s\n%!";
   Trees.Newick.set_is_root (Trees.Newick.to_string t |> Trees.Newick.of_string) true |> Trees.Newick.to_string |> Printf.printf "%s\n%!";
   let t = (Trees.Newick.of_file "test/phylo_tb_truth.nwk").(0) in
-  Trees.Newick.to_string ~rich_format:false t |> Printf.printf "%s\n%!"
-
+  Trees.Newick.to_string ~rich_format:false t |> Printf.printf "%s\n%!";
+  let ft = Trees.Newick.dfs_flatten t in
+  Array.iteri
+    (fun i (prev_edge, prev_idx, node, descs) ->
+      Printf.printf "%d[\"%s\"] (%d[%.10g])<--(+)-->(" i (Trees.Newick.get_node_name node) prev_idx (Trees.Newick.get_edge_length prev_edge);
+      Array.iter
+        (fun (edge, node_idx) ->
+          Printf.printf "%d[%.10g]" node_idx (Trees.Newick.get_edge_length edge))
+        descs;
+      Printf.printf ")\n%!")
+    ft;
+  let ds = Trees.Newick.dijkstra ft 0 in
+  Array.iteri
+    (fun i d ->
+      let _, _, n, _ = ft.(i) in
+      Printf.printf "%d[\"%s\"] %.10g\n%!" i (Trees.Newick.get_node_name n) d)
+    ds
