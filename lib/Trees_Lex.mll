@@ -31,13 +31,9 @@
 }
 
 rule newick state = parse
-| '\n' eof
-  { Newick.incr_line state;
-    newick state lexbuf }
 | '\n'
   { Newick.incr_line state;
-    (* We add an implicit root token *)
-    Trees_Parse.Newick_ROOTED (Newick.is_rich_format state |> not) }
+    newick state lexbuf }
 | ['\r' '\t' ' ']+
   { newick state lexbuf }
 | '('
@@ -59,14 +55,30 @@ rule newick state = parse
   { (* Beginning of string *)
     Trees_Parse.Newick_NAME (newick_end_of_string state lexbuf) }
 | "[&R]" | "[&r]"
-  { (* Note that this directive must be parsed differently depending on the format accepted *)
-    Trees_Parse.Newick_ROOTED (true && Newick.is_rich_format state) }
+  { (* In regular Newick format, by default trees are rooted *)
+    Trees_Parse.Newick_ROOTED true }
 | "[&U]" | "[&u]"
-  { Trees_Parse.Newick_ROOTED false }
+  { (* Note that this directive must be parsed differently depending on the format accepted *)
+    Trees_Parse.Newick_ROOTED (Newick.is_rich_format state |> not) }
+| "[&&NHX"
+  { (* Beginning of a New Hampshire Extended dictionary.
+       Note that this directive must be parsed differently depending on the format accepted *)
+    if Newick.is_rich_format state then
+      Trees_Parse.Newick_DICT (newick_end_of_nhx state lexbuf)
+    else
+      (* We treat the rest as a regular comment *)
+      newick_end_of_comment state lexbuf }
+| "[&"
+  { (* Beginning of a BEAST-like dictionary.
+       Note that this directive must be parsed differently depending on the format accepted *)
+    if Newick.is_rich_format state then
+      Trees_Parse.Newick_DICT (newick_end_of_dict true state lexbuf)
+    else
+      (* We treat the rest as a regular comment *)
+      newick_end_of_comment state lexbuf }
 | '['
   { (* Beginning of an actual comment *)
-    newick_end_of_comment state lexbuf;
-    newick state lexbuf }
+    newick_end_of_comment state lexbuf }
 | '#' (("H" | "h" | "LGT" | "lgt" | "R" | "r")? as s) (['0'-'9']+ as n)
   { try
       let n = int_of_string n in
@@ -96,13 +108,34 @@ and newick_end_of_string state = parse
   { Newick.parse_error state "Unterminated string" }
 | [ ^ '\'' '\r' '\n' ]+ as s
   { s ^ newick_end_of_string state lexbuf }
+and newick_end_of_nhx state = parse
+| ':' ([ ^ ':' '=' ']' ]+ as k) '=' ([ ^ ':' '=' ']' ]+ as v)
+  { StringMap.add k v (newick_end_of_nhx state lexbuf) }
+| ']'
+  { (* End of NHX dictionary *)
+    StringMap.empty }
+| _ as c
+  { Newick.parse_error state ("Invalid character '" ^ String.make 1 c ^ "' in NHX dictionary") }
+and newick_end_of_dict is_first state = parse
+| ','
+  { if is_first then
+      Newick.parse_error state "Invalid character ',' in dictionary"
+    else
+      newick_end_of_dict false state lexbuf }
+| ([ ^ ',' '=' ']' ]+ as k) '=' ([ ^ ',' '=' ']' ]+ as v)
+  { StringMap.add k v (newick_end_of_dict false state lexbuf) }
+| ']'
+  { (* End of dictionary *)
+    StringMap.empty }
+| _ as c
+  { Newick.parse_error state ("Invalid character '" ^ String.make 1 c ^ "' in dictionary") }
 and newick_end_of_comment state = parse
 | '\n'
   { Newick.incr_line state;
     newick_end_of_comment state lexbuf }
 | ']'
   { (* End of comment *)
-    () }
+    newick state lexbuf }
 | eof
   { Newick.parse_error state "Unterminated comment" }
 | _

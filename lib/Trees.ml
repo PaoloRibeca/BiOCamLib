@@ -25,17 +25,22 @@ module Newick:
   sig
     include module type of Trees_Base.Newick
     val of_string: ?rich_format:bool -> string -> t
-    val of_file: ?rich_format:bool -> string -> t array
+    val array_of_string: ?rich_format:bool -> string -> t array
+    val of_file: ?rich_format:bool -> string -> t
+    val array_of_file: ?rich_format:bool -> string -> t array
   end
 = struct
     include Trees_Base.Newick
-    let of_string ?(rich_format = true) s =
-      (* This adds an implicit rooted token to the first tree *)
+    let _of_string ?(rich_format = true) f s =
+      (* This adds an implicit unrooted token to the first tree *)
       let s = "\n" ^ s and state = Trees_Lex.Newick.create ~rich_format () in
-      Trees_Parse.newick_tree (Trees_Lex.newick state) (Lexing.from_string ~with_positions:true s)
-    let of_file ?(rich_format = true) s =
-      (* Here we have to reimplement buffering due to the initial rooted tag *)
-      let buf = ref "[&U]" and ic = open_in s and eof_reached = ref false in
+      f (Trees_Lex.newick state) (Lexing.from_string ~with_positions:true s)
+    let of_string ?(rich_format = true) s = _of_string ~rich_format Trees_Parse.newick_tree s
+    let array_of_string ?(rich_format = true) s =
+      _of_string ~rich_format Trees_Parse.zero_or_more_newick_trees s |> Array.of_list
+    let _of_file ?(rich_format = true) f s =
+      (* Here we have to reimplement buffering due to the initial unrooted tag *)
+      let buf = ref "\n" and ic = open_in s and eof_reached = ref false in
       let lexbuf payload n =
         let res = ref 0 in
         while !res = 0 && not !eof_reached do
@@ -59,8 +64,9 @@ module Newick:
         (*Printf.eprintf "RES(%d)='%s'\n%!" !res (String.escaped (String.sub payload 0 !res));*)
         !res
       and state = Trees_Lex.Newick.create ~rich_format () in
-      Trees_Parse.zero_or_more_newick_trees (Trees_Lex.newick state) (Lexing.from_function ~with_positions:true lexbuf)
-        |> Array.of_list
-    
+      f (Trees_Lex.newick state) (Lexing.from_function ~with_positions:true lexbuf)
+    let of_file ?(rich_format = true) s = _of_file ~rich_format Trees_Parse.newick_tree s
+    let array_of_file ?(rich_format = true) s =
+      _of_file ~rich_format Trees_Parse.zero_or_more_newick_trees s |> Array.of_list
   end
 

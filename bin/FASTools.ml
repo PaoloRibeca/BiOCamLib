@@ -44,7 +44,7 @@ module Parameters =
   struct
     let program = ref []
     let flush = ref false
-    (*let threads = ref Tools.Parallel.get_nproc ()*)
+    (*let threads = Processes.Parallel.get_nproc () |> ref*)
     let verbose = ref false
   end
 
