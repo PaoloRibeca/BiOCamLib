@@ -24,13 +24,14 @@ open Better
 
 module Parameters =
   struct
+    let max_distances = ref false (* One usually wants to compute minimum distances *)
     let threads = Processes.Parallel.get_nproc () |> ref
     let verbose = ref false
   end
 
 let info = {
   Tools.Argv.name = "Cophenetic";
-  version = "1";
+  version = "2";
   date = "06-Jun-2024"
 } and authors = [
   "2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
@@ -41,14 +42,12 @@ let () =
   TA.set_header (info, authors, [ Info.info ]);
   TA.set_synopsis "[OPTIONS]";
   TA.parse [
-(*
-    TA.make_separator "Input/Output";
-    [ "-C"; "--no-complement" ],
+    TA.make_separator "Algorithm";
+    [ "-M"; "--max-distances"; "--maximum-distances"; "--longest-path-distances" ],
       None,
-      [ "do not base-complement the sequence" ],
-      TA.Default (fun () -> "base-complement"),
-      (fun _ -> Parameters.no_complement := true);
-*)
+      [ "compute longest- rather than shortest-path distances" ],
+      TA.Default (fun () -> "compute shortest-path distances"),
+      (fun _ -> Parameters.max_distances := true);
     TA.make_separator "Miscellaneous";
     [ "-t"; "-T"; "--threads" ],
       Some "<computing_threads>",
@@ -74,8 +73,12 @@ let () =
       TA.Optional,
       (fun _ -> TA.usage (); exit 1)
   ];
-  let m =
-    Trees.Newick.of_file "/dev/stdin"
-      |> Trees.Newick.get_distance_matrix ~threads:!Parameters.threads ~verbose:!Parameters.verbose in
+  let t = Trees.Newick.of_file "/dev/stdin" in
+  let m = begin
+    if !Parameters.max_distances then
+      Trees.Newick.get_max_distance_matrix
+    else
+      Trees.Newick.get_min_distance_matrix
+  end ~threads:!Parameters.threads ~verbose:!Parameters.verbose t in
   Matrix.to_file ~threads:!Parameters.threads ~verbose:!Parameters.verbose m "/dev/stdout"
 

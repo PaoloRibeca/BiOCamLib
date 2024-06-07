@@ -82,7 +82,8 @@ module Newick:
     val dfs_flatten: t -> flat_t array
     (* Distances *)
     val dijkstra: flat_t array -> int -> Float.Array.t
-    val get_distance_matrix: ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> Matrix.t
+    val get_min_distance_matrix: ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> Matrix.t
+    val get_max_distance_matrix: ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> Matrix.t
     (* I/O *)
     val to_string: ?rich_format:bool -> t -> string
   end
@@ -277,8 +278,13 @@ module Newick:
           descs
       done;
       res
-    let get_distance_matrix ?(threads = 1) ?(elements_per_step = 1000) ?(verbose = false) t =
-      let ft = dfs_flatten t in
+    let _get_distance_matrix ?(invert = false) ?(threads = 1) ?(elements_per_step = 1000) ?(verbose = false) t =
+      let ft = begin
+        if invert then
+          dfs_map (fun node -> node) (fun edge -> { edge with edge_length = -. edge.edge_length }) t
+        else
+          t
+      end |> dfs_flatten in
       let n_nodes = Array.length ft in
       let storage = Array.init n_nodes (fun _ -> Float.Array.create 0)
       and nodes_per_step = max 1 (elements_per_step / n_nodes) and processed_nodes = ref 0 in
@@ -297,7 +303,18 @@ module Newick:
           let res = ref [] in
           (* We iterate backwards so as to avoid to have to reverse the list in the end *)
           for n = hi_node downto lo_node do
-            dijkstra ft n |> List.accum res
+            let d = dijkstra ft n in
+            if invert then
+              for i = 0 to Float.Array.length d - 1 do
+                let f = Float.Array.get d i in
+                Float.Array.set d i begin
+                  if f = 0. then
+                    0.
+                  else
+                    -. f
+                end
+              done;
+            d |> List.accum res
           done;
           lo_node, !res)
         (fun (lo_row, rows) ->
@@ -317,6 +334,10 @@ module Newick:
       { Matrix.idx_to_col_names = names;
         idx_to_row_names = names;
         storage = storage }
+    let get_min_distance_matrix ?(threads = 1) ?(elements_per_step = 1000) ?(verbose = false) t =
+      _get_distance_matrix ~invert:false ~threads ~elements_per_step ~verbose t
+    let get_max_distance_matrix ?(threads = 1) ?(elements_per_step = 1000) ?(verbose = false) t =
+      _get_distance_matrix ~invert:true ~threads ~elements_per_step ~verbose t
     (* *)
     let to_string ?(rich_format = true) (Node ({ node_is_root; _ }, _) as t) =
       let get_hybrid_info hy =

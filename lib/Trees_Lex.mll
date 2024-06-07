@@ -42,7 +42,7 @@ rule newick state = parse
   { Trees_Parse.Newick_RBRACK }
 | ','
   { Trees_Parse.Newick_COMMA }
-| ':' (( '.'['0'-'9']+ | ['0'-'9']+('.'(['0'-'9']*))?) as n)
+| ':' (( '.'['0'-'9']+ | ['0'-'9']+('.'(['0'-'9']*))?) (['e''E']['+''-']?['0'-'9']*)? as n)
   { try
       Trees_Parse.Newick_LENGTH (float_of_string n)
     with _ ->
