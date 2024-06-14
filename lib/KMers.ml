@@ -146,10 +146,9 @@ module ProteinHash (K: IntParameter_t): IntHash_t with type iter_t = int
       if K.n > 12 then
         Printf.sprintf "(%s): Invalid argument (k must be <= 12, found %d)" __FUNCTION__ K.n |> failwith;
       K.n
+    (* There are 22 symbols in the alphabet, each one encoded as a 5-bit number *)
     let alphabet = "ACDEFGHIKLMNOPQRSTUVWY"
-    let hex_format =
-      Scanf.format_from_string
-        (float_of_int k *. log 22. /. log 16. |> Float.ceil |> int_of_float |> Printf.sprintf "%%0%dx") "%d"
+    let hex_format = Scanf.format_from_string (Printf.sprintf "%%0%dx" ((k * 5 + 3) / 4)) "%d"
     let to_hex = Printf.sprintf hex_format
     let encode_char err_f = function
       | 'A' | 'a' -> 0
@@ -266,10 +265,9 @@ module DNABaseHash (K: IntParameter_t): BaseHash_t with type t = int
       if K.n > 30 then
         Printf.sprintf "(%s): Invalid argument (k must be <= 30, found %d)" __FUNCTION__ K.n |> failwith;
       K.n
+    (* There are 4 symbols in the alphabet, each one encoded as a 2-bit number *)
     let alphabet = "ACGT"
-    let hex_format =
-      Scanf.format_from_string
-        (float_of_int k *. log 4. /. log 16. |> Float.ceil |> int_of_float |> Printf.sprintf "%%0%dx") "%d"
+    let hex_format = Scanf.format_from_string (Printf.sprintf "%%0%dx" ((k * 2 + 3) / 4)) "%d"
     let to_hex = Printf.sprintf hex_format
     let encode_char err_f = function
       | 'A' | 'a' -> 0
