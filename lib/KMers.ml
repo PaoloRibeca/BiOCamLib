@@ -121,6 +121,7 @@ module type BaseHash_t =
     val encode: string -> t
     val encode_char: (char -> t) -> char -> t
     val decode: t -> string
+    val to_hex: t -> string
   end
 (* The following one is the complete type *)
 module type Hash_t =
@@ -146,6 +147,10 @@ module ProteinHash (K: IntParameter_t): IntHash_t with type iter_t = int
         Printf.sprintf "(%s): Invalid argument (k must be <= 12, found %d)" __FUNCTION__ K.n |> failwith;
       K.n
     let alphabet = "ACDEFGHIKLMNOPQRSTUVWY"
+    let hex_format =
+      Scanf.format_from_string
+        (float_of_int k *. log 22. /. log 16. |> Float.ceil |> int_of_float |> Printf.sprintf "%%0%dx") "%d"
+    let to_hex = Printf.sprintf hex_format
     let encode_char err_f = function
       | 'A' | 'a' -> 0
       | 'C' | 'c' -> 1
@@ -262,6 +267,10 @@ module DNABaseHash (K: IntParameter_t): BaseHash_t with type t = int
         Printf.sprintf "(%s): Invalid argument (k must be <= 30, found %d)" __FUNCTION__ K.n |> failwith;
       K.n
     let alphabet = "ACGT"
+    let hex_format =
+      Scanf.format_from_string
+        (float_of_int k *. log 4. /. log 16. |> Float.ceil |> int_of_float |> Printf.sprintf "%%0%dx") "%d"
+    let to_hex = Printf.sprintf hex_format
     let encode_char err_f = function
       | 'A' | 'a' -> 0
       | 'C' | 'c' -> 1
