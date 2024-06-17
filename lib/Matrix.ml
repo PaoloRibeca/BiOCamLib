@@ -20,14 +20,14 @@ open Better
 include (
   struct
     type t = {
-      idx_to_col_names: string array;
-      idx_to_row_names: string array;
-      storage: Float.Array.t array
+      col_names: string array;
+      row_names: string array;
+      data: Float.Array.t array
     }
     let empty =
-      { idx_to_col_names = [||]; idx_to_row_names = [||]; storage = [||] }
+      { col_names = [||]; row_names = [||]; data = [||] }
     let to_file ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) m fname =
-      let n_cols = Array.length m.idx_to_col_names and n_rows = Array.length m.idx_to_row_names
+      let n_cols = Array.length m.col_names and n_rows = Array.length m.row_names
       and output = open_out fname in
       if n_rows > 0 && n_cols > 0 then begin
         (* We output column names *)
@@ -35,7 +35,7 @@ include (
         Array.iter
           (fun name ->
             Printf.fprintf output "\t%s" name)
-          m.idx_to_col_names;
+          m.col_names;
         Printf.fprintf output "\n%!";
         let rows_per_step = max 1 (elements_per_step / n_cols) and processed_rows = ref 0
         and buf = Buffer.create 1048576 in
@@ -54,8 +54,8 @@ include (
             (* We output rows *)
             for i = lo_row to hi_row do
               (* We output the row name *)
-              m.idx_to_row_names.(i) |> Printf.bprintf buf "%s";
-              Float.Array.iter (Printf.bprintf buf "\t%.*g" precision) m.storage.(i);
+              m.row_names.(i) |> Printf.bprintf buf "%s";
+              Float.Array.iter (Printf.bprintf buf "\t%.*g" precision) m.data.(i);
               Printf.bprintf buf "\n"
             done;
             hi_row - lo_row + 1, Buffer.contents buf)
@@ -92,7 +92,7 @@ include (
     exception Wrong_number_of_columns of int * int * int
     let of_file ?(threads = 1) ?(bytes_per_step = 4194304) ?(verbose = false) filename =
       let input = open_in filename and line_num = ref 0
-      and idx_to_col_names = ref [||] and idx_to_row_names = ref [] and storage = ref [] in
+      and col_names = ref [||] and row_names = ref [] and data = ref [] in
       begin try
         (* We process the header *)
         let line = input_line input |> String.Split.on_char_as_array '\t' in
@@ -100,11 +100,11 @@ include (
         let l = Array.length line in
         (* We assume the matrix always to have row names, and ignore the first name in the header if present *)
         let num_cols = l - 1 in
-        idx_to_col_names := Array.make num_cols "";
+        col_names := Array.make num_cols "";
         Array.iteri
           (fun i name ->
             if i > 0 then
-              !idx_to_col_names.(i - 1) <- strip_external_quotes_and_check name)
+              !col_names.(i - 1) <- strip_external_quotes_and_check name)
           line;
         (* We process the rest of the lines in parallel. The first element will be the name *)
         let end_reached = ref false and elts_read = ref 0 in
@@ -147,8 +147,8 @@ include (
               incr line_num;
               assert (obs_line_num = !line_num);
               (* Only here do we actually fill out the memory for the result *)
-              List.accum idx_to_row_names name;
-              List.accum storage numbers;
+              List.accum row_names name;
+              List.accum data numbers;
               let new_elts_read = !elts_read + num_cols in
               if verbose && new_elts_read / 100000 > !elts_read / 100000 then
                 Printf.eprintf "%s\r(%s): On line %d of file '%s': Read %d elements%!"
@@ -163,20 +163,20 @@ include (
         (* Empty file *)
         close_in input
       end;
-      { idx_to_col_names = !idx_to_col_names;
-        idx_to_row_names = Array.of_rlist !idx_to_row_names;
-        storage = Array.of_rlist !storage }
+      { col_names = !col_names;
+        row_names = Array.of_rlist !row_names;
+        data = Array.of_rlist !data }
     let [@warning "-27"] transpose_single_threaded ?(verbose = false) m =
-      { idx_to_col_names = m.idx_to_row_names;
-        idx_to_row_names = m.idx_to_col_names;
-        storage =
-          Array.init (Array.length m.idx_to_col_names)
+      { col_names = m.row_names;
+        row_names = m.col_names;
+        data =
+          Array.init (Array.length m.col_names)
             (fun old_col ->
-              Float.Array.init (Array.length m.idx_to_row_names)
-                (fun old_row -> Float.Array.get m.storage.(old_row) old_col)) }
+              Float.Array.init (Array.length m.row_names)
+                (fun old_row -> Float.Array.get m.data.(old_row) old_col)) }
     let transpose ?(threads = 1) ?(elements_per_step = 10000) ?(verbose = false) m =
-      let n_rows = Array.length m.idx_to_col_names and n_cols = Array.length m.idx_to_row_names in
-      let storage = Array.init n_rows (fun _ -> Float.Array.create 0)
+      let n_rows = Array.length m.col_names and n_cols = Array.length m.row_names in
+      let data = Array.init n_rows (fun _ -> Float.Array.create 0)
       and rows_per_step = max 1 (elements_per_step / n_cols) and processed_rows = ref 0 in
       (* Generate points to be computed by the parallel process *)
       Processes.Parallel.process_stream_chunkwise
@@ -194,13 +194,13 @@ include (
           (* We iterate backwards so as to avoid to have to reverse the list in the end *)
           for i = hi_row downto lo_row do
             (* The new row is the original column *)
-            Float.Array.init n_cols (fun col -> Float.Array.get m.storage.(col) i) |> List.accum res
+            Float.Array.init n_cols (fun col -> Float.Array.get m.data.(col) i) |> List.accum res
           done;
           lo_row, !res)
         (fun (lo_row, rows) ->
           List.iteri
             (fun offs_i row_i ->
-              storage.(lo_row + offs_i) <- row_i;
+              data.(lo_row + offs_i) <- row_i;
               if verbose && !processed_rows mod rows_per_step = 0 then
                 Printf.eprintf "%s\r(%s): Done %d/%d rows%!"
                   String.TermIO.clear __FUNCTION__ !processed_rows n_rows;
@@ -209,52 +209,52 @@ include (
         threads;
       if verbose then
         Printf.eprintf "%s\r(%s): Done %d/%d rows.\n%!" String.TermIO.clear __FUNCTION__ !processed_rows n_rows;
-      { idx_to_col_names = m.idx_to_row_names;
-        idx_to_row_names = m.idx_to_col_names;
-        storage = storage }
+      { col_names = m.row_names;
+        row_names = m.col_names;
+        data = data }
     exception Incompatible_geometries of string array * string array
     exception Duplicate_label of string
     let merge_rowwise ?(verbose = false) m1 m2 =
-      let merged_idx_to_col_names =
+      let merged_col_names =
         if m1 = empty then
-          m2.idx_to_col_names
-        else m1.idx_to_col_names in
-      if merged_idx_to_col_names <> m2.idx_to_col_names then
-        Incompatible_geometries (m1.idx_to_col_names, m2.idx_to_col_names) |> raise;
+          m2.col_names
+        else m1.col_names in
+      if merged_col_names <> m2.col_names then
+        Incompatible_geometries (m1.col_names, m2.col_names) |> raise;
       if verbose then
         Printf.eprintf "(%s): Merging matrices (%d+%d rows)...%!"
-          __FUNCTION__ (Array.length m1.idx_to_row_names) (Array.length m2.idx_to_row_names);
+          __FUNCTION__ (Array.length m1.row_names) (Array.length m2.row_names);
       let merged_rows = ref StringMap.empty in
       Array.iteri
         (fun i name ->
           (* There ought to be no repeated names here *)
-          merged_rows := StringMap.add name m1.storage.(i) !merged_rows)
-        m1.idx_to_row_names;
+          merged_rows := StringMap.add name m1.data.(i) !merged_rows)
+        m1.row_names;
       Array.iteri
         (fun i name ->
           match StringMap.find_opt name !merged_rows with
           | Some _ ->
             Duplicate_label name |> raise
           | None ->
-            merged_rows := StringMap.add name m2.storage.(i) !merged_rows)
-        m2.idx_to_row_names;
+            merged_rows := StringMap.add name m2.data.(i) !merged_rows)
+        m2.row_names;
       let row_num = StringMap.cardinal !merged_rows in
-      let merged_storage = Array.init row_num (fun _ -> Float.Array.create 0)
-      and merged_idx_to_row_names = Array.make row_num "" in
+      let merged_data = Array.init row_num (fun _ -> Float.Array.create 0)
+      and merged_row_names = Array.make row_num "" in
       StringMap.iteri
         (fun i name arr ->
-          merged_storage.(i) <- arr;
-          merged_idx_to_row_names.(i) <- name)
+          merged_data.(i) <- arr;
+          merged_row_names.(i) <- name)
         !merged_rows;
       if verbose then
         Printf.eprintf " done.\n%!";
-      { idx_to_col_names = merged_idx_to_col_names;
-        idx_to_row_names = merged_idx_to_row_names;
-        storage = merged_storage }
+      { col_names = merged_col_names;
+        row_names = merged_row_names;
+        data = merged_data }
     let multiply_matrix_vector_single_threaded ?(verbose = false) m v =
-      if Array.length m.idx_to_col_names <> Float.Array.length v then
-        Incompatible_geometries (m.idx_to_col_names, Array.make (Float.Array.length v) "") |> raise;
-      let d = Array.length m.idx_to_row_names in
+      if Array.length m.col_names <> Float.Array.length v then
+        Incompatible_geometries (m.col_names, Array.make (Float.Array.length v) "") |> raise;
+      let d = Array.length m.row_names in
       (* We immediately allocate all the needed memory, as we already know how much we will need *)
       let res = Float.Array.create d and elts_done = ref 0 in
       (* We decorate each vector element coordinate with the respective value *)
@@ -269,7 +269,7 @@ include (
           incr elts_done;
           if verbose && !elts_done mod 100 = 0 then
             Printf.eprintf "%s\r(%s): Done %d/%d elements%!" String.TermIO.clear __FUNCTION__ !elts_done d)
-        m.storage;
+        m.data;
       if verbose then
         Printf.eprintf "%s\r(%s): Done %d/%d elements.\n%!" String.TermIO.clear __FUNCTION__ !elts_done d;
       res
@@ -278,9 +278,9 @@ include (
       elements: float IntMap.t
     }
     let multiply_matrix_sparse_vector_single_threaded ?(verbose = false) m s_v =
-      if Array.length m.idx_to_col_names <> s_v.length then
-        Incompatible_geometries (m.idx_to_col_names, Array.make (s_v.length) "") |> raise;
-      let d = Array.length m.idx_to_row_names in
+      if Array.length m.col_names <> s_v.length then
+        Incompatible_geometries (m.col_names, Array.make (s_v.length) "") |> raise;
+      let d = Array.length m.row_names in
       (* We immediately allocate all the needed memory, as we already know how much we will need *)
       let res = Float.Array.make d 0. and elts_done = ref 0 in
       (* We decorate each vector element coordinate with the respective value *)
@@ -295,14 +295,14 @@ include (
           incr elts_done;
           if verbose && !elts_done mod 100 = 0 then
             Printf.eprintf "%s\r(%s): Done %d/%d elements%!" String.TermIO.clear __FUNCTION__ !elts_done d)
-        m.storage;
+        m.data;
       if verbose then
         Printf.eprintf "%s\r(%s): Done %d/%d elements.\n%!" String.TermIO.clear __FUNCTION__ !elts_done d;
       res
     let multiply_matrix_vector ?(threads = 1) ?(elements_per_step = 10000) ?(verbose = false) m v =
-      let n_rows = Array.length m.idx_to_row_names and n_cols = Array.length m.idx_to_col_names in
+      let n_rows = Array.length m.row_names and n_cols = Array.length m.col_names in
       if n_cols <> Float.Array.length v then
-        Incompatible_geometries (m.idx_to_col_names, Array.make (Float.Array.length v) "") |> raise;
+        Incompatible_geometries (m.col_names, Array.make (Float.Array.length v) "") |> raise;
       (* We immediately allocate all the needed memory, as we already know how much we will need *)
       let res = Float.Array.create n_rows
       and rows_per_step = max 1 (elements_per_step / n_cols) and processed_rows = ref 0 in
@@ -326,7 +326,7 @@ include (
             Float.Array.iter2
               (fun el_1 el_2 ->
                 acc := !acc +. (el_1 *. el_2))
-              m.storage.(i) v;
+              m.data.(i) v;
             List.accum res !acc
           done;
           lo_row, !res)
@@ -345,11 +345,11 @@ include (
         Printf.eprintf "%s\r(%s): Done %d/%d rows.\n%!" String.TermIO.clear __FUNCTION__ !processed_rows n_rows;
       res
     let multiply_matrix_matrix ?(threads = 1) ?(elements_per_step = 10000) ?(verbose = false) m1 m2 =
-      if m1.idx_to_col_names <> m2.idx_to_row_names then
-        Incompatible_geometries (m1.idx_to_col_names, m2.idx_to_row_names) |> raise;
-      let row_num = Array.length m1.idx_to_row_names and col_num = Array.length m2.idx_to_col_names in
+      if m1.col_names <> m2.row_names then
+        Incompatible_geometries (m1.col_names, m2.row_names) |> raise;
+      let row_num = Array.length m1.row_names and col_num = Array.length m2.col_names in
       (* We immediately allocate all the needed memory, as we already know how much we will need *)
-      let storage = Array.init row_num (fun _ -> Float.Array.create col_num) in
+      let data = Array.init row_num (fun _ -> Float.Array.create col_num) in
       (* Generate points to be computed by the parallel process *)
       let prod = row_num * col_num in
       let i = ref 0 and j = ref 0 and elts_done = ref 0 and end_reached = ref (prod = 0) in
@@ -382,29 +382,29 @@ include (
             let acc = ref 0. in
             Float.Array.iteri
               (fun k el ->
-                acc := !acc +. (el *. Float.Array.get m2.storage.(k) j))
-              m1.storage.(i);
+                acc := !acc +. (el *. Float.Array.get m2.data.(k) j))
+              m1.data.(i);
             i, j, !acc))
         (List.iter
           (fun (i, j, el) ->
             (* Only here do we actually fill out the memory for the result *)
-            Float.Array.set storage.(i) j el;
+            Float.Array.set data.(i) j el;
             if verbose && !elts_done mod elements_per_step = 0 then
               Printf.eprintf "%s\r(%s): Done %d/%d elements%!" String.TermIO.clear __FUNCTION__ !elts_done prod;
             incr elts_done))
         threads;
       if verbose then
         Printf.eprintf "%s\r(%s): Done %d/%d elements.\n%!" String.TermIO.clear __FUNCTION__ !elts_done prod;
-      { idx_to_col_names = m2.idx_to_col_names;
-        idx_to_row_names = m1.idx_to_row_names;
-        storage = storage }
+      { col_names = m2.col_names;
+        row_names = m1.row_names;
+        data = data }
   end: sig
     type t = {
       (* We number rows and columns starting from 0 *)
-      idx_to_col_names: string array;
-      idx_to_row_names: string array;
+      col_names: string array;
+      row_names: string array;
       (* Stored row-wise *)
-      storage: Float.Array.t array
+      data: Float.Array.t array
     }
     val empty: t
     (* We read in a matrix which has conditions as row names

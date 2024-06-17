@@ -286,7 +286,7 @@ module Newick:
           t
       end |> dfs_flatten in
       let n_nodes = Array.length ft in
-      let storage = Array.init n_nodes (fun _ -> Float.Array.create 0)
+      let data = Array.init n_nodes (fun _ -> Float.Array.create 0)
       and nodes_per_step = max 1 (elements_per_step / n_nodes) and processed_nodes = ref 0 in
       (* Generate nodes to be computed by the parallel process *)
       Processes.Parallel.process_stream_chunkwise
@@ -320,7 +320,7 @@ module Newick:
         (fun (lo_row, rows) ->
           List.iteri
             (fun offs_i row_i ->
-              storage.(lo_row + offs_i) <- row_i;
+              data.(lo_row + offs_i) <- row_i;
               if verbose && !processed_nodes mod nodes_per_step = 0 then
                 Printf.eprintf "%s\r(%s): Done %d/%d rows%!"
                   String.TermIO.clear __FUNCTION__ !processed_nodes n_nodes;
@@ -331,9 +331,9 @@ module Newick:
         Printf.eprintf "%s\r(%s): Done %d/%d rows.\n%!" String.TermIO.clear __FUNCTION__ !processed_nodes n_nodes;
       (* We need to uniquify names here, or R functions, for instance, will complain *)
       let names = Array.mapi (fun i (_, _, n, _) -> get_node_name n |> Printf.sprintf "%d_%s" i) ft in
-      { Matrix.idx_to_col_names = names;
-        idx_to_row_names = names;
-        storage = storage }
+      { Matrix.col_names = names;
+        row_names = names;
+        data = data }
     let get_min_distance_matrix ?(threads = 1) ?(elements_per_step = 1000) ?(verbose = false) t =
       _get_distance_matrix ~invert:false ~threads ~elements_per_step ~verbose t
     let get_max_distance_matrix ?(threads = 1) ?(elements_per_step = 1000) ?(verbose = false) t =
