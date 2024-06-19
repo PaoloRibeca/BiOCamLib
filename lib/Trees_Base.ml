@@ -342,7 +342,7 @@ module Newick:
     let get_max_distance_matrix ?(threads = 1) ?(elements_per_step = 1000) ?(verbose = false) t =
       _get_distance_matrix ~invert:true ~threads ~elements_per_step ~verbose t
     (* *)
-    let to_buffer ?(rich_format = true) buf (Node ({ node_is_root; _ }, _) as t) =
+    let add_to_buffer ?(rich_format = true) buf (Node ({ node_is_root; _ }, _) as t) =
       let add_hybrid_info buf hy =
         match rich_format, hy with
         | true, Some (Hybridization id) -> Printf.bprintf buf "#H%d" id
@@ -360,7 +360,7 @@ module Newick:
             dict;
           Buffer.add_char buf ']'
         end in
-      let rec to_buffer_rec buf (Node ({ node_hybrid; node_name; node_dict; _ }, edges)) =
+      let rec add_to_buffer_rec buf (Node ({ node_hybrid; node_name; node_dict; _ }, edges)) =
         if edges <> [||] then begin
           Buffer.add_char buf '(';
           Array.iteri
@@ -372,7 +372,7 @@ module Newick:
                 Buffer.add_string buf subnode.node_name;
                 add_hybrid_info buf subnode.node_hybrid
               end else
-                to_buffer_rec buf node;
+                add_to_buffer_rec buf node;
               begin match edge.edge_length, edge.edge_bootstrap, edge.edge_probability with
               | -1., -1., -1. ->
                 if edge.edge_dict <> StringMap.empty then
@@ -398,25 +398,24 @@ module Newick:
       | true, false -> Buffer.add_string buf "[&U]"
       | false, _ -> ()
       end;
-      to_buffer_rec buf t;
-      Buffer.add_char buf ';'
+      add_to_buffer_rec buf t;
+      Buffer.add_char buf ';';
+      buf
     let to_string ?(rich_format = true) t =
-      let buf = Buffer.create 1024 in
-      to_buffer ~rich_format buf t;
-      Buffer.contents buf
+      add_to_buffer ~rich_format (Buffer.create 1024) t |> Buffer.contents
     let array_to_string ?(rich_format = true) a =
       let buf = Buffer.create 1024 in
-      Array.iter (to_buffer ~rich_format buf) a;
+      Array.iter (fun t -> Buffer.add_char (add_to_buffer ~rich_format buf t) '\n') a;
       Buffer.contents buf
     let to_file ?(rich_format = true) t f =
       let f = open_out f and buf = Buffer.create 1024 in
-      to_buffer ~rich_format buf t;
+      Buffer.add_char (add_to_buffer ~rich_format buf t) '\n';
       Buffer.output_buffer f buf;
       close_out f
     let array_to_file ?(rich_format = true) a f =
       let f = open_out f and buf = Buffer.create 1024 in
-      Array.iter (to_buffer ~rich_format buf) a;
+      Array.iter (fun t -> Buffer.add_char (add_to_buffer ~rich_format buf t) '\n') a;
       Buffer.output_buffer f buf;
-      close_out f  
+      close_out f
   end
 
