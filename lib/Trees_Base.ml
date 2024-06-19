@@ -86,6 +86,9 @@ module Newick:
     val get_max_distance_matrix: ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> Matrix.t
     (* I/O *)
     val to_string: ?rich_format:bool -> t -> string
+    val array_to_string: ?rich_format:bool -> t array -> string
+    val to_file: ?rich_format:bool -> t -> string -> unit
+    val array_to_file: ?rich_format:bool -> t array -> string -> unit
   end
 = struct
     (* The array describes the progeny of the node.
@@ -339,59 +342,81 @@ module Newick:
     let get_max_distance_matrix ?(threads = 1) ?(elements_per_step = 1000) ?(verbose = false) t =
       _get_distance_matrix ~invert:true ~threads ~elements_per_step ~verbose t
     (* *)
-    let to_string ?(rich_format = true) (Node ({ node_is_root; _ }, _) as t) =
-      let get_hybrid_info hy =
+    let to_buffer ?(rich_format = true) buf (Node ({ node_is_root; _ }, _) as t) =
+      let add_hybrid_info buf hy =
         match rich_format, hy with
-        | true, Some (Hybridization id) -> Printf.sprintf "#H%d" id
-        | true, Some (GeneTransfer id) -> Printf.sprintf "#LGT%d" id
-        | true, Some (Recombination id) -> Printf.sprintf "#R%d" id
-        | true, None | false, _ -> ""
-      and get_dict_info dict =
-        if rich_format && dict <> StringMap.empty then
-          "[&" ^
-            StringMap.fold
-              (fun k v init ->
-                Printf.sprintf "%s=%s" k v ^ (if init <> "" then "," else "") ^ init)
-              dict "" ^
-          "]"
-        else
-          "" in
-      let rec to_string_rec (Node ({ node_hybrid; node_name; node_dict; _ }, edges)) =
-        begin if edges <> [||] then
-          "(" ^ begin
-            Array.fold_left
-              (fun res (edge, (Node (subnode, _) as node)) ->
-                res ^ begin if res <> "" then "," else "" end ^ begin
-                  if edge.edge_is_ghost then
-                    (* The node becomes terminal *)
-                    subnode.node_name ^ get_hybrid_info subnode.node_hybrid
-                  else
-                    to_string_rec node
-                end ^
-                  match edge.edge_length, edge.edge_bootstrap, edge.edge_probability with
-                  | -1., -1., -1. ->
-                    if edge.edge_dict = StringMap.empty then
-                      ""
-                    else
-                      (* Here the only unambiguous way to print out things is by adding an empty length *)
-                      ":0" ^ get_dict_info edge.edge_dict
-                  | -1., -1., p -> get_dict_info edge.edge_dict |> Printf.sprintf ":::%.10g%s" p
-                  | -1., b, -1. -> get_dict_info edge.edge_dict |> Printf.sprintf "::%.10g%s" b
-                  | l, -1., -1. -> get_dict_info edge.edge_dict |> Printf.sprintf ":%.10g%s" l
-                  | -1., b, p -> get_dict_info edge.edge_dict |> Printf.sprintf "::%.10g:%.10g%s" b p
-                  | l, -1., p -> get_dict_info edge.edge_dict |> Printf.sprintf ":%.10g::%.10g%s" l p
-                  | l, b, -1. -> get_dict_info edge.edge_dict |> Printf.sprintf ":%.10g:%.10g%s" l b
-                  | l, b, p -> get_dict_info edge.edge_dict |> Printf.sprintf ":%.10g:%.10g:%.10g%s" l b p)
-              ""
-              edges
-          end ^ ")"
-        else 
-          ""
-        end ^ node_name ^ get_hybrid_info node_hybrid ^ get_dict_info node_dict in
+        | true, Some (Hybridization id) -> Printf.bprintf buf "#H%d" id
+        | true, Some (GeneTransfer id) -> Printf.bprintf buf "#LGT%d" id
+        | true, Some (Recombination id) -> Printf.bprintf buf "#R%d" id
+        | true, None | false, _ -> ()
+      and add_dict_info buf dict =
+        if rich_format && dict <> StringMap.empty then begin
+          Buffer.add_string buf "[&";
+          StringMap.iteri
+            (fun i k v ->
+              if i > 0 then
+                Buffer.add_char buf ',';
+              Printf.bprintf buf "%s=%s" k v)
+            dict;
+          Buffer.add_char buf ']'
+        end in
+      let rec to_buffer_rec buf (Node ({ node_hybrid; node_name; node_dict; _ }, edges)) =
+        if edges <> [||] then begin
+          Buffer.add_char buf '(';
+          Array.iteri
+            (fun i (edge, (Node (subnode, _) as node)) ->
+              if i > 0 then
+                Buffer.add_char buf ',';
+              if edge.edge_is_ghost then begin
+                (* The node becomes terminal *)
+                Buffer.add_string buf subnode.node_name;
+                add_hybrid_info buf subnode.node_hybrid
+              end else
+                to_buffer_rec buf node;
+              begin match edge.edge_length, edge.edge_bootstrap, edge.edge_probability with
+              | -1., -1., -1. ->
+                if edge.edge_dict <> StringMap.empty then
+                  (* Here the only unambiguous way to print out things is by adding an empty length *)
+                  Buffer.add_string buf ":0"
+              | -1., -1., p -> Printf.bprintf buf ":::%.10g" p
+              | -1., b, -1. -> Printf.bprintf buf "::%.10g" b
+              | l, -1., -1. -> Printf.bprintf buf ":%.10g" l
+              | -1., b, p -> Printf.bprintf buf "::%.10g:%.10g" b p
+              | l, -1., p -> Printf.bprintf buf ":%.10g::%.10g" l p
+              | l, b, -1. -> Printf.bprintf buf ":%.10g:%.10g" l b
+              | l, b, p -> Printf.bprintf buf ":%.10g:%.10g:%.10g" l b p
+              end;
+              add_dict_info buf edge.edge_dict)
+            edges;
+          Buffer.add_char buf ')'
+        end;
+        Buffer.add_string buf node_name;
+        add_hybrid_info buf node_hybrid;
+        add_dict_info buf node_dict in
       begin match rich_format, node_is_root with
-      | true, true -> "[&R]"
-      | true, false -> "[&U]"
-      | false, _ -> ""
-      end ^ to_string_rec t ^ ";"
+      | true, true -> Buffer.add_string buf "[&R]"
+      | true, false -> Buffer.add_string buf "[&U]"
+      | false, _ -> ()
+      end;
+      to_buffer_rec buf t;
+      Buffer.add_char buf ';'
+    let to_string ?(rich_format = true) t =
+      let buf = Buffer.create 1024 in
+      to_buffer ~rich_format buf t;
+      Buffer.contents buf
+    let array_to_string ?(rich_format = true) a =
+      let buf = Buffer.create 1024 in
+      Array.iter (to_buffer ~rich_format buf) a;
+      Buffer.contents buf
+    let to_file ?(rich_format = true) t f =
+      let f = open_out f and buf = Buffer.create 1024 in
+      to_buffer ~rich_format buf t;
+      Buffer.output_buffer f buf;
+      close_out f
+    let array_to_file ?(rich_format = true) a f =
+      let f = open_out f and buf = Buffer.create 1024 in
+      Array.iter (to_buffer ~rich_format buf) a;
+      Buffer.output_buffer f buf;
+      close_out f  
   end
 
