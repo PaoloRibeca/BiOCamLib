@@ -100,8 +100,27 @@ module Multimap (CmpKey: ComparableType_t) (CmpVal: ComparableType_t) =
               f !i k v;
               incr i)
             s)
-    let max_binding = KeyMap.max_binding
-    let min_binding = KeyMap.min_binding
+    let min_set = KeyMap.min_binding
+    let min_set_opt = KeyMap.min_binding_opt
+    let min_elt om =
+      let min_k, min_s = KeyMap.min_binding om in
+      min_k, ValSet.min_elt min_s
+    let min_elt_opt om =
+      match KeyMap.min_binding_opt om with
+      | None -> None
+      | Some (min_k, min_s) ->
+        Some (min_k, ValSet.min_elt min_s) (* Set s cannot be empty here *)
+    let max_set = KeyMap.max_binding
+    let max_set_opt = KeyMap.max_binding_opt
+    let max_elt om =
+      let max_k, max_s = KeyMap.max_binding om in
+      max_k, ValSet.max_elt max_s
+    let max_elt_opt om =
+      match KeyMap.max_binding_opt om with
+      | None -> None
+      | Some (max_k, max_s) ->
+        Some (max_k, ValSet.max_elt max_s) (* Set s cannot be empty here *)
+    let split_set = KeyMap.split
   end
 
 (* An indexed stack, or extensible array, with additional get() and reverse (bottom-to-top) iterators.
