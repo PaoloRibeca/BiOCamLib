@@ -57,6 +57,18 @@ module Multimap (CmpKey: ComparableType_t) (CmpVal: ComparableType_t) =
           KeyMap.add k (ValSet.remove v s) (KeyMap.remove k om)
       | None ->
         om
+    let find_set = KeyMap.find
+    let find_set_opt = KeyMap.find_opt
+    let find_min_elt k om = KeyMap.find k om |> ValSet.min_elt
+    let find_min_elt_opt k om =
+      match KeyMap.find_opt k om with
+      | None -> None
+      | Some s -> Some (ValSet.min_elt s) (* Set s cannot be empty here *)
+    let find_max_elt k om = KeyMap.find k om |> ValSet.max_elt
+    let find_max_elt_opt k om =
+      match KeyMap.find_opt k om with
+      | None -> None
+      | Some s -> Some (ValSet.max_elt s) (* Set s cannot be empty here *)
     let cardinal_set = KeyMap.cardinal
     let cardinal om =
       let res = ref 0 in
