@@ -34,29 +34,35 @@ module Multimap (CmpKey: ComparableType_t) (CmpVal: ComparableType_t) =
     type t = ValSet.t KeyMap.t
     let empty = KeyMap.empty
     let is_empty = KeyMap.is_empty
+    let add_set k s om =
+      match KeyMap.find_opt k om with
+      | None ->
+        KeyMap.add k s om
+      | Some ss ->
+        KeyMap.replace k (ValSet.union s ss) om
     let add k v om =
-      try
-        let s = KeyMap.find k om in
-        KeyMap.add k (ValSet.add v s) (KeyMap.remove k om)
-      with Not_found ->
+      match KeyMap.find_opt k om with
+      | None ->
         KeyMap.add k (ValSet.singleton v) om
+      | Some s ->
+        KeyMap.replace k (ValSet.add v s) om
     let mem k v om =
       match KeyMap.find_opt k om with
-      | Some s ->
-        ValSet.mem v s
       | None ->
         false
+      | Some s ->
+        ValSet.mem v s
     let remove_set = KeyMap.remove
     let remove k v om =
       match KeyMap.find_opt k om with
+      | None ->
+        om
       | Some s ->
         let s = ValSet.remove v s in
         if ValSet.is_empty s then
           KeyMap.remove k om
         else
-          KeyMap.add k (ValSet.remove v s) (KeyMap.remove k om)
-      | None ->
-        om
+          KeyMap.replace k s om
     let find_set = KeyMap.find
     let find_set_opt = KeyMap.find_opt
     let find_min_elt k om = KeyMap.find k om |> ValSet.min_elt
