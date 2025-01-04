@@ -90,10 +90,10 @@ module BaseInt64: BaseScalar_t with type t = Int64.t
     let of_float_opt x = Some (of_float x) [@@inline] (* TODO: No error checking at the moment *)
   end
 
-module BaseIntZ: BaseScalar_t with type t = Z.t
+module BaseIntZ: BaseScalar_t with type t = IntZ.t
 = struct
-    include Z
-    let round n:Z.t = n [@@inline]
+    include IntZ
+    let round n:IntZ.t = n [@@inline]
     let of_int_opt n = Some (of_int n) [@@inline] (* TODO: No error checking at the moment *)
     let of_float_opt x = Some (of_float x) [@@inline] (* TODO: No error checking at the moment *)
     let of_string_opt s = Some (of_string s) [@@inline] (* TODO: No error checking at the moment *)

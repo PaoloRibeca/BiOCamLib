@@ -38,26 +38,92 @@ module Option:
       | Some r -> r
   end
 
-module Int:
+module type PeanoInt_t =
   sig
-    include module type of Int
-    val get_and_incr: int ref -> int
-    val ( !++ ): int ref -> int
-    val incr_and_get: int ref -> int
-    val ( ++! ): int ref -> int
+    type t
+    val succ: t -> t
+    val pred: t -> t
   end
-= struct
-    include Int
-    let compare a b = a - b [@@inline] (* Optimisation (hopefully) *)
+module type IncrementableType_t =
+  sig
+    type tt
+    val get_and_incr: tt ref -> tt
+    val incr_and_get: tt ref -> tt
+    val get_and_decr: tt ref -> tt
+    val decr_and_get: tt ref -> tt
+  end
+module type PlusPlus_t =
+  sig
+    include IncrementableType_t
+    val ( !++ ): tt ref -> tt
+    val ( ++! ): tt ref -> tt
+    val ( !-- ): tt ref -> tt
+    val ( --! ): tt ref -> tt
+  end
+module MakeIncrementable (T: PeanoInt_t): IncrementableType_t with type tt = T.t =
+  struct
+    type tt = T.t
+    let get_and_incr r =
+      let res = !r in
+      r := T.succ !r;
+      res
+    let incr_and_get r =
+      r := T.succ !r;
+      !r
+    let get_and_decr r =
+      let res = !r in
+      r := T.pred !r;
+      res
+    let decr_and_get r =
+      r := T.pred !r;
+      !r
+  end
+module IncrementableInt: IncrementableType_t with type tt = int = (* Optimisation using incr/decr *)
+  struct
+    type tt = int
     let get_and_incr ir =
       let res = !ir in
       incr ir;
       res
-    let ( !++ ) = get_and_incr
     let incr_and_get ir =
       incr ir;
       !ir
-    let ( ++! ) = incr_and_get
+    let get_and_decr ir =
+      let res = !ir in
+      decr ir;
+      res
+    let decr_and_get ir =
+      decr ir;
+      !ir
+  end
+module IncrementableIntZ: IncrementableType_t with type tt = Z.t = MakeIncrementable(Z)
+module MakePlusPlus (T: IncrementableType_t): PlusPlus_t with type tt = T.tt =
+  struct
+    include T
+    let ( !++ ) r = T.get_and_incr r [@@inline]
+    let ( ++! ) r = T.incr_and_get r [@@inline]
+    let ( !-- ) r = T.get_and_decr r [@@inline]
+    let ( --! ) r = T.decr_and_get r [@@inline]
+  end
+
+module Int:
+  sig
+    include module type of Int
+    include module type of MakePlusPlus(IncrementableInt)
+  end
+= struct
+    include Int
+    include MakePlusPlus(IncrementableInt)
+    let compare a b = a - b [@@inline] (* Optimisation (hopefully) *)
+  end
+module IntZ:
+  sig
+    include module type of Z
+    include module type of MakePlusPlus(IncrementableIntZ)
+  end
+= struct
+    include Z
+    include MakePlusPlus(IncrementableIntZ)
   end
 
 module Float:
@@ -500,10 +566,10 @@ module IntMap: module type of Map.Make (ComparableInt) = Map.Make (ComparableInt
 module RComparableInt = MakeRComparable (struct type t = Int.t end) (* Our Int! *)
 module IntRSet: module type of Set.Make (RComparableInt) = Set.Make (RComparableInt)
 module IntRMap: module type of Map.Make (RComparableInt) = Map.Make (RComparableInt)
-module ComparableIntZ = MakeComparable (struct type t = Z.t end)
+module ComparableIntZ = MakeComparable (struct type t = IntZ.t end)
 module IntZSet: module type of Set.Make (ComparableIntZ) = Set.Make (ComparableIntZ)
 module IntZMap: module type of Map.Make (ComparableIntZ) = Map.Make (ComparableIntZ)
-module RComparableIntZ = MakeRComparable (struct type t = Z.t end)
+module RComparableIntZ = MakeRComparable (struct type t = IntZ.t end)
 module IntZRSet: module type of Set.Make (RComparableIntZ) = Set.Make (RComparableIntZ)
 module IntZRMap: module type of Map.Make (RComparableIntZ) = Map.Make (RComparableIntZ)
 module ComparableFloat = MakeComparable (struct type t = Float.t end) (* Our Float! *)
@@ -569,6 +635,6 @@ module Hashtbl:
   end
 
 module IntHashtbl = Hashtbl.Make (IntHash)
-module IntZHashtbl = Hashtbl.Make (MakeHashable(Z))
+module IntZHashtbl = Hashtbl.Make (MakeHashable(IntZ))
 module StringHashtbl = Hashtbl.Make (MakeHashable(String))
 
