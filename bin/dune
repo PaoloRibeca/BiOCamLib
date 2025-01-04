@@ -7,7 +7,7 @@
 (executables
  (public_names Parallel Octopus RC FASTools TREx Cophenetic)
  (names Parallel Octopus RC FASTools TREx Cophenetic)
- (libraries str unix BiOCamLib))
+ (libraries str unix BiOCamLib zarith))
 
 (install
  (section bin)

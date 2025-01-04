@@ -4,5 +4,6 @@
 (ocamllex Trees_Lex)
 
 (library
+ (libraries zarith)
  (public_name BiOCamLib)
  (name BiOCamLib))

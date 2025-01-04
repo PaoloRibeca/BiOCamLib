@@ -20,7 +20,7 @@
  (name BiOCamLib)
  (synopsis "A foundational OCaml library for bioinformatics")
  (description "The OCaml foundations upon which a number of the bioinformatics tools I developed are built")
- (depends ocaml dune)
+ (depends ocaml dune zarith)
  (tags
   (topics bioinformatics OCaml)))
 

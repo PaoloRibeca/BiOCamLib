@@ -500,6 +500,12 @@ module IntMap: module type of Map.Make (ComparableInt) = Map.Make (ComparableInt
 module RComparableInt = MakeRComparable (struct type t = Int.t end) (* Our Int! *)
 module IntRSet: module type of Set.Make (RComparableInt) = Set.Make (RComparableInt)
 module IntRMap: module type of Map.Make (RComparableInt) = Map.Make (RComparableInt)
+module ComparableIntZ = MakeComparable (struct type t = Z.t end)
+module IntZSet: module type of Set.Make (ComparableIntZ) = Set.Make (ComparableIntZ)
+module IntZMap: module type of Map.Make (ComparableIntZ) = Map.Make (ComparableIntZ)
+module RComparableIntZ = MakeRComparable (struct type t = Z.t end)
+module IntZRSet: module type of Set.Make (RComparableIntZ) = Set.Make (RComparableIntZ)
+module IntZRMap: module type of Map.Make (RComparableIntZ) = Map.Make (RComparableIntZ)
 module ComparableFloat = MakeComparable (struct type t = Float.t end) (* Our Float! *)
 module FloatSet: module type of Set.Make (ComparableFloat) = Set.Make (ComparableFloat)
 module FloatMap: module type of Map.Make (ComparableFloat) = Map.Make (ComparableFloat)
@@ -563,5 +569,6 @@ module Hashtbl:
   end
 
 module IntHashtbl = Hashtbl.Make (IntHash)
+module IntZHashtbl = Hashtbl.Make (MakeHashable(Z))
 module StringHashtbl = Hashtbl.Make (MakeHashable(String))
 

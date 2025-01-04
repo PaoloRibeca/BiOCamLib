@@ -90,6 +90,15 @@ module BaseInt64: BaseScalar_t with type t = Int64.t
     let of_float_opt x = Some (of_float x) [@@inline] (* TODO: No error checking at the moment *)
   end
 
+module BaseIntZ: BaseScalar_t with type t = Z.t
+= struct
+    include Z
+    let round n:Z.t = n [@@inline]
+    let of_int_opt n = Some (of_int n) [@@inline] (* TODO: No error checking at the moment *)
+    let of_float_opt x = Some (of_float x) [@@inline] (* TODO: No error checking at the moment *)
+    let of_string_opt s = Some (of_string s) [@@inline] (* TODO: No error checking at the moment *)
+  end
+
 module BaseFloat: BaseScalar_t with type t = Float.t
 = struct
     include Float (* Our Float! Provides round() *)
@@ -165,6 +174,7 @@ module Scalar (N: BaseScalar_t): Scalar_t with type t = N.t
 module Int = Scalar(BaseInt)
 module Int32 = Scalar(BaseInt32)
 module Int64 = Scalar(BaseInt64)
+module IntZ = Scalar(BaseIntZ)
 module Float = Scalar(BaseFloat)
 
 (* As we have redefined Float, from now on Float.Array will be Better.Float.Array *)
