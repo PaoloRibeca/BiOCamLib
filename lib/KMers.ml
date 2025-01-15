@@ -1,5 +1,5 @@
 (*
-    KMers.ml -- (c) 2020-2023 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    KMers.ml -- (c) 2020-2024 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     This file is part of BiOCamLib, the OCaml foundations upon which
     a number of the bioinformatics tools I developed are built.

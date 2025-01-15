@@ -1,5 +1,5 @@
 (*
-    Better.ml -- (c) 2015-2024 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    Better.ml -- (c) 2015-2025 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     This file is part of BiOCamLib, the OCaml foundations upon which
     a number of the bioinformatics tools I developed are built.

@@ -1,4 +1,12 @@
 (*
+    Matrix.ml -- (c) 2022-2024 Paolo Ribeca, <paolo.ribeca@gmail.com>
+
+    This file is part of BiOCamLib, the OCaml foundations upon which
+    a number of the bioinformatics tools I developed are built.
+
+    Matrix.ml provides a general implementation of matrix-like objects
+    represented as a vector of rows. Most operations are parallelised.
+
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
