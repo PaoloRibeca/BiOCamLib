@@ -127,6 +127,18 @@ module Multimap (CmpKey: ComparableType_t) (CmpVal: ComparableType_t) =
       | Some (max_k, max_s) ->
         Some (max_k, ValSet.max_elt max_s) (* Set s cannot be empty here *)
     let split_set = KeyMap.split
+    let split f om =
+      let res_l = ref KeyMap.empty and res_c = ref KeyMap.empty and res_r = ref KeyMap.empty in
+      KeyMap.iter
+        (fun k s ->
+          let l, c, r = ValSet.split f s in
+          res_l := KeyMap.add k l !res_l;
+          res_c := KeyMap.add k c !res_c;
+          res_r := KeyMap.add k r !res_r)
+        om;
+      !res_l, !res_c, !res_r
+    let map_set = KeyMap.map
+    let map f = KeyMap.map (ValSet.map f)
   end
 
 (* An indexed stack, or extensible array, with additional get() and reverse (bottom-to-top) iterators.
