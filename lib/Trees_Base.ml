@@ -419,3 +419,167 @@ module Newick:
       close_out f
   end
 
+module Splits:
+  sig
+    module Split:
+      sig
+        type t
+        val of_string: string -> t
+        val of_int_list: int list -> t
+      end
+    type t
+    (* The argument are element names *)
+    exception DuplicateNames
+    val create: string array -> t
+    val add_split: t -> Split.t -> float -> unit
+    (* Converts to a tree the largest subset of compatible splits,
+        obtained by considering the splits in order of decreasing weight *)
+    val to_tree: t -> Newick.t
+  end
+= struct
+    module Split =
+      struct
+        type t = IntZ.t
+        (* The result is *not* in canonical form *)
+        let of_string = IntZ.of_string
+        (* The result is *not* in canonical form *)
+        let of_int_list =
+          List.fold_left (fun res i -> IntZ.(res + (one lsl i))) IntZ.zero
+      end
+    type t = {
+      names: string array;
+      mask_complement: IntZ.t;
+      (* We store the inverse table, which is mutable *)
+      splits: float IntZHashtbl.t
+    }
+    exception DuplicateNames
+    let create names =
+      let num_elts = Array.length names in
+      if Array.to_seq names |> StringSet.of_seq |> StringSet.cardinal <> num_elts then
+        raise DuplicateNames;
+      { names = names;
+        mask_complement = IntZ.(one lsl num_elts - one);
+        splits = IntZHashtbl.create 1024 }
+    let add_split splits split weight =
+      let num_elts = Array.length splits.names and num_bits = IntZ.numbits split in
+      (* Here we make sure that the representation of the split is canonical *)
+      if num_bits > num_elts then
+        Printf.sprintf "(%s): Split '%s' has too many elements (found %d, expected at most %d)"
+          __FUNCTION__ (IntZ.to_string split) num_bits num_elts |> failwith;
+      let canonical = IntZ.(min split (splits.mask_complement - split)) in
+      IntZHashtbl.replace splits.splits canonical begin
+        match IntZHashtbl.find_opt splits.splits canonical with
+        | None -> weight
+        | Some w -> w +. weight
+      end
+    module SplitsRMultimap = Tools.Multimap (RComparableFloat) (ComparableIntZ)
+    type duplication_state_t =
+      | ZeroColors
+      | OneColor of IntZ.t
+      | TwoOrMoreColors
+    module ColorsToTrees = Tools.Multimap (ComparableIntZ) (MakeComparable(Newick))
+    let to_tree splits =
+      (* We invert the table *)
+      let num_elts = Array.length splits.names and sorted_splits = ref SplitsRMultimap.empty in
+      IntZHashtbl.iter
+        (fun split weight ->
+          sorted_splits := SplitsRMultimap.add weight split !sorted_splits)
+        splits.splits;
+      let red_num_elts = num_elts - 1 and colors = Array.make num_elts IntZ.zero and num_colors = ref 1
+      (* We partition splits based on their compatibility *)
+      and ok = ref SplitsRMultimap.empty and ok_weights = ref [] and ko = ref SplitsRMultimap.empty in
+      (* We assume that Map.partition traverses the data structure in order *)
+      SplitsRMultimap.iter
+        (fun weight split ->
+          let add_split_to partition =
+            partition := SplitsRMultimap.add weight split !partition in
+          (* Do we need more splits? If colours are all different, we have found enough *)
+          if !num_colors >= num_elts then
+            add_split_to ko
+          else
+            (* Is the split compatible with current colours? *)
+            try
+              let state_zero = ref ZeroColors and state_one = ref ZeroColors in
+              for i = 0 to red_num_elts do
+                let bit = IntZ.testbit split i in
+                if bit then begin
+                  (* One *)
+                  match !state_one with
+                  | ZeroColors ->
+                    (* First colour *)
+                    state_one := OneColor colors.(i)
+                  | OneColor c ->
+                    if colors.(i) <> c then begin
+                      if !state_zero = TwoOrMoreColors then
+                        (* Incompatible split *)
+                        raise_notrace Exit
+                      else
+                        state_one := TwoOrMoreColors
+                    end
+                  | TwoOrMoreColors -> ()
+                end else begin
+                  (* Zero *)
+                  match !state_zero with
+                  | ZeroColors ->
+                    (* First colour *)
+                    state_zero := OneColor colors.(i)
+                  | OneColor c ->
+                    if colors.(i) <> c then begin
+                      if !state_one = TwoOrMoreColors then
+                        (* Incompatible split *)
+                        raise_notrace Exit
+                      else
+                        state_zero := TwoOrMoreColors
+                    end
+                  | TwoOrMoreColors -> ()
+                end
+              done;
+              (* Compatible split - we update colours and their number *)
+              for i = 0 to red_num_elts do
+                colors.(i) <- IntZ.(colors.(i) lsl 1 + if testbit split i then one else zero)
+              done;
+              num_colors := Array.to_seq colors |> IntZSet.of_seq |> IntZSet.cardinal;
+              add_split_to ok;
+              List.accum ok_weights weight
+            with Exit ->
+              (* Incompatible split *)
+              add_split_to ko)
+        !sorted_splits;
+      (* We build and output the tree corresponding to names, colours, and weights.
+         Note that at this point the elements might or might not have distinct colours *)
+      let res =
+        (* We initialise the result with as many leaves as the elements.
+           First we collect leaves by colour... *)
+        let colors_to_trees = ref ColorsToTrees.empty in
+        Array.iter2
+          (fun color name ->
+            colors_to_trees := ColorsToTrees.add color (Newick.leaf name) !colors_to_trees)
+          colors splits.names;
+        (* ...and then we merge all the leaves associated with the same colour.
+           Branches all have length 0 *)
+        ColorsToTrees.map_set
+          (fun leaves ->
+            ColorsToTrees.ValSet.elements_array leaves |> Array.map (fun leaf -> Newick.edge (), leaf) |> Newick.join)
+          !colors_to_trees
+        |> ref in
+      while IntZMap.cardinal !res > 1 do
+        let colors_to_trees = ref ColorsToTrees.empty in
+        IntZMap.iter
+          (fun color tree ->
+            (* We update the colour *)
+            colors_to_trees := ColorsToTrees.add IntZ.(color asr 1) tree !colors_to_trees)
+          !res;
+        (* We merge all the trees associated with the same colour *)
+        let branch_length = List.pop ok_weights in
+        res := begin
+          ColorsToTrees.map_set
+            (fun trees ->
+              ColorsToTrees.ValSet.elements_array trees
+              |> Array.map (fun tree -> Newick.edge ~length:branch_length (), tree) |> Newick.join)
+            !colors_to_trees
+        end
+      done;
+      assert (!ok_weights = []);
+      IntZMap.min_binding !res |> snd
+  end
+

@@ -1,6 +1,35 @@
 %{
+
+  (*
+      Trees_Parse.mly -- (c) 2024-2025 Paolo Ribeca, <paolo.ribeca@gmail.com>
+
+      This file is part of BiOCamLib, the OCaml foundations upon which
+      a number of the bioinformatics tools I developed are built.
+
+      Trees_Parse.mly implements parsers for:
+       * phylogenetic trees represented in several dialects
+          of the Newick format
+       * list of weighted splits.
+
+      This program is free software: you can redistribute it and/or modify
+      it under the terms of the GNU General Public License as published by
+      the Free Software Foundation, either version 3 of the License, or
+      (at your option) any later version.
+
+      This program is distributed in the hope that it will be useful,
+      but WITHOUT ANY WARRANTY; without even the implied warranty of
+      MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+      GNU General Public License for more details.
+
+      You should have received a copy of the GNU General Public License
+      along with this program.  If not, see <https://www.gnu.org/licenses/>.
+  *)
+
   (*open Better*)
+
 %}
+
+/* The tokens for Newick format */
 
 %token Newick_LBRACK Newick_RBRACK Newick_COMMA Newick_COLON Newick_SEMI Newick_EOF
 %token<bool> Newick_ROOTED
@@ -8,18 +37,32 @@
 %token<Trees_Base.Newick.hybrid_t> Newick_HYBRID
 %token<float> Newick_LENGTH
 %token<string Better.StringMap.t> Newick_DICT
-
 /* No operators in this format */
-
 /* Entry points */
 %start zero_or_more_newick_trees
 %type<Trees_Base.Newick.t list> zero_or_more_newick_trees
 %start newick_tree
 %type<Trees_Base.Newick.t> newick_tree
 
+/* The tokens for weighted splits */
+
+%token Splits_COLON Splits_SEMICOLON Splits_LBRACK Splits_RBRACK Splits_COMMA Splits_EOF
+%token<string> Splits_NAME
+%token<int> Splits_DECIMAL
+%token<float> Splits_FLOAT
+%token<Trees_Base.Splits.Split.t> Splits_BINARY
+%token<Trees_Base.Splits.Split.t> Splits_OCTAL
+%token<Trees_Base.Splits.Split.t> Splits_HEXADECIMAL
+/* No operators in this format */
+/* Entry points */
+%start zero_or_more_split_sets
+%type<Trees_Base.Splits.t list> zero_or_more_split_sets
+%start split_set
+%type<Trees_Base.Splits.t> split_set
+
 %%
 
-/* The grammar */
+/* The grammar for Newick format */
 
 zero_or_more_newick_trees:
   | Newick_EOF
@@ -99,4 +142,64 @@ newick_opt_length:
     { -1. }
   | Newick_LENGTH
     { $1 }
+
+/* The grammar for weighted splits */
+
+zero_or_more_split_sets:
+  | Splits_EOF
+    { [] }
+  | split_set zero_or_more_split_sets
+    { $1 :: $2 }
+
+split_set:
+  | zero_or_more_names Splits_COLON zero_or_more_comma_separated_weighted_splits Splits_SEMICOLON
+    { let res = Array.of_list $1 |> Trees_Base.Splits.create in
+      List.iter (fun (split, weight) -> Trees_Base.Splits.add_split res split weight) $3;
+      res }
+
+zero_or_more_names:
+  | /* EMPTY */
+    { [] }
+  | Splits_NAME zero_or_more_names
+    { $1 :: $2 }
+
+zero_or_more_comma_separated_weighted_splits:
+  | /* EMPTY */
+    { [] }
+  | weighted_split zero_or_more_comma_and_weighted_splits
+    { $1 :: $2 }
+
+zero_or_more_comma_and_weighted_splits:
+  | /* EMPTY */
+    { [] }
+  | Splits_COMMA weighted_split zero_or_more_comma_and_weighted_splits
+    { $2 :: $3 }
+
+weighted_split:
+  | weight Splits_LBRACK split Splits_RBRACK
+    { $3, $1 }
+
+weight:
+  | Splits_DECIMAL
+    { float_of_int $1 }
+  | Splits_FLOAT
+    { $1 }
+
+split: /* Includes the empty case */
+  | /* EMPTY */
+    { Trees_Base.Splits.Split.of_int_list [] }
+  | Splits_DECIMAL zero_or_more_comma_and_elements
+    { Trees_Base.Splits.Split.of_int_list ($1 :: $2) }
+  | Splits_BINARY
+    { $1 }
+  | Splits_OCTAL
+    { $1 }
+  | Splits_HEXADECIMAL
+    { $1 }
+
+zero_or_more_comma_and_elements:
+  | /* EMPTY */
+    { [] }
+  | Splits_COMMA Splits_DECIMAL zero_or_more_comma_and_elements
+    { $2 :: $3 }
 

@@ -20,7 +20,10 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 *)
 
-(* Complete module including parser(s) *)
+open Better
+
+(* Complete modules including parser(s) *)
+
 module Newick:
   sig
     include module type of Trees_Base.Newick
@@ -68,5 +71,29 @@ module Newick:
     let of_file ?(rich_format = true) s = _of_file ~rich_format Trees_Parse.newick_tree s
     let array_of_file ?(rich_format = true) s =
       _of_file ~rich_format Trees_Parse.zero_or_more_newick_trees s |> Array.of_list
+  end
+
+module Splits:
+  sig
+    include module type of Trees_Base.Splits
+    val of_string: string -> t
+    val array_of_string: string -> t array
+    val of_file: string -> t
+    val array_of_file: string -> t array
+  end
+= struct
+    include Trees_Base.Splits
+    let _of_string f s =
+      let state = Trees_Lex.Splits.create () in
+      f (Trees_Lex.splits state) (Lexing.from_string ~with_positions:true s)
+    let of_string = _of_string Trees_Parse.split_set
+    let array_of_string s = _of_string Trees_Parse.zero_or_more_split_sets s |> Array.of_list
+    let _of_file f s =
+      let ic = open_in s and state = Trees_Lex.Splits.create () in
+      let res = f (Trees_Lex.splits state) (Lexing.from_channel ~with_positions:true ic) in
+      close_in ic;
+      res
+    let of_file = _of_file Trees_Parse.split_set
+    let array_of_file s = _of_file Trees_Parse.zero_or_more_split_sets s |> Array.of_list
   end
 
