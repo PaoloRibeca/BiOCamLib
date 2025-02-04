@@ -375,7 +375,8 @@ module Splits:
     val create: string array -> t
     val add_split: t -> Split.t -> float -> unit
     (* Converts to a tree the largest subset of compatible splits,
-        obtained by considering the splits in order of decreasing weight *)
+        obtained by considering the splits in order of decreasing weight.
+       Both the used and unused splits are returned *)
     val to_tree: ?verbose:bool -> t -> t * Newick.t * t
   end
 = struct
