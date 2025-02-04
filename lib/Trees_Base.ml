@@ -436,13 +436,12 @@ module Splits:
         splits.splits;
       let red_num_elts = num_elts - 1 and colors = Array.make num_elts IntZ.zero and num_colors = ref 1
       (* We partition splits based on their compatibility *)
-      and ok = ref [], ref SplitsRMultimap.empty and ok_weights = ref []
-      and ko = ref [], ref SplitsRMultimap.empty in
-      SplitsRMultimap.iteri
-        (fun i_split weight split ->
-          let add_split_to (indices, partition) =
-            partition := SplitsRMultimap.add weight split !partition;
-            List.accum indices i_split in
+      and ok = ref SplitsRMultimap.empty and ok_weights = ref []
+      and ko = ref SplitsRMultimap.empty in
+      SplitsRMultimap.iter
+        (fun weight split ->
+          let add_split_to partition =
+            partition := SplitsRMultimap.add weight split !partition in
           (* Do we need more splits? If colours are all different, we have found enough *)
           if !num_colors >= num_elts then
             add_split_to ko
@@ -500,11 +499,8 @@ module Splits:
           __FUNCTION__ !num_colors (Array.length splits.names)
           (SplitsRMultimap.cardinal !(snd ok)) (SplitsRMultimap.cardinal !(snd ko));
       (* To return used and unused splits, we need to invert tables *)
-      let partition_to_splits (indices, partition) =
-        let indices = !indices in
-        let names = Array.make (List.length indices) "" in
-        List.iteri (fun i idx -> names.(i) <- splits.names.(idx)) indices;
-        let res = create names in
+      let partition_to_splits partition =
+        let res = create splits.names in
         SplitsRMultimap.iter (fun weight split -> add_split res split weight) !partition;
         res in
       (* We build and output the tree corresponding to names, colours, and weights.
