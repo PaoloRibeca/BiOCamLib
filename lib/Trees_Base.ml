@@ -497,7 +497,7 @@ module Splits:
       if verbose then
         Printf.eprintf "(%s): Found %d colors for %d elements, used %d/%d splits\n%!"
           __FUNCTION__ !num_colors (Array.length splits.names)
-          (SplitsRMultimap.cardinal !(snd ok)) (SplitsRMultimap.cardinal !(snd ko));
+          (SplitsRMultimap.cardinal !ok) (SplitsRMultimap.cardinal !ko);
       (* To return used and unused splits, we need to invert tables *)
       let partition_to_splits partition =
         let res = create splits.names in
