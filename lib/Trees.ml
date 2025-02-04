@@ -194,7 +194,7 @@ module Splits:
           Buffer.add_char buf ':';
           iter
             (fun split weight ->
-              Printf.bprintf buf " %s @ %.6g"
+              Printf.bprintf buf " %s@%.6g"
                 (Split.to_string split) weight)
             t
         end;
