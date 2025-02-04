@@ -22,15 +22,21 @@
 
 open Better
 
-(* Complete modules including parser(s) *)
+(* Complete modules including parser(s) and I/O *)
 
 module Newick:
   sig
     include module type of Trees_Base.Newick
+    (* Input *)
     val of_string: ?rich_format:bool -> string -> t
     val array_of_string: ?rich_format:bool -> string -> t array
     val of_file: ?rich_format:bool -> string -> t
     val array_of_file: ?rich_format:bool -> string -> t array
+    (* Output *)
+    val to_string: ?rich_format:bool -> t -> string
+    val array_to_string: ?rich_format:bool -> t array -> string
+    val to_file: ?rich_format:bool -> t -> string -> unit
+    val array_to_file: ?rich_format:bool -> t array -> string -> unit
   end
 = struct
     include Trees_Base.Newick
@@ -71,18 +77,96 @@ module Newick:
     let of_file ?(rich_format = true) s = _of_file ~rich_format Trees_Parse.newick_tree s
     let array_of_file ?(rich_format = true) s =
       _of_file ~rich_format Trees_Parse.zero_or_more_newick_trees s |> Array.of_list
+    let add_to_buffer ?(rich_format = true) buf t =
+      let add_hybrid_info buf hy =
+        match rich_format, hy with
+        | true, Some (Hybridization id) -> Printf.bprintf buf "#H%d" id
+        | true, Some (GeneTransfer id) -> Printf.bprintf buf "#LGT%d" id
+        | true, Some (Recombination id) -> Printf.bprintf buf "#R%d" id
+        | true, None | false, _ -> ()
+      and add_dict_info buf dict =
+        if rich_format && dict <> StringMap.empty then begin
+          Buffer.add_string buf "[&";
+          StringMap.iteri
+            (fun i k v ->
+              if i > 0 then
+                Buffer.add_char buf ',';
+              Printf.bprintf buf "%s=%s" k v)
+            dict;
+          Buffer.add_char buf ']'
+        end in
+      begin match rich_format, get_is_root t with
+      | true, true -> Buffer.add_string buf "[&R]"
+      | true, false -> Buffer.add_string buf "[&U]"
+      | false, _ -> ()
+      end;
+      dfs_iter
+        (fun _ num_edges ->
+          if num_edges > 0 then
+            Buffer.add_char buf '(')
+        (fun i _ ->
+          if i > 0 then
+            Buffer.add_char buf ',')
+        (fun _ edge ->
+          let dict = get_edge_dict edge in
+          begin match get_edge_values edge with
+          | -1., -1., -1. ->
+            if dict <> StringMap.empty then
+              (* Here the only unambiguous way to print out things is by adding an empty length *)
+              Buffer.add_string buf ":0"
+          | -1., -1., p -> Printf.bprintf buf ":::%.10g" p
+          | -1., b, -1. -> Printf.bprintf buf "::%.10g" b
+          | l, -1., -1. -> Printf.bprintf buf ":%.10g" l
+          | -1., b, p -> Printf.bprintf buf "::%.10g:%.10g" b p
+          | l, -1., p -> Printf.bprintf buf ":%.10g::%.10g" l p
+          | l, b, -1. -> Printf.bprintf buf ":%.10g:%.10g" l b
+          | l, b, p -> Printf.bprintf buf ":%.10g:%.10g:%.10g" l b p
+          end;
+          add_dict_info buf dict)
+        (fun node num_edges ->
+          if num_edges > 0 then
+            Buffer.add_char buf ')';
+          get_node_name node |> Buffer.add_string buf;
+          get_node_hybrid node |> add_hybrid_info buf;
+          get_node_dict node |> add_dict_info buf)
+        t;
+      Buffer.add_char buf ';';
+      buf
+    let to_string ?(rich_format = true) t =
+      add_to_buffer ~rich_format (Buffer.create 1024) t |> Buffer.contents
+    let array_to_string ?(rich_format = true) a =
+      let buf = Buffer.create 1024 in
+      Array.iter (fun t -> Buffer.add_char (add_to_buffer ~rich_format buf t) '\n') a;
+      Buffer.contents buf
+    let to_file ?(rich_format = true) t f =
+      let f = open_out f and buf = Buffer.create 1024 in
+      Buffer.add_char (add_to_buffer ~rich_format buf t) '\n';
+      Buffer.output_buffer f buf;
+      close_out f
+    let array_to_file ?(rich_format = true) a f =
+      let f = open_out f and buf = Buffer.create 1024 in
+      Array.iter (fun t -> Buffer.add_char (add_to_buffer ~rich_format buf t) '\n') a;
+      Buffer.output_buffer f buf;
+      close_out f
   end
 
 module Splits:
   sig
     include module type of Trees_Base.Splits
+    (* Input *)
     val of_string: string -> t
     val array_of_string: string -> t array
     val of_file: string -> t
     val array_of_file: string -> t array
+    (* Output *)
+    val to_string: t -> string
+    val array_to_string: t array -> string
+    val to_file: t -> string -> unit
+    val array_to_file: t array -> string -> unit
   end
 = struct
     include Trees_Base.Splits
+    (* Input *)
     let _of_string f s =
       let state = Trees_Lex.Splits.create () in
       f (Trees_Lex.splits state) (Lexing.from_string ~with_positions:true s)
@@ -95,5 +179,43 @@ module Splits:
       res
     let of_file = _of_file Trees_Parse.split_set
     let array_of_file s = _of_file Trees_Parse.zero_or_more_split_sets s |> Array.of_list
+    (* Output *)
+    let add_to_buffer buf t =
+      let names = get_names t in
+      if Array.length names > 0 then begin
+        Array.iteri
+          (fun i name ->
+            if i > 0 then
+              Buffer.add_char buf ' ';
+            Trees_Lex.quote_string_if_needed name |> Buffer.add_string buf)
+          names;
+        let num_splits = cardinal t in
+        if num_splits > 0 then begin
+          Buffer.add_char buf ':';
+          iter
+            (fun split weight ->
+              Printf.bprintf buf " %s @ %.6g"
+                (Split.to_string split) weight)
+            t
+        end;
+        Buffer.add_char buf ';'
+      end;
+      buf
+    let to_string t =
+      add_to_buffer (Buffer.create 1024) t |> Buffer.contents
+    let array_to_string a =
+      let buf = Buffer.create 1024 in
+      Array.iter (fun t -> Buffer.add_char (add_to_buffer buf t) '\n') a;
+      Buffer.contents buf
+    let to_file t f =
+      let f = open_out f and buf = Buffer.create 1024 in
+      Buffer.add_char (add_to_buffer buf t) '\n';
+      Buffer.output_buffer f buf;
+      close_out f
+    let array_to_file a f =
+      let f = open_out f and buf = Buffer.create 1024 in
+      Array.iter (fun t -> Buffer.add_char (add_to_buffer buf t) '\n') a;
+      Buffer.output_buffer f buf;
+      close_out f
   end
 

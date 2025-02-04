@@ -70,11 +70,17 @@ module Newick:
     val set_node_dict: node_t -> string StringMap.t -> node_t
     val set_node_is_root: node_t -> bool -> node_t
     val set_node_hybrid: node_t -> hybrid_t option -> node_t
-    (* Traversals & maps *)
-    val dfs_iter: (node_t -> unit) -> (edge_t -> unit) -> t -> unit
-    val dfs_iteri: (int -> node_t -> unit) -> (int -> edge_t -> unit) -> t -> unit
-    val dfs_map: (node_t -> node_t) -> (edge_t -> edge_t) -> t -> t
-    val dfs_mapi: (int -> node_t -> node_t) -> (int -> edge_t -> edge_t) -> t -> t
+    (* Traversals & maps.
+       For iter () and iteri () we specify separate pre- and post- node/edge functions.
+       Node functions receive as arguments the node and the number of edges;
+        edge functions the (local) index of the edge and the edge itself.
+       In addition, iteri and mapi also receive a global node/edge index as first argument *)
+    val dfs_iter: (node_t -> int -> unit) -> (int -> edge_t -> unit) ->
+                  (int -> edge_t -> unit) -> (node_t -> int -> unit) -> t -> unit
+    val dfs_iteri: (int -> node_t -> int -> unit) -> (int -> int -> edge_t -> unit) ->
+                   (int -> int -> edge_t -> unit) -> (int -> node_t -> int -> unit) -> t -> unit
+    val dfs_map: (node_t -> int -> node_t) -> (int -> edge_t -> edge_t) -> t -> t
+    val dfs_mapi: (int -> node_t -> int -> node_t) -> (int -> int -> edge_t -> edge_t) -> t -> t
     (*val dfs_flatten_as_subtrees: t -> t array*)
     (* Flattened representation.
        Each line contains: edge and index of parent node, node, edge and index of children nodes *)
@@ -84,11 +90,6 @@ module Newick:
     val dijkstra: flat_t array -> int -> Float.Array.t
     val get_min_distance_matrix: ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> Matrix.t
     val get_max_distance_matrix: ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> Matrix.t
-    (* I/O *)
-    val to_string: ?rich_format:bool -> t -> string
-    val array_to_string: ?rich_format:bool -> t array -> string
-    val to_file: ?rich_format:bool -> t -> string -> unit
-    val array_to_file: ?rich_format:bool -> t array -> string -> unit
   end
 = struct
     (* The array describes the progeny of the node.
@@ -181,43 +182,55 @@ module Newick:
     let set_is_root (Node (node, desc)) is_root = Node (set_node_is_root node is_root, desc) [@@inline]
     let set_hybrid (Node (node, desc)) hybrid = Node (set_node_hybrid node hybrid, desc) [@@inline]
     (* *)
-    let dfs_iter f_node f_edge t =
+    let dfs_iter f_node_pre f_edge_pre f_edge_post f_node_post t =
       let rec dfs_iter_rec (Node (node, edges)) =
-        f_node node;
-        Array.iter
-          (fun (edge, subnode) ->
-            f_edge edge;
-            dfs_iter_rec subnode)
-          edges in
+        let n_children = Array.length edges in
+        f_node_pre node n_children;
+        Array.iteri
+          (fun i (edge, subnode) ->
+            f_edge_pre i edge;
+            (* Ghost nodes are terminal *)
+            if not edge.edge_is_ghost then
+              dfs_iter_rec subnode;
+            f_edge_post i edge)
+          edges;
+        f_node_post node n_children in
       dfs_iter_rec t
-    let dfs_iteri f_node f_edge t =
+    let dfs_iteri f_node_pre f_edge_pre f_edge_post f_node_post t =
       let node_idx = ref 0 and edge_idx = ref 0 in
       let rec dfs_iteri_rec (Node (node, edges)) =
-        f_node Int.( !++ node_idx) node;
-        Array.iter
-          (fun (edge, subnode) ->
-            f_edge Int.( !++ edge_idx) edge;
-            dfs_iteri_rec subnode)
-          edges in
+        let n_children = Array.length edges in
+        f_node_pre Int.( !++ node_idx) node n_children;
+        Array.iteri
+          (fun i (edge, subnode) ->
+            f_edge_pre Int.( !++ edge_idx) i edge;
+            (* Ghost nodes are terminal *)
+            if not edge.edge_is_ghost then
+              dfs_iteri_rec subnode;
+            f_edge_post !edge_idx i edge)
+          edges;
+        f_node_post !node_idx node n_children in
       dfs_iteri_rec t
     let dfs_map f_node f_edge t =
       let rec dfs_map_rec (Node (node, edges)) =
+        let n_children = Array.length edges in
         Node begin
-          f_node node,
-          Array.map
-            (fun (edge, subnode) ->
-              f_edge edge, dfs_map_rec subnode)
+          f_node node n_children,
+          Array.mapi
+            (fun i (edge, subnode) ->
+              f_edge i edge, dfs_map_rec subnode)
             edges
         end in
       dfs_map_rec t
     let dfs_mapi f_node f_edge t =
       let node_idx = ref 0 and edge_idx = ref 0 in
       let rec dfs_map_rec (Node (node, edges)) =
+        let n_children = Array.length edges in
         Node begin
-          f_node Int.( !++ node_idx) node,
-          Array.map
-            (fun (edge, subnode) ->
-              f_edge Int.( !++ edge_idx) edge, dfs_map_rec subnode)
+          f_node Int.( !++ node_idx) node n_children,
+          Array.mapi
+            (fun i (edge, subnode) ->
+              f_edge Int.( !++ edge_idx) i edge, dfs_map_rec subnode)
             edges
         end in
       dfs_map_rec t
@@ -284,7 +297,7 @@ module Newick:
     let _get_distance_matrix ?(invert = false) ?(threads = 1) ?(elements_per_step = 1000) ?(verbose = false) t =
       let ft = begin
         if invert then
-          dfs_map (fun node -> node) (fun edge -> { edge with edge_length = -. edge.edge_length }) t
+          dfs_map (fun node _ -> node) (fun _ edge -> { edge with edge_length = -. edge.edge_length }) t
         else
           t
       end |> dfs_flatten in
@@ -341,82 +354,6 @@ module Newick:
       _get_distance_matrix ~invert:false ~threads ~elements_per_step ~verbose t
     let get_max_distance_matrix ?(threads = 1) ?(elements_per_step = 1000) ?(verbose = false) t =
       _get_distance_matrix ~invert:true ~threads ~elements_per_step ~verbose t
-    (* *)
-    let add_to_buffer ?(rich_format = true) buf (Node ({ node_is_root; _ }, _) as t) =
-      let add_hybrid_info buf hy =
-        match rich_format, hy with
-        | true, Some (Hybridization id) -> Printf.bprintf buf "#H%d" id
-        | true, Some (GeneTransfer id) -> Printf.bprintf buf "#LGT%d" id
-        | true, Some (Recombination id) -> Printf.bprintf buf "#R%d" id
-        | true, None | false, _ -> ()
-      and add_dict_info buf dict =
-        if rich_format && dict <> StringMap.empty then begin
-          Buffer.add_string buf "[&";
-          StringMap.iteri
-            (fun i k v ->
-              if i > 0 then
-                Buffer.add_char buf ',';
-              Printf.bprintf buf "%s=%s" k v)
-            dict;
-          Buffer.add_char buf ']'
-        end in
-      let rec add_to_buffer_rec buf (Node ({ node_hybrid; node_name; node_dict; _ }, edges)) =
-        if edges <> [||] then begin
-          Buffer.add_char buf '(';
-          Array.iteri
-            (fun i (edge, (Node (subnode, _) as node)) ->
-              if i > 0 then
-                Buffer.add_char buf ',';
-              if edge.edge_is_ghost then begin
-                (* The node becomes terminal *)
-                Buffer.add_string buf subnode.node_name;
-                add_hybrid_info buf subnode.node_hybrid
-              end else
-                add_to_buffer_rec buf node;
-              begin match edge.edge_length, edge.edge_bootstrap, edge.edge_probability with
-              | -1., -1., -1. ->
-                if edge.edge_dict <> StringMap.empty then
-                  (* Here the only unambiguous way to print out things is by adding an empty length *)
-                  Buffer.add_string buf ":0"
-              | -1., -1., p -> Printf.bprintf buf ":::%.10g" p
-              | -1., b, -1. -> Printf.bprintf buf "::%.10g" b
-              | l, -1., -1. -> Printf.bprintf buf ":%.10g" l
-              | -1., b, p -> Printf.bprintf buf "::%.10g:%.10g" b p
-              | l, -1., p -> Printf.bprintf buf ":%.10g::%.10g" l p
-              | l, b, -1. -> Printf.bprintf buf ":%.10g:%.10g" l b
-              | l, b, p -> Printf.bprintf buf ":%.10g:%.10g:%.10g" l b p
-              end;
-              add_dict_info buf edge.edge_dict)
-            edges;
-          Buffer.add_char buf ')'
-        end;
-        Buffer.add_string buf node_name;
-        add_hybrid_info buf node_hybrid;
-        add_dict_info buf node_dict in
-      begin match rich_format, node_is_root with
-      | true, true -> Buffer.add_string buf "[&R]"
-      | true, false -> Buffer.add_string buf "[&U]"
-      | false, _ -> ()
-      end;
-      add_to_buffer_rec buf t;
-      Buffer.add_char buf ';';
-      buf
-    let to_string ?(rich_format = true) t =
-      add_to_buffer ~rich_format (Buffer.create 1024) t |> Buffer.contents
-    let array_to_string ?(rich_format = true) a =
-      let buf = Buffer.create 1024 in
-      Array.iter (fun t -> Buffer.add_char (add_to_buffer ~rich_format buf t) '\n') a;
-      Buffer.contents buf
-    let to_file ?(rich_format = true) t f =
-      let f = open_out f and buf = Buffer.create 1024 in
-      Buffer.add_char (add_to_buffer ~rich_format buf t) '\n';
-      Buffer.output_buffer f buf;
-      close_out f
-    let array_to_file ?(rich_format = true) a f =
-      let f = open_out f and buf = Buffer.create 1024 in
-      Array.iter (fun t -> Buffer.add_char (add_to_buffer ~rich_format buf t) '\n') a;
-      Buffer.output_buffer f buf;
-      close_out f
   end
 
 module Splits:
@@ -427,8 +364,12 @@ module Splits:
         val of_string: string -> t
         val of_list: int list -> t
         val of_array: int array -> t
+        val to_string: t -> string
       end
     type t
+    val get_names: t -> string array
+    val cardinal: t -> int
+    val iter: (Split.t -> float -> unit) -> t -> unit
     (* The argument are element names *)
     exception DuplicateNames
     val create: string array -> t
@@ -442,19 +383,23 @@ module Splits:
       struct
         type t = IntZ.t
         (* The result is *not* in canonical form *)
-        let of_string = IntZ.of_string
+        let of_string s = IntZ.of_string s [@@inline]
         (* The result is *not* in canonical form *)
         let of_list =
           List.fold_left (fun res i -> IntZ.(res + (one lsl i))) IntZ.zero
         let of_array =
           Array.fold_left (fun res i -> IntZ.(res + (one lsl i))) IntZ.zero
-        end
+        let to_string s = IntZ.to_string s [@@inline]
+      end
     type t = {
       names: string array;
       mask_complement: IntZ.t;
       (* We store the inverse table, which is mutable *)
       splits: float IntZHashtbl.t
     }
+    let get_names ss = ss.names [@@inline]
+    let cardinal ss = IntZHashtbl.length ss.splits [@@inline]
+    let iter f ss = IntZHashtbl.iter f ss.splits [@@inline]
     exception DuplicateNames
     let create names =
       let num_elts = Array.length names in

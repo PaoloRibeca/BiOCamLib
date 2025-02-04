@@ -46,7 +46,7 @@
 
 /* The tokens for weighted splits */
 
-%token Splits_COLON Splits_SEMICOLON Splits_LBRACK Splits_RBRACK Splits_COMMA Splits_EOF
+%token Splits_COLON Splits_SEMICOLON Splits_LBRACK Splits_RBRACK Splits_COMMA Splits_AT Splits_EOF
 %token<string> Splits_NAME
 %token<int> Splits_DECIMAL
 %token<float> Splits_FLOAT
@@ -152,7 +152,7 @@ zero_or_more_split_sets:
     { $1 :: $2 }
 
 split_set:
-  | zero_or_more_names Splits_COLON zero_or_more_comma_separated_weighted_splits Splits_SEMICOLON
+  | zero_or_more_names Splits_COLON zero_or_more_weighted_splits Splits_SEMICOLON
     { let res = Array.of_list $1 |> Trees_Base.Splits.create in
       List.iter (fun (split, weight) -> Trees_Base.Splits.add_split res split weight) $3;
       res }
@@ -163,33 +163,21 @@ zero_or_more_names:
   | Splits_NAME zero_or_more_names
     { $1 :: $2 }
 
-zero_or_more_comma_separated_weighted_splits:
+zero_or_more_weighted_splits:
   | /* EMPTY */
     { [] }
-  | weighted_split zero_or_more_comma_and_weighted_splits
+  | weighted_split zero_or_more_weighted_splits
     { $1 :: $2 }
 
-zero_or_more_comma_and_weighted_splits:
-  | /* EMPTY */
-    { [] }
-  | Splits_COMMA weighted_split zero_or_more_comma_and_weighted_splits
-    { $2 :: $3 }
-
 weighted_split:
-  | weight Splits_LBRACK split Splits_RBRACK
-    { $3, $1 }
-
-weight:
-  | Splits_DECIMAL
-    { float_of_int $1 }
-  | Splits_FLOAT
-    { $1 }
+  | split Splits_AT weight
+    { $1, $3 }
 
 split: /* Includes the empty case */
   | /* EMPTY */
     { Trees_Base.Splits.Split.of_list [] }
-  | Splits_DECIMAL zero_or_more_comma_and_elements
-    { Trees_Base.Splits.Split.of_list ($1 :: $2) }
+  | Splits_LBRACK Splits_DECIMAL zero_or_more_comma_and_elements__and_rbrack
+    { Trees_Base.Splits.Split.of_list ($2 :: $3) }
   | Splits_BINARY
     { $1 }
   | Splits_OCTAL
@@ -197,9 +185,15 @@ split: /* Includes the empty case */
   | Splits_HEXADECIMAL
     { $1 }
 
-zero_or_more_comma_and_elements:
-  | /* EMPTY */
+zero_or_more_comma_and_elements__and_rbrack:
+  | Splits_RBRACK
     { [] }
-  | Splits_COMMA Splits_DECIMAL zero_or_more_comma_and_elements
+  | Splits_COMMA Splits_DECIMAL zero_or_more_comma_and_elements__and_rbrack
     { $2 :: $3 }
+
+weight:
+  | Splits_DECIMAL
+    { float_of_int $1 }
+  | Splits_FLOAT
+    { $1 }
 

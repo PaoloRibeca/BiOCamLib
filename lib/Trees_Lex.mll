@@ -2,6 +2,21 @@
 
   open Better
 
+  let quote_string_if_needed s =
+    let res = Buffer.create 1024 in
+    Buffer.add_char res '\'';
+    String.iter
+      (function
+        | '\'' -> Buffer.add_string res "''"
+        | c -> Buffer.add_char res c)
+      s;
+    Buffer.add_char res '\'';
+    let res = Buffer.contents res in
+    if String.sub res 1 (String.length res - 2) = s then
+      s
+    else
+      res
+
   module Newick:
     sig
       type t
@@ -180,12 +195,14 @@ and splits state = parse
   { Trees_Parse.Splits_COLON }
 | ';'
   { Trees_Parse.Splits_SEMICOLON }
+| ','
+  { Trees_Parse.Splits_COMMA }
+| '@'
+  { Trees_Parse.Splits_AT }
 | '('
   { Trees_Parse.Splits_LBRACK }
 | ')'
   { Trees_Parse.Splits_RBRACK }
-| ','
-  { Trees_Parse.Splits_COMMA }
 | (( '.'['0'-'9']+ | ['0'-'9']+'.'['0'-'9']*) (['e''E']['+''-']?['0'-'9']*)? as n)
   { try
       Trees_Parse.Splits_FLOAT (float_of_string n)
