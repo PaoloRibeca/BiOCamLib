@@ -558,11 +558,14 @@ module Splits:
           (fun color name ->
             colors_to_trees := ColorsToTrees.add color (Newick.leaf name) !colors_to_trees)
           colors splits.names;
-        (* ...and then we merge all the leaves associated with the same colour.
+        (* ...and then we merge all the leaves associated with the same colour, if there is more than one.
            Branches all have length 0 *)
         ColorsToTrees.map_set
           (fun leaves ->
-            ColorsToTrees.ValSet.elements_array leaves |> Array.map (fun leaf -> Newick.edge (), leaf) |> Newick.join)
+            if ColorsToTrees.ValSet.cardinal leaves > 1 then
+              ColorsToTrees.ValSet.elements_array leaves |> Array.map (fun leaf -> Newick.edge (), leaf) |> Newick.join
+            else
+              ColorsToTrees.ValSet.min_elt leaves)
           !colors_to_trees
         |> ref in
       while IntZMap.cardinal !res > 1 do
