@@ -187,9 +187,9 @@ weight:
 
 split: /* Includes the empty case */
   | /* EMPTY */
-    { Trees_Base.Splits.Split.of_int_list [] }
+    { Trees_Base.Splits.Split.of_list [] }
   | Splits_DECIMAL zero_or_more_comma_and_elements
-    { Trees_Base.Splits.Split.of_int_list ($1 :: $2) }
+    { Trees_Base.Splits.Split.of_list ($1 :: $2) }
   | Splits_BINARY
     { $1 }
   | Splits_OCTAL

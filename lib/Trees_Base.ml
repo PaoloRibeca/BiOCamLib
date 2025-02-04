@@ -425,7 +425,8 @@ module Splits:
       sig
         type t
         val of_string: string -> t
-        val of_int_list: int list -> t
+        val of_list: int list -> t
+        val of_array: int array -> t
       end
     type t
     (* The argument are element names *)
@@ -443,9 +444,11 @@ module Splits:
         (* The result is *not* in canonical form *)
         let of_string = IntZ.of_string
         (* The result is *not* in canonical form *)
-        let of_int_list =
+        let of_list =
           List.fold_left (fun res i -> IntZ.(res + (one lsl i))) IntZ.zero
-      end
+        let of_array =
+          Array.fold_left (fun res i -> IntZ.(res + (one lsl i))) IntZ.zero
+        end
     type t = {
       names: string array;
       mask_complement: IntZ.t;
