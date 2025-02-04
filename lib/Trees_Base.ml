@@ -435,7 +435,7 @@ module Splits:
     val add_split: t -> Split.t -> float -> unit
     (* Converts to a tree the largest subset of compatible splits,
         obtained by considering the splits in order of decreasing weight *)
-    val to_tree: t -> Newick.t
+    val to_tree: ?verbose:bool -> t -> t * Newick.t * t
   end
 = struct
     module Split =
@@ -481,7 +481,7 @@ module Splits:
       | OneColor of IntZ.t
       | TwoOrMoreColors
     module ColorsToTrees = Tools.Multimap (ComparableIntZ) (MakeComparable(Newick))
-    let to_tree splits =
+    let to_tree ?(verbose = false) splits =
       (* We invert the table *)
       let num_elts = Array.length splits.names and sorted_splits = ref SplitsRMultimap.empty in
       IntZHashtbl.iter
@@ -490,12 +490,13 @@ module Splits:
         splits.splits;
       let red_num_elts = num_elts - 1 and colors = Array.make num_elts IntZ.zero and num_colors = ref 1
       (* We partition splits based on their compatibility *)
-      and ok = ref SplitsRMultimap.empty and ok_weights = ref [] and ko = ref SplitsRMultimap.empty in
-      (* We assume that Map.partition traverses the data structure in order *)
-      SplitsRMultimap.iter
-        (fun weight split ->
-          let add_split_to partition =
-            partition := SplitsRMultimap.add weight split !partition in
+      and ok = ref [], ref SplitsRMultimap.empty and ok_weights = ref []
+      and ko = ref [], ref SplitsRMultimap.empty in
+      SplitsRMultimap.iteri
+        (fun i_split weight split ->
+          let add_split_to (indices, partition) =
+            partition := SplitsRMultimap.add weight split !partition;
+            List.accum indices i_split in
           (* Do we need more splits? If colours are all different, we have found enough *)
           if !num_colors >= num_elts then
             add_split_to ko
@@ -548,6 +549,18 @@ module Splits:
               (* Incompatible split *)
               add_split_to ko)
         !sorted_splits;
+      if verbose then
+        Printf.eprintf "(%s): Found %d colors for %d elements, used %d/%d splits\n%!"
+          __FUNCTION__ !num_colors (Array.length splits.names)
+          (SplitsRMultimap.cardinal !(snd ok)) (SplitsRMultimap.cardinal !(snd ko));
+      (* To return used and unused splits, we need to invert tables *)
+      let partition_to_splits (indices, partition) =
+        let indices = !indices in
+        let names = Array.make (List.length indices) "" in
+        List.iteri (fun i idx -> names.(i) <- splits.names.(idx)) indices;
+        let res = create names in
+        SplitsRMultimap.iter (fun weight split -> add_split res split weight) !partition;
+        res in
       (* We build and output the tree corresponding to names, colours, and weights.
          Note that at this point the elements might or might not have distinct colours *)
       let res =
@@ -586,6 +599,6 @@ module Splits:
         end
       done;
       assert (!ok_weights = []);
-      IntZMap.min_binding !res |> snd
+      partition_to_splits ok, IntZMap.min_binding !res |> snd, partition_to_splits ko
   end
 
