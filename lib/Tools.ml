@@ -149,6 +149,8 @@ sig
   exception Empty
   val create: unit -> 'a t
   val push: 'a t -> 'a -> unit (* We depart from Stdlib conventions here and swap arguments *)
+  val push_array: 'a t -> 'a array -> unit
+  val push_stackarray: 'a t -> 'a t -> unit
   val pop: 'a t -> 'a
   val pop_opt: 'a t -> 'a option
   val pop_n: 'a t -> int -> 'a
@@ -185,10 +187,29 @@ end
     let aug_length = s.size + 1 in
     if Array.length s.data >= aug_length then begin
       s.data.(s.size) <- el;
-      s.size <- s.size + 1
+      s.size <- aug_length
     end else begin
       s.data <- Array.resize ~is_buffer:true aug_length el s.data;
-      s.size <- s.size + 1
+      s.size <- aug_length
+    end
+  let push_array s a =
+    let arr_lenght = Array.length a in
+    if arr_lenght > 0 then begin
+      let aug_length = s.size + arr_lenght in
+      if Array.length s.data < aug_length then
+        (* There is at least one element in the array *)
+        s.data <- Array.resize ~is_buffer:true aug_length a.(0) s.data;
+      Array.blit a 0 s.data s.size arr_lenght;
+      s.size <- aug_length
+    end
+  let push_stackarray dst src =
+    if src.size > 0 then begin
+      let aug_length = dst.size + src.size in
+      if Array.length dst.data < aug_length then
+        (* There is at least one element in the source *)
+        dst.data <- Array.resize ~is_buffer:true aug_length src.data.(0) dst.data;
+      Array.blit src.data 0 dst.data dst.size src.size;
+      dst.size <- aug_length
     end
   let pop s =
     if s.size > 0 then begin
