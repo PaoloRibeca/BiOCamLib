@@ -373,6 +373,8 @@ module Splits:
     (* The argument are element names *)
     exception DuplicateNames
     val create: string array -> t
+    (* Discards splits while keeping names *)
+    val clear: t -> unit
     exception IncompatibleSplit of string * int * int
     val add_split: t -> Split.t -> float -> unit
     exception IncompatibleSplits
@@ -412,6 +414,8 @@ module Splits:
       { names = names;
         mask_complement = IntZ.(one lsl num_elts - one);
         splits = IntZHashtbl.create 1024 }
+    let clear ss =
+      IntZHashtbl.clear ss.splits
     exception IncompatibleSplit of string * int * int
     let add_split splits split weight =
       let num_elts = Array.length splits.names and num_bits = IntZ.numbits split in
