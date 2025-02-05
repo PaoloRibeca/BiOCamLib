@@ -48,11 +48,9 @@
 
 %token Splits_COLON Splits_SEMICOLON Splits_LBRACK Splits_RBRACK Splits_COMMA Splits_AT Splits_EOF
 %token<string> Splits_NAME
-%token<int> Splits_DECIMAL
+%token<int> Splits_INTEGER
 %token<float> Splits_FLOAT
-%token<Trees_Base.Splits.Split.t> Splits_BINARY
-%token<Trees_Base.Splits.Split.t> Splits_OCTAL
-%token<Trees_Base.Splits.Split.t> Splits_HEXADECIMAL
+%token<Trees_Base.Splits.Split.t> Splits_DECIMAL Splits_BINARY Splits_OCTAL Splits_HEXADECIMAL
 /* No operators in this format */
 /* Entry points */
 %start zero_or_more_split_sets
@@ -176,8 +174,10 @@ weighted_split:
 split: /* Includes the empty case */
   | /* EMPTY */
     { Trees_Base.Splits.Split.of_list [] }
-  | Splits_LBRACK Splits_DECIMAL zero_or_more_comma_and_elements__and_rbrack
+  | Splits_LBRACK Splits_INTEGER zero_or_more_comma_and_elements__and_rbrack
     { Trees_Base.Splits.Split.of_list ($2 :: $3) }
+  | Splits_DECIMAL
+    { $1 }
   | Splits_BINARY
     { $1 }
   | Splits_OCTAL
@@ -188,11 +188,11 @@ split: /* Includes the empty case */
 zero_or_more_comma_and_elements__and_rbrack:
   | Splits_RBRACK
     { [] }
-  | Splits_COMMA Splits_DECIMAL zero_or_more_comma_and_elements__and_rbrack
+  | Splits_COMMA Splits_INTEGER zero_or_more_comma_and_elements__and_rbrack
     { $2 :: $3 }
 
 weight:
-  | Splits_DECIMAL
+  | Splits_INTEGER
     { float_of_int $1 }
   | Splits_FLOAT
     { $1 }

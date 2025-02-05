@@ -201,7 +201,7 @@ module Splits:
         let num_splits = cardinal t in
         if num_splits > 0 then begin
           Buffer.add_char buf ':';
-          iter (fun split weight -> Printf.bprintf buf " %s@%.*g" (Split.to_string split) precision weight) t
+          iter (fun split weight -> Printf.bprintf buf " 0d%s@%.*g" (Split.to_string split) precision weight) t
         end;
         Buffer.add_char buf ';'
       end;

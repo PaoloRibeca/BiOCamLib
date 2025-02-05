@@ -209,11 +209,13 @@ and splits state = parse
       Trees_Parse.Splits_FLOAT (float_of_string n)
     with _ ->
       Splits.parse_error state ("Invalid number '" ^ n ^ "'") }
-| ('0'(['B' 'O' 'X' 'b' 'o' 'x'] as what)['0'-'9']+ as n)
+| ('0'(['B' 'O' 'D' 'X' 'b' 'o' 'd' 'x'] as what)['0'-'9']+ as n)
   { try
       begin match what with
       | 'B' | 'b' ->
         Trees_Parse.Splits_BINARY (Trees_Base.Splits.Split.of_string n)
+      | 'D' | 'd' ->
+        Trees_Parse.Splits_DECIMAL (Trees_Base.Splits.Split.of_string n)
       | 'O' | 'o' ->
         Trees_Parse.Splits_OCTAL (Trees_Base.Splits.Split.of_string n)
       | 'X' | 'x' ->
@@ -225,7 +227,7 @@ and splits state = parse
       Splits.parse_error state ("Invalid number '" ^ n ^ "'") }
 | (['0'-'9']+ as n)
   { try
-      Trees_Parse.Splits_DECIMAL (int_of_string n)
+      Trees_Parse.Splits_INTEGER (int_of_string n)
     with _ ->
       Splits.parse_error state ("Invalid number '" ^ n ^ "'") }
 | [ ^ '\n' '\r' '\t' ' ' '(' ')' ':' ';' ',' '\'' '[' ']' '#' ]+ as s
