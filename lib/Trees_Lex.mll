@@ -3,16 +3,17 @@
   open Better
 
   let quote_string_if_needed s =
-    let res = Buffer.create 1024 in
+    let res = Buffer.create 1024 and needs_quotes = ref false in
     Buffer.add_char res '\'';
     String.iter
       (function
         | '\'' -> Buffer.add_string res "''"
+        | ' ' | ':' -> needs_quotes := true
         | c -> Buffer.add_char res c)
       s;
     Buffer.add_char res '\'';
     let res = Buffer.contents res in
-    if String.sub res 1 (String.length res - 2) = s then
+    if not !needs_quotes && String.sub res 1 (String.length res - 2) = s then
       s
     else
       res

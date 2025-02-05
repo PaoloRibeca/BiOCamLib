@@ -158,11 +158,16 @@ module Splits:
     val array_of_string: string -> t array
     val of_file: string -> t
     val array_of_file: string -> t array
+    exception Incompatible_archive_version of string * string
+    val of_channel: in_channel -> t
+    val of_binary: ?verbose:bool -> string -> t
     (* Output *)
-    val to_string: t -> string
-    val array_to_string: t array -> string
-    val to_file: t -> string -> unit
-    val array_to_file: t array -> string -> unit
+    val to_string: ?precision:int -> t -> string
+    val array_to_string: ?precision:int -> t array -> string
+    val to_file: ?precision:int -> t -> string -> unit
+    val array_to_file: ?precision:int -> t array -> string -> unit
+    val to_channel: out_channel -> t -> unit
+    val to_binary: ?verbose:bool -> t -> string -> unit
   end
 = struct
     include Trees_Base.Splits
@@ -172,15 +177,19 @@ module Splits:
       f (Trees_Lex.splits state) (Lexing.from_string ~with_positions:true s)
     let of_string = _of_string Trees_Parse.split_set
     let array_of_string s = _of_string Trees_Parse.zero_or_more_split_sets s |> Array.of_list
-    let _of_file f s =
-      let ic = open_in s and state = Trees_Lex.Splits.create () in
-      let res = f (Trees_Lex.splits state) (Lexing.from_channel ~with_positions:true ic) in
-      close_in ic;
+    let make_filename_text = function
+      | w when String.length w >= 5 && String.sub w 0 5 = "/dev/" -> w
+      | prefix -> prefix ^ ".PhyloSplits.txt"
+    let _of_file f prefix =
+      let fname = make_filename_text prefix in
+      let input = open_in fname and state = Trees_Lex.Splits.create () in
+      let res = f (Trees_Lex.splits state) (Lexing.from_channel ~with_positions:true input) in
+      close_in input;
       res
     let of_file = _of_file Trees_Parse.split_set
     let array_of_file s = _of_file Trees_Parse.zero_or_more_split_sets s |> Array.of_list
     (* Output *)
-    let add_to_buffer buf t =
+    let add_to_buffer ?(precision = 15) buf t =
       let names = get_names t in
       if Array.length names > 0 then begin
         Array.iteri
@@ -192,30 +201,62 @@ module Splits:
         let num_splits = cardinal t in
         if num_splits > 0 then begin
           Buffer.add_char buf ':';
-          iter
-            (fun split weight ->
-              Printf.bprintf buf " %s@%.6g"
-                (Split.to_string split) weight)
-            t
+          iter (fun split weight -> Printf.bprintf buf " %s@%.*g" (Split.to_string split) precision weight) t
         end;
         Buffer.add_char buf ';'
       end;
       buf
-    let to_string t =
-      add_to_buffer (Buffer.create 1024) t |> Buffer.contents
-    let array_to_string a =
+    let to_string ?(precision = 15) t =
+      add_to_buffer ~precision (Buffer.create 1024) t |> Buffer.contents
+    let array_to_string ?(precision = 15) a =
       let buf = Buffer.create 1024 in
-      Array.iter (fun t -> Buffer.add_char (add_to_buffer buf t) '\n') a;
+      Array.iter (fun t -> Buffer.add_char (add_to_buffer ~precision buf t) '\n') a;
       Buffer.contents buf
-    let to_file t f =
-      let f = open_out f and buf = Buffer.create 1024 in
-      Buffer.add_char (add_to_buffer buf t) '\n';
-      Buffer.output_buffer f buf;
-      close_out f
-    let array_to_file a f =
-      let f = open_out f and buf = Buffer.create 1024 in
-      Array.iter (fun t -> Buffer.add_char (add_to_buffer buf t) '\n') a;
-      Buffer.output_buffer f buf;
-      close_out f
+    let to_file ?(precision = 15) t prefix =
+      let fname = make_filename_text prefix in
+      let output = open_out fname and buf = Buffer.create 1024 in
+      Buffer.add_char (add_to_buffer ~precision buf t) '\n';
+      Buffer.output_buffer output buf;
+      close_out output
+    let array_to_file ?(precision = 15) a prefix =
+      let fname = make_filename_text prefix in
+      let output = open_out fname and buf = Buffer.create 1024 in
+      Array.iter (fun t -> Buffer.add_char (add_to_buffer ~precision buf t) '\n') a;
+      Buffer.output_buffer output buf;
+      close_out output
+    (* *)
+    let archive_version = "2025-02-05"
+    (* *)
+    let make_filename_binary = function
+      | w when String.length w >= 5 && String.sub w 0 5 = "/dev/" -> w
+      | prefix -> prefix ^ ".PhyloSplits"
+    let to_channel output ss =
+      archive_version |> output_value output;
+      output_value output ss
+    let to_binary ?(verbose = false) ss prefix =
+      let fname = make_filename_binary prefix in
+      let output = open_out fname in
+      if verbose then
+        Printf.eprintf "(%s): Outputting DB to file '%s'...%!" __FUNCTION__ fname;
+      to_channel output ss;
+      close_out output;
+      if verbose then
+        Printf.eprintf " done.\n%!"
+    exception Incompatible_archive_version of string * string
+    let of_channel input =
+      let version = (input_value input: string) in
+      if version <> archive_version then
+        Incompatible_archive_version (version, archive_version) |> raise;
+      (input_value input: t)
+    let of_binary ?(verbose = false) prefix =
+      let fname = make_filename_binary prefix in
+      let input = open_in fname in
+      if verbose then
+        Printf.eprintf "(%s): Reading DB from file '%s'...%!" __FUNCTION__ fname;
+      let res = of_channel input in
+      close_in input;
+      if verbose then
+        Printf.eprintf " done.\n%!";
+      res
   end
 
