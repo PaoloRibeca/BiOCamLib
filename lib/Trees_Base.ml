@@ -373,7 +373,10 @@ module Splits:
     (* The argument are element names *)
     exception DuplicateNames
     val create: string array -> t
+    exception IncompatibleSplit of string * int * int
     val add_split: t -> Split.t -> float -> unit
+    exception IncompatibleSplits
+    val add_splits: t -> t -> unit
     (* Converts to a tree the largest subset of compatible splits,
         obtained by considering the splits in order of decreasing weight.
        Both the used and unused splits are returned *)
@@ -409,18 +412,30 @@ module Splits:
       { names = names;
         mask_complement = IntZ.(one lsl num_elts - one);
         splits = IntZHashtbl.create 1024 }
+    exception IncompatibleSplit of string * int * int
     let add_split splits split weight =
       let num_elts = Array.length splits.names and num_bits = IntZ.numbits split in
       (* Here we make sure that the representation of the split is canonical *)
       if num_bits > num_elts then
-        Printf.sprintf "(%s): Split '%s' has too many elements (found %d, expected at most %d)"
-          __FUNCTION__ (IntZ.to_string split) num_bits num_elts |> failwith;
+        IncompatibleSplit (IntZ.to_string split, num_bits, num_elts) |> raise;
       let canonical = IntZ.(min split (splits.mask_complement - split)) in
       IntZHashtbl.replace splits.splits canonical begin
         match IntZHashtbl.find_opt splits.splits canonical with
         | None -> weight
         | Some w -> w +. weight
       end
+    exception IncompatibleSplits
+    let add_splits dst src =
+      if src.names <> dst.names then
+        raise IncompatibleSplits;
+      IntZHashtbl.iter
+        (fun split weight ->
+          IntZHashtbl.replace dst.splits split begin
+            match IntZHashtbl.find_opt dst.splits split with
+            | None -> weight
+            | Some w -> w +. weight
+          end)
+        src.splits
     module SplitsRMultimap = Tools.Multimap (RComparableFloat) (ComparableIntZ)
     type duplication_state_t =
       | ZeroColors
