@@ -21,6 +21,7 @@ dune build --profile="$PROFILE" bin/RC.exe $FLAGS
 dune build --profile="$PROFILE" bin/FASTools.exe $FLAGS
 dune build --profile="$PROFILE" bin/TREx.exe $FLAGS
 dune build --profile="$PROFILE" bin/Cophenetic.exe $FLAGS
+dune build --profile="$PROFILE" bin/Yggdrasill.exe $FLAGS
 
 rm -rf build
 mkdir build
@@ -31,6 +32,7 @@ cp _build/default/bin/RC.exe build/RC
 cp _build/default/bin/FASTools.exe build/FASTools
 cp _build/default/bin/TREx.exe build/TREx
 cp _build/default/bin/Cophenetic.exe build/Cophenetic
+cp _build/default/bin/Yggdrasill.exe build/Yggdrasill
 
 chmod 755 build/*
 
