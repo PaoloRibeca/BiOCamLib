@@ -80,31 +80,31 @@ rule newick state = parse
 | ['\r' '\t' ' ']+
   { newick state lexbuf }
 | '('
-  { Trees_Parse.Newick_LBRACK }
+  { Newick_LBRACK }
 | ')'
-  { Trees_Parse.Newick_RBRACK }
+  { Newick_RBRACK }
 | ','
-  { Trees_Parse.Newick_COMMA }
+  { Newick_COMMA }
 | ':' (( '.'['0'-'9']+ | ['0'-'9']+('.'(['0'-'9']*))?) (['e''E']['+''-']?['0'-'9']*)? as n)
   { try
-      Trees_Parse.Newick_LENGTH (float_of_string n)
+      Newick_LENGTH (float_of_string n)
     with _ ->
       Newick.parse_error state ("Invalid number '" ^ n ^ "'") }
 | ':'
-  { Trees_Parse.Newick_COLON }
+  { Newick_COLON }
 | ';'
-  { Trees_Parse.Newick_SEMI }
+  { Newick_SEMI }
 | "[&R]" | "[&r]"
   { (* In regular Newick format, by default trees are rooted *)
-    Trees_Parse.Newick_ROOTED true }
+    Newick_ROOTED true }
 | "[&U]" | "[&u]"
   { (* Note that this directive must be parsed differently depending on the format accepted *)
-    Trees_Parse.Newick_ROOTED (Newick.is_rich_format state |> not) }
+    Newick_ROOTED (Newick.is_rich_format state |> not) }
 | "[&&NHX"
   { (* Beginning of a New Hampshire Extended dictionary.
        Note that this directive must be parsed differently depending on the format accepted *)
     if Newick.is_rich_format state then
-      Trees_Parse.Newick_DICT (newick_end_of_nhx state lexbuf)
+      Newick_DICT (newick_end_of_nhx state lexbuf)
     else
       (* We treat the rest as a regular comment *)
       newick_end_of_comment state lexbuf }
@@ -112,7 +112,7 @@ rule newick state = parse
   { (* Beginning of a BEAST-like dictionary.
        Note that this directive must be parsed differently depending on the format accepted *)
     if Newick.is_rich_format state then
-      Trees_Parse.Newick_DICT (newick_end_of_dict true state lexbuf)
+      Newick_DICT (newick_end_of_dict true state lexbuf)
     else
       (* We treat the rest as a regular comment *)
       newick_end_of_comment state lexbuf }
@@ -122,7 +122,7 @@ rule newick state = parse
 | '#' (("H" | "h" | "LGT" | "lgt" | "R" | "r")? as s) (['0'-'9']+ as n)
   { try
       let n = int_of_string n in
-      Trees_Parse.Newick_HYBRID begin
+      Newick_HYBRID begin
         match s with
         | "H" | "h" -> Trees_Base.Newick.Hybridization n
         | "LGT" | "lgt" -> Trees_Base.Newick.GeneTransfer n
@@ -132,9 +132,9 @@ rule newick state = parse
     with _ ->
       Newick.parse_error state ("Invalid number '" ^ n ^ "'") }
 | [ ^ '\n' '\r' '\t' ' ' '(' ')' ':' ';' ',' '\'' '[' ']' '#' ]+ as s
-  { Trees_Parse.Newick_NAME s }
+  { Newick_NAME s }
 | eof
-  { Trees_Parse.Newick_EOF }
+  { Newick_EOF }
 | _ as c
   { Newick.parse_error state ("Invalid character '" ^ String.make 1 c ^ "'") }
 and newick_end_of_string state = parse
@@ -193,48 +193,44 @@ and splits state = parse
 | ['\r' '\t' ' ']+
   { splits state lexbuf }
 | ':'
-  { Trees_Parse.Splits_COLON }
+  { Splits_COLON }
 | ';'
-  { Trees_Parse.Splits_SEMICOLON }
+  { Splits_SEMICOLON }
 | ','
-  { Trees_Parse.Splits_COMMA }
-| '@'
-  { Trees_Parse.Splits_AT }
+  { Splits_COMMA }
+| '#'
+  { Splits_DASH }
 | '('
-  { Trees_Parse.Splits_LBRACK }
+  { Splits_LBRACK }
 | ')'
-  { Trees_Parse.Splits_RBRACK }
+  { Splits_RBRACK }
 | (( '.'['0'-'9']+ | ['0'-'9']+'.'['0'-'9']*) (['e''E']['+''-']?['0'-'9']*)? as n)
   { try
-      Trees_Parse.Splits_FLOAT (float_of_string n)
+      Splits_FLOAT (float_of_string n)
     with _ ->
       Splits.parse_error state ("Invalid number '" ^ n ^ "'") }
-| ('0'(['B' 'O' 'D' 'X' 'b' 'o' 'd' 'x'] as what)['0'-'9']+ as n)
+| ('0'(['B' 'O' 'D' 'X' 'b' 'o' 'd' 'x'] as what)(['0'-'9']+ as digits) as n)
   { try
       begin match what with
-      | 'B' | 'b' ->
-        Trees_Parse.Splits_BINARY (Trees_Base.Splits.Split.of_string n)
       | 'D' | 'd' ->
-        Trees_Parse.Splits_DECIMAL (Trees_Base.Splits.Split.of_string n)
-      | 'O' | 'o' ->
-        Trees_Parse.Splits_OCTAL (Trees_Base.Splits.Split.of_string n)
-      | 'X' | 'x' ->
-        Trees_Parse.Splits_HEXADECIMAL (Trees_Base.Splits.Split.of_string n)
+        Splits_SPLIT (Trees_Base.Splits.Split.of_string digits)
+      | 'B' | 'b' | 'O' | 'o' | 'X' | 'x' ->
+        Splits_SPLIT (Trees_Base.Splits.Split.of_string n)
       | _ ->
         assert false
       end
     with _ ->
-      Splits.parse_error state ("Invalid number '" ^ n ^ "'") }
+      Splits.parse_error state ("Invalid split '" ^ n ^ "'") }
 | (['0'-'9']+ as n)
   { try
-      Trees_Parse.Splits_INTEGER (int_of_string n)
+      Splits_INTEGER (int_of_string n)
     with _ ->
       Splits.parse_error state ("Invalid number '" ^ n ^ "'") }
 | [ ^ '\n' '\r' '\t' ' ' '(' ')' ':' ';' ',' '\'' '[' ']' '#' ]+ as s
   (* We intentionally define unquoted names as in Newick *)
-  { Trees_Parse.Splits_NAME s }
+  { Splits_NAME s }
 | eof
-  { Trees_Parse.Splits_EOF }
+  { Splits_EOF }
 | _ as c
   { Splits.parse_error state ("Invalid character '" ^ String.make 1 c ^ "'") }
 and splits_end_of_string state = parse

@@ -40,13 +40,13 @@ module Defaults =
 module Parameters =
   struct
     let program = ref []
-    let threads = Processes.Parallel.get_nproc () |> ref
+    (*let threads = Processes.Parallel.get_nproc () |> ref*)
     let verbose = ref false
   end
 
 let info = {
   Tools.Argv.name = "Yggdrasill";
-  version = "3";
+  version = "4";
   date = "05-Feb-2025"
 } and authors = [
   "2024-2025", "Paolo Ribeca", "paolo.ribeca@gmail.com"
@@ -115,12 +115,14 @@ let () =
       TA.Optional,
       (fun _ -> To_file (TA.get_parameter ()) |> List.accum Parameters.program);
     TA.make_separator_multiline [ "Miscellaneous options."; "They are set immediately." ];
+(*
     [ "-T"; "--threads" ],
       Some "<computing_threads>",
       [ "number of concurrent computing threads to be spawned";
         " (default automatically detected from your configuration)" ],
       TA.Default (fun () -> string_of_int !Parameters.threads),
       (fun _ -> Parameters.threads := TA.get_parameter_int_pos ());
+*)
     [ "-v"; "--verbose" ],
       None,
       [ "set verbose execution (global option)" ],
