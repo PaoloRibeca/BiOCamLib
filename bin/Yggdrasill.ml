@@ -34,7 +34,7 @@ type to_do_t =
 
 module Defaults =
   struct
-    let precision = 15
+    let precision = 10
   end
 
 module Parameters =
@@ -46,7 +46,7 @@ module Parameters =
 
 let info = {
   Tools.Argv.name = "Yggdrasill";
-  version = "4";
+  version = "5";
   date = "05-Feb-2025"
 } and authors = [
   "2024-2025", "Paolo Ribeca", "paolo.ribeca@gmail.com"
