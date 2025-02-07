@@ -24,6 +24,12 @@
 
 (* We extend some Stdlib types with additional functionality *)
 
+let min_max a b =
+  if compare a b > 0 then
+    b, a
+  else
+    a, b
+
 module Option:
   sig
     val unbox: 'a option -> 'a
