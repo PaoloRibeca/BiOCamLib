@@ -283,7 +283,9 @@ module type Array_t =
     type 'a elt_t
     val make: int -> 'a elt_t -> 'a tt
     val length: 'a tt -> int
+    val get: 'a tt -> int -> 'a elt_t
     val unsafe_get: 'a tt -> int -> 'a elt_t
+    val set: 'a tt -> int -> 'a elt_t -> unit
     val sub: 'a tt -> int -> int -> 'a tt
     val blit: 'a tt -> int -> 'a tt -> int -> int -> unit
     val of_list: 'a elt_t list -> 'a tt
@@ -292,19 +294,21 @@ module type ExtendedArrayFunctionality_t =
   sig
     type 'a tt
     type 'a elt_t
-    val of_rlist: 'a elt_t list -> 'a tt
+    val ( .@() ): 'a tt -> int -> 'a elt_t
+    val ( .@()<- ): 'a tt -> int -> 'a elt_t -> unit    
     val riter: ('a elt_t -> unit) -> 'a tt -> unit
     val riteri: (int -> 'a elt_t -> unit) -> 'a tt -> unit
     val iter2i: (int -> 'a elt_t -> 'b elt_t -> unit) -> 'a tt -> 'b tt -> unit
     val riter2: ('a elt_t -> 'b elt_t -> unit) -> 'a tt -> 'b tt -> unit
     val riter2i: (int -> 'a elt_t -> 'b elt_t -> unit) -> 'a tt -> 'b tt -> unit
     val resize: ?is_buffer:bool -> int -> 'a elt_t -> 'a tt -> 'a tt
+    val of_rlist: 'a elt_t list -> 'a tt
   end
 module MakeExtendedArrayFunctionality (Array: Array_t): ExtendedArrayFunctionality_t with type 'a tt = 'a Array.tt and type 'a elt_t = 'a Array.elt_t =
   struct
     include Array
-    let of_rlist l =
-      List.rev l |> Array.of_list
+    let ( .@() ) = Array.get
+    let ( .@()<- ) = Array.set
     let riter f a =
       for i = Array.length a - 1 downto 0 do
         Array.unsafe_get a i |> f
@@ -357,6 +361,8 @@ module MakeExtendedArrayFunctionality (Array: Array_t): ExtendedArrayFunctionali
         Array.sub a 0 n
       else
         a
+    let of_rlist l =
+      List.rev l |> Array.of_list
   end
 module Array:
   sig
