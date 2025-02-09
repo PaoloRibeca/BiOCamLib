@@ -132,16 +132,6 @@ module IntZ:
     include MakePlusPlus(IncrementableIntZ)
   end
 
-module Float:
-  sig
-    include module type of Float
-    val round: float -> float
-  end
-= struct
-    include Float
-    let round x = if x >= 0. then floor (x +. 0.5) else ceil (x -. 0.5)
-  end
-
 module Bytes:
   sig
     include module type of Bytes
@@ -285,18 +275,33 @@ module List:
         Some hd
   end
 
-module Array:
+(* Note that due to the different arities for the constructors of floatarray and 'a Array.t,
+    the following only works if we define an auxiliary type tt first and we make it the same as t later *)
+module type Array_t =
   sig
-    include module type of Array
-    val of_rlist: 'a list -> 'a array
-    val riter: ('a -> unit) -> 'a array -> unit
-    val riteri: (int -> 'a -> unit) -> 'a array -> unit
-    val iter2i: (int -> 'a -> 'b -> unit) -> 'a array -> 'b array -> unit
-    val riter2: ('a -> 'b -> unit) -> 'a array -> 'b array -> unit
-    val riter2i: (int -> 'a -> 'b -> unit) -> 'a array -> 'b array -> unit
-    val resize: ?is_buffer:bool -> int -> 'a -> 'a array -> 'a array
+    type 'a tt
+    type 'a elt_t
+    val make: int -> 'a elt_t -> 'a tt
+    val length: 'a tt -> int
+    val unsafe_get: 'a tt -> int -> 'a elt_t
+    val sub: 'a tt -> int -> int -> 'a tt
+    val blit: 'a tt -> int -> 'a tt -> int -> int -> unit
+    val of_list: 'a elt_t list -> 'a tt
   end
-= struct
+module type ExtendedArrayFunctionality_t =
+  sig
+    type 'a tt
+    type 'a elt_t
+    val of_rlist: 'a elt_t list -> 'a tt
+    val riter: ('a elt_t -> unit) -> 'a tt -> unit
+    val riteri: (int -> 'a elt_t -> unit) -> 'a tt -> unit
+    val iter2i: (int -> 'a elt_t -> 'b elt_t -> unit) -> 'a tt -> 'b tt -> unit
+    val riter2: ('a elt_t -> 'b elt_t -> unit) -> 'a tt -> 'b tt -> unit
+    val riter2i: (int -> 'a elt_t -> 'b elt_t -> unit) -> 'a tt -> 'b tt -> unit
+    val resize: ?is_buffer:bool -> int -> 'a elt_t -> 'a tt -> 'a tt
+  end
+module MakeExtendedArrayFunctionality (Array: Array_t): ExtendedArrayFunctionality_t with type 'a tt = 'a Array.tt and type 'a elt_t = 'a Array.elt_t =
+  struct
     include Array
     let of_rlist l =
       List.rev l |> Array.of_list
@@ -352,6 +357,47 @@ module Array:
         Array.sub a 0 n
       else
         a
+  end
+module Array:
+  sig
+    include module type of Array
+    include ExtendedArrayFunctionality_t with type 'a tt = 'a t and type 'a elt_t = 'a
+  end
+= struct
+    include Array
+    include MakeExtendedArrayFunctionality (
+      struct
+        include Array
+        type 'a tt = 'a t
+        type 'a elt_t = 'a
+      end
+    )
+  end
+
+module Float:
+  sig
+    include module type of Float
+    val round: float -> float
+    module Array:
+      sig
+        include module type of Float.Array
+        include ExtendedArrayFunctionality_t with type 'a tt = t and type 'a elt_t = float
+      end
+  end
+= struct
+    include Float
+    let round x = if x >= 0. then floor (x +. 0.5) else ceil (x -. 0.5)
+    module Array =
+      struct
+        include Float.Array
+        include MakeExtendedArrayFunctionality (
+          struct
+            include Float.Array
+            type 'a tt = t
+            type 'a elt_t = float
+          end
+        )
+      end
   end
 
 module Printf:
