@@ -291,6 +291,9 @@ module Array:
     val of_rlist: 'a list -> 'a array
     val riter: ('a -> unit) -> 'a array -> unit
     val riteri: (int -> 'a -> unit) -> 'a array -> unit
+    val iter2i: (int -> 'a -> 'b -> unit) -> 'a array -> 'b array -> unit
+    val riter2: ('a -> 'b -> unit) -> 'a array -> 'b array -> unit
+    val riter2i: (int -> 'a -> 'b -> unit) -> 'a array -> 'b array -> unit
     val resize: ?is_buffer:bool -> int -> 'a -> 'a array -> 'a array
   end
 = struct
@@ -304,6 +307,33 @@ module Array:
     let riteri f a =
       for i = Array.length a - 1 downto 0 do
         Array.unsafe_get a i |> f i
+      done
+    let iter2i f a_1 a_2 =
+      let l = Array.length a_1 in
+      if Array.length a_2 <> l then
+        Invalid_argument
+          (Array.length a_2 |> Printf.sprintf "(%s): The two arrays have different lengths (%d and %d)" __FUNCTION__ l)
+        |> raise;
+      for i = 0 to l - 1 do
+        f i (Array.unsafe_get a_1 i) (Array.unsafe_get a_2 i)
+      done
+    let riter2 f a_1 a_2 =
+      let l = Array.length a_1 in
+      if Array.length a_2 <> l then
+        Invalid_argument
+          (Array.length a_2 |> Printf.sprintf "(%s): The two arrays have different lengths (%d and %d)" __FUNCTION__ l)
+        |> raise;
+      for i = l - 1 downto 0 do
+        f (Array.unsafe_get a_1 i) (Array.unsafe_get a_2 i)
+      done
+    let riter2i f a_1 a_2 =
+      let l = Array.length a_1 in
+      if Array.length a_2 <> l then
+        Invalid_argument
+          (Array.length a_2 |> Printf.sprintf "(%s): The two arrays have different lengths (%d and %d)" __FUNCTION__ l)
+        |> raise;
+      for i = l - 1 downto 0 do
+        f i (Array.unsafe_get a_1 i) (Array.unsafe_get a_2 i)
       done
     let resize ?(is_buffer = false) n null a =
       let l = Array.length a in
