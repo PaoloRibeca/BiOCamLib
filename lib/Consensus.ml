@@ -25,6 +25,9 @@
 
 open Better
 
+let ( .@() ) = Bytes.( .@() )
+let ( .@()<- ) = Bytes.( .@()<- )
+
 include (
   struct
     (* PRIVATE *)
@@ -91,13 +94,13 @@ include (
           Buffer.contents buf
         let replace_side_dashes_bytes ?(replacement = ' ') seq =
           let seq_len = Bytes.length seq and first_non_dash_idx = ref 0 in
-          while !first_non_dash_idx < seq_len && seq.Bytes.@(!first_non_dash_idx) = '-' do
-            seq.Bytes.@(!first_non_dash_idx) <- replacement;
+          while !first_non_dash_idx < seq_len && seq.@(!first_non_dash_idx) = '-' do
+            seq.@(!first_non_dash_idx) <- replacement;
             incr first_non_dash_idx
           done;
           let last_non_dash_idx = seq_len - 1 |> ref in
-          while !last_non_dash_idx >= 0 && seq.Bytes.@(!last_non_dash_idx) = '-' do
-            seq.Bytes.@(!last_non_dash_idx) <- replacement;
+          while !last_non_dash_idx >= 0 && seq.@(!last_non_dash_idx) = '-' do
+            seq.@(!last_non_dash_idx) <- replacement;
             decr last_non_dash_idx
           done;
           !first_non_dash_idx, !last_non_dash_idx
@@ -155,7 +158,7 @@ include (
           let stats = ref CharMap.empty in
           Array.iter
             (fun seq ->
-              let c = seq.Bytes.@(i) in
+              let c = seq.@(i) in
               match CharMap.find_opt c !stats with
               | None ->
                 stats := CharMap.add c (ref 1) !stats
@@ -173,7 +176,7 @@ include (
           let max_n = !max_n in
           if !max_c = '-' && 100 * max_n >= min_branch_threshold * cov.(i) then begin
             max_res.(i) <- max_n;
-            res.Bytes.@(i) <- '-'
+            res.@(i) <- '-'
           end
         done;
         (* We compute the consensus by sliding k-mer window *)
@@ -198,7 +201,7 @@ include (
             (fun i_seq kmer ->
               (* We update k-mer and number of spaces *)
               if i_col > 0 then begin
-                let c = al.(i_seq).Bytes.@(consensus_window + i_col - 1) in
+                let c = al.(i_seq).@(consensus_window + i_col - 1) in
                 let old_c = KMers.SlidingWindow.add_char kmer c in
                 if old_c = ' ' then
                   n_spaces.(i_seq) <- n_spaces.(i_seq) - 1;
@@ -229,7 +232,7 @@ include (
               let i_c = i_col + i in
               if max_n > max_res.(i_c) && 100 * max_n >= min_branch_threshold * cov.(i_c) then begin
                 max_res.(i_c) <- max_n;
-                res.Bytes.@(i_c) <-
+                res.@(i_c) <-
                   (* The case conveys information about coverage *)
                   if max_n >= min_coverage then
                     Char.uppercase_ascii c
