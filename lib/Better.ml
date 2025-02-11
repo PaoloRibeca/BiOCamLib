@@ -280,31 +280,41 @@ module List:
 module type Array_t =
   sig
     type 'a tt
-    type 'a elt_t
-    val make: int -> 'a elt_t -> 'a tt
+    type 'a elt_tt
+    val make: int -> 'a elt_tt -> 'a tt
     val length: 'a tt -> int
-    val get: 'a tt -> int -> 'a elt_t
-    val unsafe_get: 'a tt -> int -> 'a elt_t
-    val set: 'a tt -> int -> 'a elt_t -> unit
+    val get: 'a tt -> int -> 'a elt_tt
+    val unsafe_get: 'a tt -> int -> 'a elt_tt
+    val set: 'a tt -> int -> 'a elt_tt -> unit
+    val unsafe_set: 'a tt -> int -> 'a elt_tt -> unit
     val sub: 'a tt -> int -> int -> 'a tt
     val blit: 'a tt -> int -> 'a tt -> int -> int -> unit
-    val of_list: 'a elt_t list -> 'a tt
+    val iter: ('a elt_tt -> unit) -> 'a tt -> unit
+    val iteri: (int -> 'a elt_tt -> unit) -> 'a tt -> unit
+    val iter2: ('a elt_tt -> 'b elt_tt -> unit) -> 'a tt -> 'b tt -> unit
+    val map: ('a elt_tt -> 'b elt_tt) -> 'a tt -> 'b tt
+    val mapi: (int -> 'a elt_tt -> 'b elt_tt) -> 'a tt -> 'b tt
+    val of_list: 'a elt_tt list -> 'a tt
+    val to_list: 'a tt -> 'a elt_tt list
   end
 module type ExtendedArrayFunctionality_t =
   sig
     type 'a tt
-    type 'a elt_t
-    val ( .@() ): 'a tt -> int -> 'a elt_t
-    val ( .@()<- ): 'a tt -> int -> 'a elt_t -> unit    
-    val riter: ('a elt_t -> unit) -> 'a tt -> unit
-    val riteri: (int -> 'a elt_t -> unit) -> 'a tt -> unit
-    val iter2i: (int -> 'a elt_t -> 'b elt_t -> unit) -> 'a tt -> 'b tt -> unit
-    val riter2: ('a elt_t -> 'b elt_t -> unit) -> 'a tt -> 'b tt -> unit
-    val riter2i: (int -> 'a elt_t -> 'b elt_t -> unit) -> 'a tt -> 'b tt -> unit
-    val resize: ?is_buffer:bool -> int -> 'a elt_t -> 'a tt -> 'a tt
-    val of_rlist: 'a elt_t list -> 'a tt
+    type 'a elt_tt
+    val ( .@() ): 'a tt -> int -> 'a elt_tt
+    val ( .@()<- ): 'a tt -> int -> 'a elt_tt -> unit    
+    val riter: ('a elt_tt -> unit) -> 'a tt -> unit
+    val riteri: (int -> 'a elt_tt -> unit) -> 'a tt -> unit
+    val iter2i: (int -> 'a elt_tt -> 'b elt_tt -> unit) -> 'a tt -> 'b tt -> unit
+    val riter2: ('a elt_tt -> 'b elt_tt -> unit) -> 'a tt -> 'b tt -> unit
+    val riter2i: (int -> 'a elt_tt -> 'b elt_tt -> unit) -> 'a tt -> 'b tt -> unit
+    val map2: ('a elt_tt -> 'b elt_tt -> 'c elt_tt) -> 'a tt -> 'b tt -> 'c tt
+    val map2i: (int -> 'a elt_tt -> 'b elt_tt -> 'c elt_tt) -> 'a tt -> 'b tt -> 'c tt
+    val resize: ?is_buffer:bool -> int -> 'a elt_tt -> 'a tt -> 'a tt
+    val of_rlist: 'a elt_tt list -> 'a tt
+    val to_rlist: 'a tt -> 'a elt_tt list
   end
-module MakeExtendedArrayFunctionality (Array: Array_t): ExtendedArrayFunctionality_t with type 'a tt = 'a Array.tt and type 'a elt_t = 'a Array.elt_t =
+module MakeExtendedArrayFunctionality (Array: Array_t): ExtendedArrayFunctionality_t with type 'a tt = 'a Array.tt and type 'a elt_tt = 'a Array.elt_tt =
   struct
     include Array
     let ( .@() ) = Array.get
@@ -317,34 +327,38 @@ module MakeExtendedArrayFunctionality (Array: Array_t): ExtendedArrayFunctionali
       for i = Array.length a - 1 downto 0 do
         Array.unsafe_get a i |> f i
       done
+    let check__raise_different_lengths l_1 l_2 =
+      if l_1 <> l_2 then 
+        Invalid_argument
+          (Printf.sprintf "(%s): The two arrays have different lengths (%d and %d)" __FUNCTION__ l_1 l_2)
+        |> raise
     let iter2i f a_1 a_2 =
       let l = Array.length a_1 in
-      if Array.length a_2 <> l then
-        Invalid_argument
-          (Array.length a_2 |> Printf.sprintf "(%s): The two arrays have different lengths (%d and %d)" __FUNCTION__ l)
-        |> raise;
+      Array.length a_2 |> check__raise_different_lengths l;
       for i = 0 to l - 1 do
         f i (Array.unsafe_get a_1 i) (Array.unsafe_get a_2 i)
       done
     let riter2 f a_1 a_2 =
       let l = Array.length a_1 in
-      if Array.length a_2 <> l then
-        Invalid_argument
-          (Array.length a_2 |> Printf.sprintf "(%s): The two arrays have different lengths (%d and %d)" __FUNCTION__ l)
-        |> raise;
+      Array.length a_2 |> check__raise_different_lengths l;
       for i = l - 1 downto 0 do
         f (Array.unsafe_get a_1 i) (Array.unsafe_get a_2 i)
       done
     let riter2i f a_1 a_2 =
       let l = Array.length a_1 in
-      if Array.length a_2 <> l then
-        Invalid_argument
-          (Array.length a_2 |> Printf.sprintf "(%s): The two arrays have different lengths (%d and %d)" __FUNCTION__ l)
-        |> raise;
+      Array.length a_2 |> check__raise_different_lengths l;
       for i = l - 1 downto 0 do
         f i (Array.unsafe_get a_1 i) (Array.unsafe_get a_2 i)
       done
-    let resize ?(is_buffer = false) n null a =
+    let map2 f a_1 a_2 =
+      let l = Array.length a_1 in
+      Array.length a_2 |> check__raise_different_lengths l;
+      Array.mapi (fun i e_1 -> f e_1 a_2.@(i)) a_1
+    let map2i f a_1 a_2 =
+      let l = Array.length a_1 in
+      Array.length a_2 |> check__raise_different_lengths l;
+      Array.mapi (fun i e_1 -> f i e_1 a_2.@(i)) a_1
+    let resize ?(is_buffer = false) n fill_with a =
       let l = Array.length a in
       if n > l then begin
         let res =
@@ -353,7 +367,7 @@ module MakeExtendedArrayFunctionality (Array: Array_t): ExtendedArrayFunctionali
               max n (l * 14 / 10)
             else
               n
-          end null in
+          end fill_with in
         Array.blit a 0 res 0 l;
         res
       end else if n < l && not is_buffer then
@@ -363,11 +377,13 @@ module MakeExtendedArrayFunctionality (Array: Array_t): ExtendedArrayFunctionali
         a
     let of_rlist l =
       List.rev l |> Array.of_list
+    let to_rlist a =
+      Array.to_list a |> List.rev
   end
 module Array:
   sig
     include module type of Array
-    include ExtendedArrayFunctionality_t with type 'a tt = 'a t and type 'a elt_t = 'a
+    include ExtendedArrayFunctionality_t with type 'a tt = 'a t and type 'a elt_tt = 'a
   end
 = struct
     include Array
@@ -375,7 +391,7 @@ module Array:
       struct
         include Array
         type 'a tt = 'a t
-        type 'a elt_t = 'a
+        type 'a elt_tt = 'a
       end
     )
   end
@@ -387,7 +403,7 @@ module Float:
     module Array:
       sig
         include module type of Float.Array
-        include ExtendedArrayFunctionality_t with type 'a tt = t and type 'a elt_t = float
+        include ExtendedArrayFunctionality_t with type 'a tt = t and type 'a elt_tt = float
       end
   end
 = struct
@@ -400,7 +416,7 @@ module Float:
           struct
             include Float.Array
             type 'a tt = t
-            type 'a elt_t = float
+            type 'a elt_tt = float
           end
         )
       end

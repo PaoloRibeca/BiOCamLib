@@ -188,9 +188,9 @@ module type Vector_t =
     val empty: t
     val length: t -> int
     val get: t -> int -> N.t
-    val ( .@() ): t -> int -> N.t
+    val unsafe_get: t -> int -> N.t
     val set: t -> int -> N.t -> unit
-    val ( .@()<- ): t -> int -> N.t -> unit
+    val unsafe_set: t -> int -> N.t -> unit
     val incr: t -> int -> unit
     val ( .+() ): t -> int -> unit
     val ( .++() ): t -> int -> unit
@@ -204,7 +204,17 @@ module type Vector_t =
     val sub: t -> int -> int -> t
     val blit: t -> int -> t -> int -> int -> unit
     val fill: t -> int -> int -> N.t -> unit
+    val iter: (N.t -> unit) -> t -> unit
+    val iteri: (int -> N.t -> unit) -> t -> unit
+    val iter2: (N.t -> N.t -> unit) -> t -> t -> unit
+    val map: (N.t -> N.t) -> t -> t
+    val mapi: (int -> N.t -> N.t) -> t -> t
+    (* More iterators *)
+    include ExtendedArrayFunctionality_t with type 'a tt = t and type 'a elt_tt = N.t
+    (* We override the definition in ExtendedArrayFunctionality *)
     val resize: ?is_buffer:bool -> ?fill_with:N.t -> int -> t -> t
+    val of_list: N.t list -> t
+    val to_list: t -> N.t list
     val to_floatarray: t -> floatarray
     val of_floatarray: floatarray -> t
   end
@@ -232,25 +242,10 @@ module Floatarray =
         let ( .--() ) = decr
         let decr_by fa i n = FA.(set fa i N.(get fa i - n)) [@@inline]
         let ( .-()<- ) = decr_by
+        (* As Float.Array already includes ExtendedArrayFunctionality_t,
+            the only thing we need to do here is redefine resize () *)
         let resize ?(is_buffer = false) ?(fill_with = N.zero) n fa =
-          let l = length fa in
-          if n > l then begin
-            let res =
-              make begin
-                if is_buffer then
-                  max n (l * 14 / 10)
-                else
-                  n
-              end fill_with in
-            FA.(blit fa 0 res 0 l);
-            res
-          end else if n < l && not is_buffer then
-            (* We have to resize in order to honour the request *)
-            let res = make n fill_with in
-            FA.(blit fa 0 res 0 n);
-            res
-          else
-            fa
+          FA.resize ~is_buffer n fill_with fa
         let to_floatarray fa:t = fa [@@inline]
         let of_floatarray fa:t = fa [@@inline]
       end
@@ -290,50 +285,132 @@ module Bigarray:
         let length = BA1.dim
         let get = BA1.get
         let ( .@() ) = BA1.get
+        let unsafe_get = BA1.unsafe_get
         let set = BA1.set
         let ( .@()<- ) = BA1.set
-        let incr ba n = BA1.(set ba n N.(get ba n + one)) [@@inline]
+        let unsafe_set = BA1.unsafe_set
+        let incr ba n = ba.@(n) <- N.(ba.@(n) + one) [@@inline]
         let ( .+() ) = incr
         let ( .++() ) = incr
-        let incr_by ba n v = BA1.(set ba n N.(get ba n + v)) [@@inline]
+        let incr_by ba n v = ba.@(n) <- N.(ba.@(n) + v) [@@inline]
         let ( .+()<- ) = incr_by
-        let decr ba n = BA1.(set ba n N.(get ba n - one)) [@@inline]
+        let decr ba n = ba.@(n) <- N.(ba.@(n) - one) [@@inline]
         let ( .-() ) = decr
         let ( .--() ) = decr
-        let decr_by ba n v = BA1.(set ba n N.(get ba n - v)) [@@inline]
+        let decr_by ba n v = ba.@(n) <- N.(ba.@(n) - v) [@@inline]
         let ( .-()<- ) = decr_by
         let sub = BA1.sub
         let blit ba_1 i_1 ba_2 i_2 l = BA1.(blit (sub ba_1 i_1 l) (sub ba_2 i_2 l))
         let fill ba i l n = BA1.(fill (sub ba i l) n)
-        let resize ?(is_buffer = false) ?(fill_with = N.zero) n v =
-          let l = length v in
-          if n > l then begin
-            let res =
-              make begin
-                if is_buffer then
-                  max n (l * 14 / 10)
-                else
-                  n
-              end fill_with in
-            BA1.(blit v (sub res 0 l));
-            res
-          end else if n < l && not is_buffer then
-            (* We have to resize in order to honour the request *)
-            let res = make n fill_with in
-            BA1.(blit (sub v 0 n) res);
-            res
-          else
-            v
+        let iter f v =
+          for i = 0 to length v - 1 do
+            f v.@(i)
+          done
+        let iteri f v =
+          for i = 0 to length v - 1 do
+            f i v.@(i)
+          done
+        let iter2 f v_1 v_2 =
+          let l = length v_1 in
+          if length v_2 <> l then
+            Invalid_argument
+              (Printf.sprintf "(%s): Arguments have incompatible lengths (%d and %d)" __FUNCTION__ l (length v_2))
+            |> raise;
+          for i = 0 to l - 1 do
+            f v_1.@(i) v_2.@(i)
+          done
+        let map f v =
+          let n = length v in
+          let res = BA1.create T.elt Bigarray.C_layout n in
+          iteri (fun i el -> res.@(i) <- f el) v;
+          res
+        let mapi f v =
+          let n = length v in
+          let res = BA1.create T.elt Bigarray.C_layout n in
+          iteri (fun i el -> res.@(i) <- f i el) v;
+          res
+        let of_list l =
+          let n = List.length l in
+          let res = BA1.create T.elt Bigarray.C_layout n in
+          List.iteri (fun i el -> res.@(i) <- el) l;
+          res
+        let to_list v =
+          let res = ref [] in
+          (* We iterate backwards so as not to have to invert the result at the end *)
+          for i = length v - 1 downto 0 do
+            Better.List.accum res v.@(i)
+          done;
+          !res
+        include MakeExtendedArrayFunctionality (
+          struct
+            type 'a tt = (N.t, T.elt_t, Bigarray.c_layout) BA1.t
+            type 'a elt_tt = N.t
+            let length = length
+            let get = get
+            let unsafe_get = unsafe_get
+            let set = set
+            let unsafe_set = unsafe_set
+            let make = make
+            let sub = sub
+            let blit = blit
+            let iter = iter
+            let iteri = iteri
+            let iter2 = iter2
+            let map = map
+            let mapi = mapi
+            let of_list = of_list
+            let to_list = to_list
+          end
+        )
+        let resize ?(is_buffer = false) ?(fill_with = N.zero) n fa =
+          resize ~is_buffer n fill_with fa
         let to_floatarray v =
           let l = length v in
           let res = Better.Float.Array.make l 0. in
           for i = 0 to l - 1 do
-            N.to_float v.@(i) |> Better.Float.Array.set res i
+            res.Better.Float.Array.@(i) <- N.to_float v.@(i)
           done;
           res
         let of_floatarray f =
-          init (Better.Float.Array.length f) (fun i -> N.of_float Better.Float.Array.(get f i))
+          init (Better.Float.Array.length f) (fun i -> N.of_float f.Better.Float.Array.@(i))
       end
+  end
+
+module LinearFit (V: Vector_t):
+  sig
+    type t
+    val get_intercept: t -> V.N.t
+    val get_slope: t -> V.N.t
+    (* We return model, predictions and differences/residuals *)
+    val make: V.t -> V.t -> t * V.t * V.t
+    val predict: t -> V.t -> V.t
+  end
+= struct
+    module N = V.N
+    type t = {
+      intercept: N.t;
+      slope: N.t;
+    }
+    let get_intercept m = m.intercept [@@inline]
+    let get_slope m = m.slope [@@inline]
+    let predict m = V.map (fun x -> N.(x * m.slope + m.intercept))
+    let make x y =
+      let sum_x = ref N.zero and sum_y = ref N.zero and sum_xx = ref N.zero and sum_xy = ref N.zero in
+      V.iter2
+        (fun x y ->
+          N.(sum_x := !sum_x + x);
+          N.(sum_y := !sum_y + y);
+          N.(sum_xx := !sum_xx + x * x);
+          N.(sum_xy := !sum_xy + x * y))
+        x y;
+      let sum_x = !sum_x and sum_y = !sum_y and sum_xx = !sum_xx and sum_xy = !sum_xy and n = V.length x |> N.of_int in
+      let denominator = N.(n * sum_xx - sum_x * sum_x) in
+      let m = {
+        intercept = N.((sum_y * sum_xx - sum_x * sum_xy) / denominator);
+        slope = N.((n * sum_xy - sum_x * sum_y) / denominator)
+      } in
+      let prediction = predict m x in
+      m, prediction, V.map2 (fun y_1 y_2 -> N.(y_1 - y_2)) prediction y
   end
 
 (* Functor to wrap uniform numbers into comparable types *)
