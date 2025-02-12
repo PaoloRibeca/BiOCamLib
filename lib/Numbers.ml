@@ -385,6 +385,7 @@ module LinearFit (V: Vector_t):
     val get_intercept: t -> V.N.t
     val get_slope: t -> V.N.t
     (* We return model, predictions and differences/residuals *)
+    exception SingularInput
     val make: V.t -> V.t -> t * V.t * V.t
     val predict: t -> V.t -> V.t
   end
@@ -397,6 +398,7 @@ module LinearFit (V: Vector_t):
     let get_intercept m = m.intercept [@@inline]
     let get_slope m = m.slope [@@inline]
     let predict m = V.map (fun x -> N.(x * m.slope + m.intercept))
+    exception SingularInput
     let make x y =
       let sum_x = ref N.zero and sum_y = ref N.zero and sum_xx = ref N.zero and sum_xy = ref N.zero in
       V.iter2
@@ -408,6 +410,8 @@ module LinearFit (V: Vector_t):
         x y;
       let sum_x = !sum_x and sum_y = !sum_y and sum_xx = !sum_xx and sum_xy = !sum_xy and n = V.length x |> N.of_int in
       let denominator = N.(n * sum_xx - sum_x * sum_x) in
+      if denominator = N.zero then
+        raise SingularInput;
       let m = {
         intercept = N.((sum_y * sum_xx - sum_x * sum_xy) / denominator);
         slope = N.((n * sum_xy - sum_x * sum_y) / denominator)
