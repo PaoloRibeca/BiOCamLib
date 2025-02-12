@@ -226,7 +226,7 @@ module Floatarray =
     module type Type_t = Vector_t
     module Vector: Vector_t =
       struct
-        module N = Scalar(BaseFloat)
+        module N = Float
         module FA = Better.Float.Array
         include FA
         let empty = FA.make 0 0.
@@ -375,6 +375,9 @@ module Bigarray:
           init (Better.Float.Array.length f) (fun i -> N.of_float f.Better.Float.Array.@(i))
       end
   end
+
+module FAVector = Floatarray.Vector
+module BAVector = Bigarray.Vector
 
 module LinearFit (V: Vector_t):
   sig
@@ -677,4 +680,6 @@ module Frequencies:
           res
       end
   end
+
+module FreqVector = Frequencies.Vector
 
