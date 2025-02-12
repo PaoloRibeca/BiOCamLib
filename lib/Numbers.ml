@@ -413,7 +413,7 @@ module LinearFit (V: Vector_t):
         slope = N.((n * sum_xy - sum_x * sum_y) / denominator)
       } in
       let prediction = predict m x in
-      m, prediction, V.map2 (fun y_1 y_2 -> N.(y_1 - y_2)) prediction y
+      m, prediction, V.map2 (fun y_1 y_2 -> N.(y_1 - y_2)) y prediction
   end
 
 (* Functor to wrap uniform numbers into comparable types *)
