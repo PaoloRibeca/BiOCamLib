@@ -302,7 +302,7 @@ module type ExtendedArrayFunctionality_t =
     type 'a tt
     type 'a elt_tt
     val ( .@() ): 'a tt -> int -> 'a elt_tt
-    val ( .@()<- ): 'a tt -> int -> 'a elt_tt -> unit    
+    val ( .@()<- ): 'a tt -> int -> 'a elt_tt -> unit
     val riter: ('a elt_tt -> unit) -> 'a tt -> unit
     val riteri: (int -> 'a elt_tt -> unit) -> 'a tt -> unit
     val iter2i: (int -> 'a elt_tt -> 'b elt_tt -> unit) -> 'a tt -> 'b tt -> unit
