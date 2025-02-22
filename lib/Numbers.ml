@@ -177,6 +177,69 @@ module Int64 = Scalar(BaseInt64)
 module IntZ = Scalar(BaseIntZ)
 module Float = Scalar(BaseFloat)
 
+module OnlineStats (N: Scalar_t):
+  sig
+    type t
+    val make: unit -> t
+    val clear: t -> unit
+    val add: t -> N.t -> unit
+    val count: t -> int
+    val mean: t -> float
+    val variance: t -> float
+    val standard_deviation: t -> float
+    val coefficient_of_variation: t -> float
+    val sample_variance: t -> float
+    val sample_standard_deviation: t -> float
+    val sample_coefficient_of_variation: t -> float
+  end
+= struct
+    type t = {
+      mutable count: int;
+      mutable mean: float;
+      mutable m_2: float
+    }
+    let make () = {
+      count = 0;
+      mean = 0.;
+      m_2 = 0.
+    }
+    let clear ov =
+      ov.count <- 0;
+      ov.mean <- 0.;
+      ov.m_2 <- 0.
+    let add ov n =
+      let n = N.to_float n in
+      ov.count <- ov.count + 1;
+      let delta = n -. ov.mean in
+      ov.mean <- ov.mean +. delta /. float_of_int ov.count;
+      let delta_2 = n -. ov.mean in
+      ov.m_2 <- ov.m_2 +. delta *. delta_2
+    let count ov = ov.count [@@inline]
+    let mean ov = ov.mean [@@inline]
+    let variance ov =
+      if ov.count < 1 then
+        0.
+      else
+        ov.m_2 /. float_of_int ov.count
+    let standard_deviation ov = variance ov |> sqrt
+    let coefficient_of_variation ov =
+      if ov.count < 1 || ov.mean = 0. then
+        0.
+      else
+        standard_deviation ov /. mean ov
+    let sample_variance ov =
+      if ov.count < 2 then
+        0.
+      else
+        ov.m_2 /. float_of_int (ov.count - 1)
+    let sample_standard_deviation ov = sample_variance ov |> sqrt
+    let sample_coefficient_of_variation ov =
+      if ov.count < 1 || ov.mean = 0. then
+        0.
+      else
+        (1. +. 1. /. (4. *. float_of_int ov.count)) *. sample_standard_deviation ov /. ov.mean
+  end
+
 (* As we have redefined Float, from now on Float.Array will be Better.Float.Array *)
 
 module type Vector_t =
