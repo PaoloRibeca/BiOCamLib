@@ -503,7 +503,8 @@ module type FrequenciesVector_t =
     module N: Scalar_t
     module C: MakeComparableNumber_t
     type t
-    val empty: ?non_negative:bool -> unit -> t
+    val make: ?non_negative:bool -> unit -> t
+    val clear: t -> unit
     val is_non_negative: t -> bool
     exception Negative_element of N.t
     val add: t -> N.t -> unit
@@ -522,8 +523,20 @@ module type FrequenciesVector_t =
     val most_frequent: t -> N.t * int
     val median: t -> N.t
     val sum: t -> N.t
+    val mean: t -> float
     val sum_abs: t -> N.t
+    val mean_abs: t -> float
     val sum_log_abs: t -> float
+    val mean_log_abs: t -> float
+    val variance: t -> float
+    val variance_abs: t -> float
+    val sample_variance: t -> float
+    val sample_variance_abs: t -> float
+    val standard_deviation: t -> float
+    val standard_deviation_abs: t -> float
+    val sample_standard_deviation: t -> float
+    val sample_standard_deviation_abs: t -> float
+    (* The following two are expensive as they recompute the vector *)
     val pow_abs: N.t -> t -> t
     val normalize_abs: t -> t
     exception Invalid_threshold of float
@@ -561,7 +574,7 @@ module Frequencies:
           (* The lowest element of the median pair and its offset within its group *)
           mutable median: N.t * int
         }
-        let empty ?(non_negative = false) () = {
+        let make ?(non_negative = false) () = {
           non_negative = non_negative;
           data = M.empty;
           length = 0;
@@ -573,6 +586,16 @@ module Frequencies:
           most_frequent = N.zero, 0;
           median = N.zero, 0
         }
+        let clear fv =
+          fv.data <- M.empty;
+          fv.length <- 0;
+          fv.sum <- N.zero;
+          fv.sum_abs <- N.zero;
+          fv.sum_log_abs <- 0.;
+          fv.unnorm_variance <- 0.;
+          fv.unnorm_variance_abs <- 0.;
+          fv.most_frequent <- N.zero, 0;
+          fv.median <- N.zero, 0
         let is_non_negative fv = fv.non_negative
         exception Negative_element of N.t
         let add fv n =
@@ -627,11 +650,9 @@ module Frequencies:
               f el !r)
             fv.data
           [@@inline]
-        let length { length; _ } =
-          length
-          [@@inline]
-        let frequency { data; _ } n =
-          match M.find_opt n data with
+        let length fv = fv.length [@@inline]
+        let frequency fv n =
+          match M.find_opt n fv.data with
           | None -> 0
           | Some n -> !n
         exception Empty
@@ -669,20 +690,31 @@ module Frequencies:
             end
           end else
             median_n
-        let sum { sum; _ } =
-          sum
+        let sum fv = fv.sum [@@inline]
+        let _mean length what =
+          if length = 0 then
+            0.
+          else
+            what /. float_of_int length
           [@@inline]
-        let sum_abs { sum_abs; _ } =
-          sum_abs
-          [@@inline]
-        let sum_log_abs { sum_log_abs; _ } =
-          sum_log_abs
-          [@@inline]
+        let mean fv = _mean fv.length (N.to_float fv.sum) [@@inline]
+        let sum_abs fv = fv.sum_abs [@@inline]
+        let mean_abs fv = _mean fv.length (N.to_float fv.sum_abs) [@@inline]
+        let sum_log_abs fv = fv.sum_log_abs [@@inline]
+        let mean_log_abs fv = _mean fv.length fv.sum_log_abs [@@inline]
+        let variance fv = _mean fv.length fv.unnorm_variance [@@inline]
+        let sample_variance fv = _mean (fv.length - 1) fv.unnorm_variance [@@inline]
+        let variance_abs fv = _mean fv.length fv.unnorm_variance_abs [@@inline]
+        let sample_variance_abs fv = _mean (fv.length - 1) fv.unnorm_variance_abs [@@inline]
+        let standard_deviation fv = variance fv |> sqrt [@@inline]
+        let sample_standard_deviation fv = sample_variance fv |> sqrt [@@inline]
+        let standard_deviation_abs fv = variance_abs fv |> sqrt [@@inline]
+        let sample_standard_deviation_abs fv = sample_variance_abs fv |> sqrt [@@inline]
         let pow_abs p fv =
           if p = N.one then
             fv
           else begin
-            let res = empty ~non_negative:true () in
+            let res = make ~non_negative:true () in
             M.iter
               (fun el freq ->
                 for _ = 1 to !freq do
@@ -697,7 +729,7 @@ module Frequencies:
             (* If acc = 0, all elements must be 0 *)
             fv
           else begin
-            let res = empty ~non_negative:true () in
+            let res = make ~non_negative:true () in
             M.iter
               (fun el freq ->
                 for _ = 1 to !freq do
@@ -714,7 +746,7 @@ module Frequencies:
           if t = 1. then
             fv
           else begin
-            let t = t *. N.to_float fv.sum_abs |> N.of_float and res = empty ~non_negative:true () in
+            let t = t *. N.to_float fv.sum_abs |> N.of_float and res = make ~non_negative:true () in
             let acc = ref N.zero in
             M.iter
               (fun el freq ->
@@ -726,7 +758,7 @@ module Frequencies:
             res
           end
         let of_floatarray fa =
-          let res = empty ~non_negative:true () and non_negative = ref true in
+          let res = make ~non_negative:true () and non_negative = ref true in
           Better.Float.Array.iter
             (fun el ->
               if el < 0. then
