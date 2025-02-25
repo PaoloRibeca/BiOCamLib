@@ -625,9 +625,10 @@ module Frequencies:
           if new_frequency > old_largest_frequency then
             fv.most_frequent <- n, new_frequency;
           let median_n, median_idx = fv.median in
-          (* Is_even is_right *)
+          (* Is_even is_right.
+             However, we are computing is_even of the _updated_ length *)
           match (fv.length / 2) * 2 = fv.length, CN.compare n median_n >= 0 with
-          | false, false ->
+          | true, false ->
             if median_idx > 0 then
               fv.median <- median_n, median_idx - 1
             else begin
@@ -635,7 +636,7 @@ module Frequencies:
               let max_left_n, max_left_freq = M.max_binding left in
               fv.median <- max_left_n, !max_left_freq - 1
             end
-          | true, true ->
+          | false, true ->
             if median_idx <= new_frequency - 2 then
               fv.median <- median_n, median_idx + 1
             else begin
@@ -643,7 +644,7 @@ module Frequencies:
               let min_right_n, _ = M.min_binding right in
               fv.median <- min_right_n, 0
             end
-          | false, true | true, false -> ()
+          | true, true | false, false -> ()
         let iter f fv =
           M.iter
             (fun el r ->
@@ -681,13 +682,13 @@ module Frequencies:
         let median { data; length; median = median_n, median_idx; _ } =
           if (length / 2) * 2 = length then begin
             let median_freq = M.find median_n data in
-            if median_idx <= !median_freq - 2 then
-              median_n
-            else begin
+            if median_idx = !median_freq - 1 then begin
               let _, _, right = M.split median_n data in
+              (* In this case there must be a point to the right *)
               let min_right_n, _ = M.min_binding right in
               N.((median_n + min_right_n) / two)
-            end
+            end else
+              median_n
           end else
             median_n
         let sum fv = fv.sum [@@inline]
