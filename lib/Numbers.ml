@@ -647,6 +647,7 @@ module Frequencies:
               | _, None, _ -> assert false
               | _, Some old_median_freq, right ->
                 if old_median_idx = !old_median_freq - 1 then begin
+                  (* In this case there must be a point to the right *)
                   let min_right_n, _ = M.min_binding right in
                   fv.median <- min_right_n, 0
                 end else
