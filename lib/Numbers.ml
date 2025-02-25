@@ -624,27 +624,32 @@ module Frequencies:
           and _, old_largest_frequency = fv.most_frequent in
           if new_frequency > old_largest_frequency then
             fv.most_frequent <- n, new_frequency;
-          let median_n, median_idx = fv.median in
-          (* Is_even is_right.
-             However, we are computing is_even of the _updated_ length *)
-          match (fv.length / 2) * 2 = fv.length, CN.compare n median_n >= 0 with
-          | true, false ->
-            if median_idx > 0 then
-              fv.median <- median_n, median_idx - 1
+          let old_median_n, old_median_idx = fv.median in
+          (* Is_even is_left.
+             However, we are computing is_even of the _updated_ length.
+             On the other hand, median_idx is the _old_ one *)
+          match (fv.length / 2) * 2 = fv.length, CN.compare n old_median_n < 0 with
+          | true, true ->
+            (* In this case the pointer must move left *)
+            if old_median_idx > 0 then
+              fv.median <- old_median_n, old_median_idx - 1
             else begin
-              let left, _, _ = M.split median_n fv.data in
+              let left, _, _ = M.split old_median_n fv.data in
               let max_left_n, max_left_freq = M.max_binding left in
               fv.median <- max_left_n, !max_left_freq - 1
             end
-          | false, true ->
-            if median_idx <= new_frequency - 2 then
-              fv.median <- median_n, median_idx + 1
-            else begin
-              let _, _, right = M.split median_n fv.data in
-              let min_right_n, _ = M.min_binding right in
-              fv.median <- min_right_n, 0
+          | false, false ->
+            (* In this case the pointer must move right *)
+            begin match M.split old_median_n fv.data with
+            | _, None, _ -> assert false
+            | _, Some old_median_freq, right ->
+              if old_median_idx = !old_median_freq - 1 then begin
+                let min_right_n, _ = M.min_binding right in
+                fv.median <- min_right_n, 0
+              end else
+                fv.median <- old_median_n, old_median_idx + 1
             end
-          | true, true | false, false -> ()
+          | true, false | false, true -> ()
         let iter f fv =
           M.iter
             (fun el r ->
