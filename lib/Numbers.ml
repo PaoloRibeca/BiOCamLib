@@ -484,24 +484,35 @@ module LinearFit (V: Vector_t):
   end
 
 (* Functor to wrap uniform numbers into comparable types *)
-module type MakeComparableNumber_t = functor (N: Scalar_t) -> ComparableType_t with type t = N.t
-module MakeComparableNumber (N: Scalar_t): ComparableType_t with type t = N.t =
-  struct
-    type t = N.t
-    (* Informs the compiler that polymorphism is not needed *)
-    let compare (a:t) (b:t) = compare a b [@@inline]
+module type ComparableScalar_t =
+  sig
+    include Scalar_t
+    module C: ComparableType_t with type t = t
   end
-module MakeRComparableNumber (N: Scalar_t): ComparableType_t with type t = N.t =
+module MakeComparableNumber (N: Scalar_t): ComparableScalar_t =
   struct
-    type t = N.t
-    (* Informs the compiler that polymorphism is not needed *)
-    let compare (a:t) (b:t) = compare b a [@@inline]
+    include N
+    module C =
+      struct
+        type t = N.t
+        (* Informs the compiler that polymorphism is not needed *)
+        let compare (a:N.t) (b:N.t) = compare a b [@@inline]
+      end
+  end
+module MakeRComparableNumber (N: Scalar_t): ComparableScalar_t =
+  struct
+    include N
+    module C =
+      struct
+        type t = N.t
+        (* Informs the compiler that polymorphism is not needed *)
+        let compare (a:N.t) (b:N.t) = compare b a [@@inline]
+      end
   end
   
 module type FrequenciesVector_t =
   sig
-    module N: Scalar_t
-    module C: MakeComparableNumber_t
+    module N: ComparableScalar_t
     type t
     val make: ?non_negative:bool -> unit -> t
     val clear: t -> unit
@@ -551,265 +562,255 @@ module type FrequenciesVector_t =
     val to_floatarray: t -> Better.Float.Array.t
   end
 
-module Frequencies:
-  sig
-    module type Type_t = FrequenciesVector_t
-    module Vector: functor (NT: Scalar_t) (MCN: MakeComparableNumber_t) -> Type_t with module N = NT and module C = MCN
-  end
-= struct
-    module type Type_t = FrequenciesVector_t
-    module Vector (NT: Scalar_t) (MCN: MakeComparableNumber_t) =
-      struct
-        module N = NT
-        module C = MCN
-        module CN = C(N)
-        module M = Map.Make(C(N))
-        type t = {
-          non_negative: bool;
-          mutable data: int ref M.t;
-          mutable length: int;
-          mutable sum: N.t;
-          mutable sum_abs: N.t;
-          mutable sum_log_abs: float;
-          mutable unnorm_variance: float;
-          mutable unnorm_variance_abs: float;
-          (* The most frequent element and its frequency *)
-          mutable most_frequent: N.t * int;
-          (* The lowest element of the median pair and its offset within its group *)
-          mutable median: N.t * int
-        }
-        let make ?(non_negative = false) () = {
-          non_negative = non_negative;
-          data = M.empty;
-          length = 0;
-          sum = N.zero;
-          sum_abs = N.zero;
-          sum_log_abs = 0.;
-          unnorm_variance = 0.;
-          unnorm_variance_abs = 0.;
-          most_frequent = N.zero, 0;
-          median = N.zero, 0
-        }
-        let clear fv =
-          fv.data <- M.empty;
-          fv.length <- 0;
-          fv.sum <- N.zero;
-          fv.sum_abs <- N.zero;
-          fv.sum_log_abs <- 0.;
-          fv.unnorm_variance <- 0.;
-          fv.unnorm_variance_abs <- 0.;
-          fv.most_frequent <- N.zero, 0;
-          fv.median <- N.zero, 0
-        let is_non_negative fv = fv.non_negative
-        exception Negative_element of N.t
-        let add fv n =
-          if fv.non_negative && n < N.zero then
-            Negative_element n |> raise;
-          begin match M.find_opt n fv.data with
-          | None ->
-            fv.data <- M.add n (ref 1) fv.data
-          | Some r ->
-            incr r
-          end;
-          let abs_n = N.abs n
-          and old_length = fv.length and old_length_N = N.of_int fv.length in
-          fv.length <- fv.length + 1;
-          let quantity = N.(old_length_N * n - fv.sum |> to_float)
-          and quantity_abs = N.(old_length_N * abs_n - fv.sum_abs |> to_float) in
-          let normalisation = 1. /. (old_length * fv.length |> float_of_int) in
-          fv.unnorm_variance <- fv.unnorm_variance +. quantity *. quantity *. normalisation;
-          fv.unnorm_variance_abs <- fv.unnorm_variance_abs +. quantity_abs *. quantity_abs *. normalisation;
-          (* THESE TWO SUMS MUST NOT BE UPDATED EARLIER *)
-          fv.sum <- N.(fv.sum + n);
-          fv.sum_abs <- N.(fv.sum_abs + abs_n);
-          let abs_n_f = N.to_float abs_n in
-          fv.sum_log_abs <- fv.sum_log_abs +. log abs_n_f;
-          let new_frequency = !(M.find n fv.data)
-          and _, old_largest_frequency = fv.most_frequent in
-          if new_frequency > old_largest_frequency then
-            fv.most_frequent <- n, new_frequency;
-          let old_median_n, old_median_idx = fv.median in
-          if fv.length = 1 then
-            fv.median <- n, 0
-          else
-            (* Is_even is_left.
-               However, we are computing is_even of the _updated_ length.
-               On the other hand, median_idx is the _old_ one *)
-            match (fv.length / 2) * 2 = fv.length, CN.compare n old_median_n < 0 with
-            | true, true ->
-              (* In this case the pointer must move left *)
-              if old_median_idx > 0 then
-                fv.median <- old_median_n, old_median_idx - 1
-              else begin
-                let left, _, _ = M.split old_median_n fv.data in
-                let max_left_n, max_left_freq = M.max_binding left in
-                fv.median <- max_left_n, !max_left_freq - 1
-              end
-            | false, false ->
-              (* In this case the pointer must move right *)
-              begin match M.split old_median_n fv.data with
-              | _, None, _ -> assert false
-              | _, Some old_median_freq, right ->
-                if old_median_idx = !old_median_freq - 1 then begin
-                  (* In this case there must be a point to the right *)
-                  let min_right_n, _ = M.min_binding right in
-                  fv.median <- min_right_n, 0
-                end else
-                  fv.median <- old_median_n, old_median_idx + 1
-              end
-            | true, false | false, true -> ()
-        let iter f fv =
-          M.iter
-            (fun el r ->
-              f el !r)
-            fv.data
-          [@@inline]
-        let length fv = fv.length [@@inline]
-        let frequency fv n =
-          match M.find_opt n fv.data with
-          | None -> 0
-          | Some n -> !n
-        exception Empty
-        let first fv =
-          match M.min_binding_opt fv.data with
-          | None -> raise Empty
-          | Some (n, _) -> n
-        let first_opt fv =
-          match M.min_binding_opt fv.data with
-          | None -> None
-          | Some (n, _) -> Some n
-        let last fv =
-          match M.max_binding_opt fv.data with
-          | None -> raise Empty
-          | Some (n, _) -> n
-        let last_opt fv =
-          match M.max_binding_opt fv.data with
-          | None -> None
-          | Some (n, _) -> Some n
-        let most_frequent { length; most_frequent; _ } =
-          if length = 0 then
-            raise Empty
-          else
-            most_frequent
-        let two = N.of_int 2
-        let median { data; length; median = median_n, median_idx; _ } =
-          if length = 0 then
-            N.zero
+module FrequenciesVector (N: ComparableScalar_t): FrequenciesVector_t =
+  struct
+    module N = N
+    module M = Map.Make(N.C)
+    type t = {
+      non_negative: bool;
+      mutable data: int ref M.t;
+      mutable length: int;
+      mutable sum: N.t;
+      mutable sum_abs: N.t;
+      mutable sum_log_abs: float;
+      mutable unnorm_variance: float;
+      mutable unnorm_variance_abs: float;
+      (* The most frequent element and its frequency *)
+      mutable most_frequent: N.t * int;
+      (* The lowest element of the median pair and its offset within its group *)
+      mutable median: N.t * int
+    }
+    let make ?(non_negative = false) () = {
+      non_negative = non_negative;
+      data = M.empty;
+      length = 0;
+      sum = N.zero;
+      sum_abs = N.zero;
+      sum_log_abs = 0.;
+      unnorm_variance = 0.;
+      unnorm_variance_abs = 0.;
+      most_frequent = N.zero, 0;
+      median = N.zero, 0
+    }
+    let clear fv =
+      fv.data <- M.empty;
+      fv.length <- 0;
+      fv.sum <- N.zero;
+      fv.sum_abs <- N.zero;
+      fv.sum_log_abs <- 0.;
+      fv.unnorm_variance <- 0.;
+      fv.unnorm_variance_abs <- 0.;
+      fv.most_frequent <- N.zero, 0;
+      fv.median <- N.zero, 0
+    let is_non_negative fv = fv.non_negative
+    exception Negative_element of N.t
+    let add fv n =
+      if fv.non_negative && n < N.zero then
+        Negative_element n |> raise;
+      begin match M.find_opt n fv.data with
+      | None ->
+        fv.data <- M.add n (ref 1) fv.data
+      | Some r ->
+        incr r
+      end;
+      let abs_n = N.abs n
+      and old_length = fv.length and old_length_N = N.of_int fv.length in
+      fv.length <- fv.length + 1;
+      let quantity = N.(old_length_N * n - fv.sum |> to_float)
+      and quantity_abs = N.(old_length_N * abs_n - fv.sum_abs |> to_float) in
+      let normalisation = 1. /. (old_length * fv.length |> float_of_int) in
+      fv.unnorm_variance <- fv.unnorm_variance +. quantity *. quantity *. normalisation;
+      fv.unnorm_variance_abs <- fv.unnorm_variance_abs +. quantity_abs *. quantity_abs *. normalisation;
+      (* THESE TWO SUMS MUST NOT BE UPDATED EARLIER *)
+      fv.sum <- N.(fv.sum + n);
+      fv.sum_abs <- N.(fv.sum_abs + abs_n);
+      let abs_n_f = N.to_float abs_n in
+      fv.sum_log_abs <- fv.sum_log_abs +. log abs_n_f;
+      let new_frequency = !(M.find n fv.data)
+      and _, old_largest_frequency = fv.most_frequent in
+      if new_frequency > old_largest_frequency then
+        fv.most_frequent <- n, new_frequency;
+      let old_median_n, old_median_idx = fv.median in
+      if fv.length = 1 then
+        fv.median <- n, 0
+      else
+        (* Is_even is_left.
+            However, we are computing is_even of the _updated_ length.
+            On the other hand, median_idx is the _old_ one *)
+        match (fv.length / 2) * 2 = fv.length, N.C.compare n old_median_n < 0 with
+        | true, true ->
+          (* In this case the pointer must move left *)
+          if old_median_idx > 0 then
+            fv.median <- old_median_n, old_median_idx - 1
           else begin
-            if (length / 2) * 2 = length then begin
-              let median_freq = M.find median_n data in
-              if median_idx = !median_freq - 1 then begin
-                let _, _, right = M.split median_n data in
-                (* In this case there must be a point to the right *)
-                let min_right_n, _ = M.min_binding right in
-                N.((median_n + min_right_n) / two)
-              end else
-                median_n
+            let left, _, _ = M.split old_median_n fv.data in
+            let max_left_n, max_left_freq = M.max_binding left in
+            fv.median <- max_left_n, !max_left_freq - 1
+          end
+        | false, false ->
+          (* In this case the pointer must move right *)
+          begin match M.split old_median_n fv.data with
+          | _, None, _ -> assert false
+          | _, Some old_median_freq, right ->
+            if old_median_idx = !old_median_freq - 1 then begin
+              (* In this case there must be a point to the right *)
+              let min_right_n, _ = M.min_binding right in
+              fv.median <- min_right_n, 0
             end else
-              median_n
+              fv.median <- old_median_n, old_median_idx + 1
           end
-        let sum fv = fv.sum [@@inline]
-        let _mean length what =
-          if length = 0 then
-            0.
-          else
-            what /. float_of_int length
-          [@@inline]
-        let mean fv = _mean fv.length (N.to_float fv.sum) [@@inline]
-        let sum_abs fv = fv.sum_abs [@@inline]
-        let mean_abs fv = _mean fv.length (N.to_float fv.sum_abs) [@@inline]
-        let sum_log_abs fv = fv.sum_log_abs [@@inline]
-        let mean_log_abs fv = _mean fv.length fv.sum_log_abs [@@inline]
-        let variance fv = _mean fv.length fv.unnorm_variance [@@inline]
-        let sample_variance fv = _mean (fv.length - 1) fv.unnorm_variance [@@inline]
-        let variance_abs fv = _mean fv.length fv.unnorm_variance_abs [@@inline]
-        let sample_variance_abs fv = _mean (fv.length - 1) fv.unnorm_variance_abs [@@inline]
-        let standard_deviation fv = variance fv |> sqrt [@@inline]
-        let sample_standard_deviation fv = sample_variance fv |> sqrt [@@inline]
-        let standard_deviation_abs fv = variance_abs fv |> sqrt [@@inline]
-        let sample_standard_deviation_abs fv = sample_variance_abs fv |> sqrt [@@inline]
-        let mad fv =
-          if fv.length = 0 then
-            fv
-          else begin
-            let median = median fv and res = make ~non_negative:true () in
-            M.iter
-              (fun el freq ->
-                for _ = 1 to !freq do
-                  add res N.(abs (el - median))
-                done)
-              fv.data;
-            res
-          end
-        let pow_abs p fv =
-          if p = N.one then
-            fv
-          else begin
-            let res = make ~non_negative:true () in
-            M.iter
-              (fun el freq ->
-                for _ = 1 to !freq do
-                  add res N.((abs el) ** p)
-                done)
-              fv.data;
-            res
-          end
-        let normalize_abs fv =
-          let norm = fv.sum_abs in
-          if norm = N.zero || norm = N.one then
-            (* If acc = 0, all elements must be 0 *)
-            fv
-          else begin
-            let res = make ~non_negative:fv.non_negative () in
-            M.iter
-              (fun el freq ->
-                for _ = 1 to !freq do
-                  add res N.(el / norm)
-                done)
-              fv.data;
-            res
-          end
-        (* This function must _not_ change the total number of elements *)
-        exception Invalid_threshold of float
-        let threshold_accum_abs t fv =
-          if t < 0. || t > 1. then
-            Invalid_threshold t |> raise;
-          if t = 1. then
-            fv
-          else begin
-            let t = t *. N.to_float fv.sum_abs |> N.of_float and res = make ~non_negative:true () in
-            let acc = ref N.zero in
-            M.iter
-              (fun el freq ->
-                for _ = 1 to !freq do
-                  add res (if !acc < t then el else N.zero);
-                  N.(acc ++ abs el)
-                done)
-              fv.data;
-            res
-          end
-        let of_floatarray fa =
-          let res = make ~non_negative:true () and non_negative = ref true in
-          Better.Float.Array.iter
-            (fun el ->
-              if el < 0. then
-                non_negative := false;
-              N.of_float el |> add res)
-            fa;
-          { res with non_negative = !non_negative }
-        (* The exported floatarray will have sorted elements *)
-        let to_floatarray { length; data; _ } =
-          let res = Better.Float.Array.create length and idx = ref 0 in
-          M.iter
-            (fun el freq ->
-              for i = !idx to !idx + !freq - 1 do
-                Better.Float.Array.set res i N.(to_float el)
-              done;
-              idx := !idx + !freq)
-            data;
-          res
+        | true, false | false, true -> ()
+    let iter f fv =
+      M.iter
+        (fun el r ->
+          f el !r)
+        fv.data
+      [@@inline]
+    let length fv = fv.length [@@inline]
+    let frequency fv n =
+      match M.find_opt n fv.data with
+      | None -> 0
+      | Some n -> !n
+    exception Empty
+    let first fv =
+      match M.min_binding_opt fv.data with
+      | None -> raise Empty
+      | Some (n, _) -> n
+    let first_opt fv =
+      match M.min_binding_opt fv.data with
+      | None -> None
+      | Some (n, _) -> Some n
+    let last fv =
+      match M.max_binding_opt fv.data with
+      | None -> raise Empty
+      | Some (n, _) -> n
+    let last_opt fv =
+      match M.max_binding_opt fv.data with
+      | None -> None
+      | Some (n, _) -> Some n
+    let most_frequent { length; most_frequent; _ } =
+      if length = 0 then
+        raise Empty
+      else
+        most_frequent
+    let two = N.of_int 2
+    let median { data; length; median = median_n, median_idx; _ } =
+      if length = 0 then
+        N.zero
+      else begin
+        if (length / 2) * 2 = length then begin
+          let median_freq = M.find median_n data in
+          if median_idx = !median_freq - 1 then begin
+            let _, _, right = M.split median_n data in
+            (* In this case there must be a point to the right *)
+            let min_right_n, _ = M.min_binding right in
+            N.((median_n + min_right_n) / two)
+          end else
+            median_n
+        end else
+          median_n
       end
+    let sum fv = fv.sum [@@inline]
+    let _mean length what =
+      if length = 0 then
+        0.
+      else
+        what /. float_of_int length
+      [@@inline]
+    let mean fv = _mean fv.length (N.to_float fv.sum) [@@inline]
+    let sum_abs fv = fv.sum_abs [@@inline]
+    let mean_abs fv = _mean fv.length (N.to_float fv.sum_abs) [@@inline]
+    let sum_log_abs fv = fv.sum_log_abs [@@inline]
+    let mean_log_abs fv = _mean fv.length fv.sum_log_abs [@@inline]
+    let variance fv = _mean fv.length fv.unnorm_variance [@@inline]
+    let sample_variance fv = _mean (fv.length - 1) fv.unnorm_variance [@@inline]
+    let variance_abs fv = _mean fv.length fv.unnorm_variance_abs [@@inline]
+    let sample_variance_abs fv = _mean (fv.length - 1) fv.unnorm_variance_abs [@@inline]
+    let standard_deviation fv = variance fv |> sqrt [@@inline]
+    let sample_standard_deviation fv = sample_variance fv |> sqrt [@@inline]
+    let standard_deviation_abs fv = variance_abs fv |> sqrt [@@inline]
+    let sample_standard_deviation_abs fv = sample_variance_abs fv |> sqrt [@@inline]
+    let mad fv =
+      if fv.length = 0 then
+        fv
+      else begin
+        let median = median fv and res = make ~non_negative:true () in
+        M.iter
+          (fun el freq ->
+            for _ = 1 to !freq do
+              add res N.(abs (el - median))
+            done)
+          fv.data;
+        res
+      end
+    let pow_abs p fv =
+      if p = N.one then
+        fv
+      else begin
+        let res = make ~non_negative:true () in
+        M.iter
+          (fun el freq ->
+            for _ = 1 to !freq do
+              add res N.((abs el) ** p)
+            done)
+          fv.data;
+        res
+      end
+    let normalize_abs fv =
+      let norm = fv.sum_abs in
+      if norm = N.zero || norm = N.one then
+        (* If acc = 0, all elements must be 0 *)
+        fv
+      else begin
+        let res = make ~non_negative:fv.non_negative () in
+        M.iter
+          (fun el freq ->
+            for _ = 1 to !freq do
+              add res N.(el / norm)
+            done)
+          fv.data;
+        res
+      end
+    (* This function must _not_ change the total number of elements *)
+    exception Invalid_threshold of float
+    let threshold_accum_abs t fv =
+      if t < 0. || t > 1. then
+        Invalid_threshold t |> raise;
+      if t = 1. then
+        fv
+      else begin
+        let t = t *. N.to_float fv.sum_abs |> N.of_float and res = make ~non_negative:true () in
+        let acc = ref N.zero in
+        M.iter
+          (fun el freq ->
+            for _ = 1 to !freq do
+              add res (if !acc < t then el else N.zero);
+              N.(acc ++ abs el)
+            done)
+          fv.data;
+        res
+      end
+    let of_floatarray fa =
+      let res = make ~non_negative:true () and non_negative = ref true in
+      Better.Float.Array.iter
+        (fun el ->
+          if el < 0. then
+            non_negative := false;
+          N.of_float el |> add res)
+        fa;
+      { res with non_negative = !non_negative }
+    (* The exported floatarray will have sorted elements *)
+    let to_floatarray { length; data; _ } =
+      let res = Better.Float.Array.create length and idx = ref 0 in
+      M.iter
+        (fun el freq ->
+          for i = !idx to !idx + !freq - 1 do
+            Better.Float.Array.set res i N.(to_float el)
+          done;
+          idx := !idx + !freq)
+        data;
+      res
   end
 
-module FreqVector = Frequencies.Vector
+module FreqVector = FrequenciesVector
 
