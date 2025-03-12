@@ -536,8 +536,12 @@ module type FrequenciesVector_t =
     val standard_deviation_abs: t -> float
     val sample_standard_deviation: t -> float
     val sample_standard_deviation_abs: t -> float
-    (* The following two are expensive as they recompute the vector *)
+    (* The following three are expensive as they recompute the vector.
+       The MAD frequency vector, i.e. the non-negative vector FV(abs(v - median(v))) *)
+    val mad: t -> t
+    (* The non-negative vector FV(abs(v)^pow) *)
     val pow_abs: N.t -> t -> t
+    (* The vector FV(v/sum(abs(v))) *)
     val normalize_abs: t -> t
     exception Invalid_threshold of float
     (* Examine values in order, and null frequencies when accumulated absolute values are > threshold * sum_abs.
@@ -689,17 +693,21 @@ module Frequencies:
             most_frequent
         let two = N.of_int 2
         let median { data; length; median = median_n, median_idx; _ } =
-          if (length / 2) * 2 = length then begin
-            let median_freq = M.find median_n data in
-            if median_idx = !median_freq - 1 then begin
-              let _, _, right = M.split median_n data in
-              (* In this case there must be a point to the right *)
-              let min_right_n, _ = M.min_binding right in
-              N.((median_n + min_right_n) / two)
+          if length = 0 then
+            N.zero
+          else begin
+            if (length / 2) * 2 = length then begin
+              let median_freq = M.find median_n data in
+              if median_idx = !median_freq - 1 then begin
+                let _, _, right = M.split median_n data in
+                (* In this case there must be a point to the right *)
+                let min_right_n, _ = M.min_binding right in
+                N.((median_n + min_right_n) / two)
+              end else
+                median_n
             end else
               median_n
-          end else
-            median_n
+          end
         let sum fv = fv.sum [@@inline]
         let _mean length what =
           if length = 0 then
@@ -720,6 +728,19 @@ module Frequencies:
         let sample_standard_deviation fv = sample_variance fv |> sqrt [@@inline]
         let standard_deviation_abs fv = variance_abs fv |> sqrt [@@inline]
         let sample_standard_deviation_abs fv = sample_variance_abs fv |> sqrt [@@inline]
+        let mad fv =
+          if fv.length = 0 then
+            fv
+          else begin
+            let median = median fv and res = make ~non_negative:true () in
+            M.iter
+              (fun el freq ->
+                for _ = 1 to !freq do
+                  add res N.(abs (el - median))
+                done)
+              fv.data;
+            res
+          end
         let pow_abs p fv =
           if p = N.one then
             fv
@@ -728,7 +749,7 @@ module Frequencies:
             M.iter
               (fun el freq ->
                 for _ = 1 to !freq do
-                  add res N.(abs el ** p)
+                  add res N.((abs el) ** p)
                 done)
               fv.data;
             res
@@ -739,7 +760,7 @@ module Frequencies:
             (* If acc = 0, all elements must be 0 *)
             fv
           else begin
-            let res = make ~non_negative:true () in
+            let res = make ~non_negative:fv.non_negative () in
             M.iter
               (fun el freq ->
                 for _ = 1 to !freq do
