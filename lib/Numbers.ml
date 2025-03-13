@@ -284,34 +284,30 @@ module type Vector_t =
 
 (* Uniform vector based on floatarrays.
    For consistency with the rest, we encapsulate things in a module *)
-module Floatarray =
+module FloatarrayVector: Vector_t with type N.t = Float.t =
   struct
-    module type Type_t = Vector_t
-    module Vector: Vector_t =
-      struct
-        module N = Float
-        module FA = Better.Float.Array
-        include FA
-        let empty = FA.make 0 0.
-        let ( .@() ) = get
-        let ( .@()<- ) = set
-        let incr fa i = FA.(set fa i N.(get fa i + one)) [@@inline]
-        let ( .+() ) = incr
-        let ( .++() ) = incr
-        let incr_by fa i n = FA.(set fa i N.(get fa i + n)) [@@inline]
-        let ( .+()<- ) = incr_by
-        let decr fa i = FA.(set fa i N.(get fa i - one)) [@@inline]
-        let ( .-() ) = decr
-        let ( .--() ) = decr
-        let decr_by fa i n = FA.(set fa i N.(get fa i - n)) [@@inline]
-        let ( .-()<- ) = decr_by
-        (* As Float.Array already includes ExtendedArrayFunctionality_t,
-            the only thing we need to do here is redefine resize () *)
-        let resize ?(is_buffer = false) ?(fill_with = N.zero) n fa =
-          FA.resize ~is_buffer n fill_with fa
-        let to_floatarray fa:t = fa [@@inline]
-        let of_floatarray fa:t = fa [@@inline]
-      end
+    module N = Float
+    module FA = Better.Float.Array
+    include FA
+    let empty = FA.make 0 0.
+    let ( .@() ) = get
+    let ( .@()<- ) = set
+    let incr fa i = FA.(set fa i N.(get fa i + one)) [@@inline]
+    let ( .+() ) = incr
+    let ( .++() ) = incr
+    let incr_by fa i n = FA.(set fa i N.(get fa i + n)) [@@inline]
+    let ( .+()<- ) = incr_by
+    let decr fa i = FA.(set fa i N.(get fa i - one)) [@@inline]
+    let ( .-() ) = decr
+    let ( .--() ) = decr
+    let decr_by fa i n = FA.(set fa i N.(get fa i - n)) [@@inline]
+    let ( .-()<- ) = decr_by
+    (* As Float.Array already includes ExtendedArrayFunctionality_t,
+        the only thing we need to do here is redefine resize () *)
+    let resize ?(is_buffer = false) ?(fill_with = N.zero) n fa =
+      FA.resize ~is_buffer n fill_with fa
+    let to_floatarray fa:t = fa [@@inline]
+    let of_floatarray fa:t = fa [@@inline]
   end
 
 (* Uniform vectors based on bigarrays *)
@@ -323,8 +319,7 @@ module Bigarray:
         type elt_t
         val elt: (t, elt_t) Bigarray.kind
       end
-    module type Type_t = functor (T: Scalar_t) -> Vector_t with type N.t = T.t
-    module Vector: Type_t
+    module Vector: functor (T: Scalar_t) -> Vector_t with type N.t = T.t
   end
 = struct
     module type Scalar_t =
@@ -333,7 +328,6 @@ module Bigarray:
         type elt_t
         val elt: (t, elt_t) Bigarray.kind
       end
-    module type Type_t = functor (T: Scalar_t) -> Vector_t with type N.t = T.t
     module Vector (T: Scalar_t) = (* This should work with float too *)
       struct
         module BA1 = Bigarray.Array1
@@ -439,14 +433,15 @@ module Bigarray:
       end
   end
 
-module FAVector = Floatarray.Vector
+module FAVector = FloatarrayVector
 module BAVector = Bigarray.Vector
 
 module LinearFit (V: Vector_t):
   sig
     type t
-    val get_intercept: t -> V.N.t
-    val get_slope: t -> V.N.t
+    module N: Scalar_t with type t = V.N.t
+    val get_intercept: t -> N.t
+    val get_slope: t -> N.t
     (* We return model, predictions and differences/residuals *)
     exception SingularInput
     val make: V.t -> V.t -> t * V.t * V.t
@@ -489,30 +484,28 @@ module type ComparableScalar_t =
     include Scalar_t
     module C: ComparableType_t with type t = t
   end
-module MakeComparableNumber (N: Scalar_t): ComparableScalar_t =
+module MakeComparableScalar (N: Scalar_t): ComparableScalar_t with type t = N.t =
   struct
     include N
     module C =
       struct
         type t = N.t
-        (* Informs the compiler that polymorphism is not needed *)
-        let compare (a:N.t) (b:N.t) = compare a b [@@inline]
+        let compare a b = N.compare a b [@@inline]
       end
   end
-module MakeRComparableNumber (N: Scalar_t): ComparableScalar_t =
+module MakeRComparableScalar (N: Scalar_t): ComparableScalar_t with type t = N.t =
   struct
     include N
     module C =
       struct
         type t = N.t
-        (* Informs the compiler that polymorphism is not needed *)
-        let compare (a:N.t) (b:N.t) = compare b a [@@inline]
+        let compare a b = N.compare b a [@@inline]
       end
   end
-  
-module type FrequenciesVector_t =
+
+module FrequenciesVector (N: ComparableScalar_t):
   sig
-    module N: ComparableScalar_t
+    module N: ComparableScalar_t with type t = N.t
     type t
     val make: ?non_negative:bool -> unit -> t
     val clear: t -> unit
@@ -561,9 +554,7 @@ module type FrequenciesVector_t =
     val of_floatarray: Better.Float.Array.t -> t
     val to_floatarray: t -> Better.Float.Array.t
   end
-
-module FrequenciesVector (N: ComparableScalar_t): FrequenciesVector_t =
-  struct
+= struct
     module N = N
     module M = Map.Make(N.C)
     type t = {
@@ -812,5 +803,15 @@ module FrequenciesVector (N: ComparableScalar_t): FrequenciesVector_t =
       res
   end
 
-module FreqVector = FrequenciesVector
+module FreqsVector = FrequenciesVector
+module IntFreqsVector = FrequenciesVector(MakeComparableScalar(Int))
+module RIntFreqsVector = FrequenciesVector(MakeRComparableScalar(Int))
+module Int32FreqsVector = FrequenciesVector(MakeComparableScalar(Int32))
+module RInt32FreqsVector = FrequenciesVector(MakeRComparableScalar(Int32))
+module Int64FreqsVector = FrequenciesVector(MakeComparableScalar(Int64))
+module RInt64FreqsVector = FrequenciesVector(MakeRComparableScalar(Int64))
+module IntZFreqsVector = FrequenciesVector(MakeComparableScalar(IntZ))
+module RIntZFreqsVector = FrequenciesVector(MakeRComparableScalar(IntZ))
+module FloatFreqsVector = FrequenciesVector(MakeComparableScalar(Float))
+module RFloatFreqsVector = FrequenciesVector(MakeRComparableScalar(Float))
 

@@ -642,7 +642,6 @@ module Map:
       end
   end
 
-module type MakeComparable_t = functor (T: TypeContainer_t) -> ComparableType_t with type t = T.t
 module MakeComparable (T: TypeContainer_t): ComparableType_t with type t = T.t =
   struct
     type t = T.t
@@ -704,7 +703,6 @@ module IntHash: HashableType_t with type t = Int.t =
     let hash (i:int) = i [@@inline] (* land max_int *)
   end
 
-module type MakeHashable_t = functor (T: TypeContainer_t) -> HashableType_t with type t = T.t
 module MakeHashable (T: TypeContainer_t): HashableType_t with type t = T.t =
   struct
     type t = T.t
