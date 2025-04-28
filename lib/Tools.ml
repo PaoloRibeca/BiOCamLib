@@ -100,9 +100,11 @@ sig
   exception Empty
   val create: unit -> 'a t
   val push: 'a t -> 'a -> unit (* We depart from Stdlib conventions here and swap arguments *)
+  val push_n: 'a t -> 'a array -> unit
   val pop: 'a t -> 'a
   val pop_opt: 'a t -> 'a option
-  val pop_n: 'a t -> int -> 'a
+  val pop_n: 'a t -> int -> 'a array
+  val pop_n_opt: 'a t -> int -> 'a array option
   val top: 'a t -> 'a
   val top_opt: 'a t -> 'a option
   val clear: 'a t -> unit
@@ -136,11 +138,19 @@ end
     let aug_length = s.size + 1 in
     if Array.length s.data >= aug_length then begin
       s.data.(s.size) <- el;
-      s.size <- s.size + 1
+      s.size <- aug_length
     end else begin
       s.data <- Array.resize ~is_buffer:true aug_length el s.data;
-      s.size <- s.size + 1
+      s.size <- aug_length
     end
+  let push_n s a =
+    let l = Array.length a in
+    let new_length = s.size + l in
+    if Array.length s.data < new_length then
+      (* This can never happen unless a has at least one element *)
+      s.data <- Array.resize ~is_buffer:true new_length a.(0) s.data;
+    Array.blit a 0 s.data s.size l;
+    s.size <- new_length
   let pop s =
     if s.size > 0 then begin
       s.size <- s.size - 1;
@@ -156,9 +166,15 @@ end
   let pop_n s n =
     if s.size >= n then begin
       s.size <- s.size - n;
-      s.data.(s.size)
+      Array.sub s.data s.size n
     end else
       raise Empty
+  let pop_n_opt s n =
+    if s.size >= n then begin
+      s.size <- s.size - n;
+      Some (Array.sub s.data s.size n)
+    end else
+      None
   let top s =
     if s.size > 0 then
       s.data.(s.size - 1)
