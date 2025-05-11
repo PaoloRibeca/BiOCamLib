@@ -151,92 +151,174 @@ module Lint:
       Bytes.unsafe_to_string b
   end
 
-module Types =
+module Coordinate:
+  sig
+    type t = private int
+    type based_t =
+      | Zero
+      | One
+    val of_int: ?based:based_t -> int -> t
+    val to_int: ?based:based_t -> t -> int
+    val of_string: ?based:based_t -> string -> t
+    val to_string: ?based:based_t -> t -> string
+    module Map: module type of Map.Make (MakeComparable (struct type tt = t type t = tt end))
+  end
+= struct
+    (* Internally, we represent coordinates as zero-based *)
+    type t = int
+    type based_t =
+      | Zero
+      | One
+    let of_int ?(based = One) n =
+      let res =
+        match based with
+        | Zero -> n
+        | One -> n - 1 in
+      if res < 0 then
+        Printf.sprintf "(%s): Invalid argument '%d'" __FUNCTION__ n |> failwith;
+      res
+    let of_string ?(based = One) s =
+      try
+        int_of_string s |> of_int ~based
+      with _ ->
+        Printf.sprintf "(%s): Invalid argument '%s'" __FUNCTION__ s |> failwith
+    let to_int ?(based = One) n =
+      match based with
+      | Zero -> n
+      | One -> n + 1
+    let to_string ?(based = One) n = to_int ~based n |> string_of_int
+    module Map = Map.Make (MakeComparable (struct type tt = t type t = tt end))
+  end
+(* A coordinate anchored to a sequence *)
+module Pointer =
   struct
-    (* All coordinates are zero-based internally and one-based externally *)
-    type zero_based_coord_t = int
-    let coord_of_string: string -> zero_based_coord_t =
-      fun s -> int_of_string s - 1
-    let string_of_coord (i:zero_based_coord_t) =
-      string_of_int (i + 1)
+    type t = {
+      sequence_name: string;
+      coordinate: Coordinate.t
+    }
+    let to_string ?(based = Coordinate.One) p =
+      Printf.sprintf "%s:%d" p.sequence_name (Coordinate.to_int ~based p.coordinate)    
+    module Map = Map.Make (MakeComparable (struct type tt = t type t = tt end))
+  end
+module Interval =
+  struct
+    type t = {
+      coordinate_lo: Coordinate.t;
+      length: int
+    }
+    let to_string ?(based = Coordinate.One) a =
+      Printf.sprintf "%d:%d" (Coordinate.to_int ~based a.coordinate_lo) a.length
+    module Map = Map.Make (MakeComparable (struct type tt = t type t = tt end))
+  end
+(* An interval anchored to a sequence *)
+module Annotation =
+  struct
+    type t = {
+      sequence_name: string;
+      coordinate_lo: Coordinate.t;
+      length: int
+    }
+    let to_string ?(based = Coordinate.One) a =
+      Printf.sprintf "%s:%d:%d" a.sequence_name (Coordinate.to_int ~based a.coordinate_lo) a.length
+    module Map = Map.Make (MakeComparable (struct type tt = t type t = tt end))
+  end
+
+module BaseStranded =
+  struct
     (* We define a generic type to give things a direction *)
-    type 'a stranded_t = Forward of 'a | Reverse of 'a (*| None of 'a*)
-    type strand_t = unit stranded_t
-    let forward = Forward ()
-    let reverse = Reverse ()
-    let strand_of_string = function
-      | "F" | "f" | "+" | "forward" | "Forward" -> forward
-      | "R" | "r" | "-" | "reverse" | "Reverse" -> reverse
-      | s ->
-        Printf.sprintf "(%s): Unrecognized strand '%s'" __FUNCTION__ s |> failwith
-    let string_of_strand = function
+    type 'a t =
+      | Forward of 'a
+      | Reverse of 'a
+      (*| None of 'a*)
+  end
+module Stranded =
+  struct
+    include BaseStranded
+    module Strand =
+      struct
+        type t = unit BaseStranded.t
+        let forward = Forward ()
+        let reverse = Reverse ()
+        let of_string = function
+          | "F" | "f" | "+" | "forward" | "Forward" -> forward
+          | "R" | "r" | "-" | "reverse" | "Reverse" -> reverse
+          | s ->
+            Printf.sprintf "(%s): Unrecognized strand '%s'" __FUNCTION__ s |> failwith
+        let to_string = function
+          | Forward _ -> "+"
+          | Reverse _ -> "-"
+      end
+    (* General functions *)
+    let split = function
+      | Forward unstranded -> Strand.forward, unstranded
+      | Reverse unstranded -> Strand.reverse, unstranded
+    let join s payload =
+      match s with
+      | Forward () -> Forward payload
+      | Reverse () -> Reverse payload
+    let strand_to_string = function
       | Forward _ -> "+"
       | Reverse _ -> "-"
-    let split_of_stranded = function
-      | Forward unstranded -> forward, unstranded
-      | Reverse unstranded -> reverse, unstranded
-    let stranded_of_split strand unstranded =
-      match strand with
-      | Forward () -> Forward unstranded
-      | Reverse () -> Reverse unstranded
-    let string_of_stranded_string ss =
-      let strand, name = split_of_stranded ss in
-      Printf.sprintf "%s:%s" name (string_of_strand strand)
-    type pointer_t = { name: string;
-                       position: zero_based_coord_t }
-    (* We silently convert from 0- to 1-based *)
-    let string_of_pointer obj =
-      Printf.sprintf "%s:%s" obj.name (string_of_coord obj.position)
-    type stranded_pointer_t = { name: string stranded_t;
-                                position: zero_based_coord_t }
-    (* We silently convert from 0- to 1-based *)
-    let string_of_stranded_pointer str_ptr =
-      let str, name = split_of_stranded str_ptr.name in
-      Printf.sprintf "%s:%s:%s" name (string_of_strand str) (string_of_coord str_ptr.position)
-    (* We silently convert from 1- to 0-based *)
-    let stranded_pointer_of_string s =
-      try
-        let fields = String.Split.on_char_as_array ':' s in
-        if Array.length fields <> 3 then
-          raise Exit;
-        let str = strand_of_string fields.(1)
-        and pos = coord_of_string fields.(2) in
-        if pos < 0 then
-          raise Exit;
-        { name = stranded_of_split str fields.(0); position = pos }
-      with _ ->
-        Printf.sprintf "(%s): Syntax error" __FUNCTION__ |> failwith
-    (*
-    module StrandedPointerSet =
-      Set.Make (MakeComparable (struct type t = stranded_pointer_t end))
-    module StrandedPointerMap =
-      Map.Make (MakeComparable (struct type t = stranded_pointer_t end))
-    *)
-    type simple_interval_t = { low: zero_based_coord_t;
-                               length: int }
-    type interval_t = { low: pointer_t;
-                        length: int }
-    (* We silently convert from 0- to 1-based *)
-    let string_of_interval obj =
-      Printf.sprintf "%s:%s:%d" obj.low.name (string_of_coord obj.low.position) obj.length
-    type stranded_interval_t = { low: stranded_pointer_t;
-                                 length: int }
-    let make_stranded_interval stranded_name position length = {
-      low = { name = stranded_name; position = position };
-      length = length
-    }
-    (* We silently convert from 0- to 1-based *)
-    let string_of_stranded_interval str_ivl =
-      let str, name = split_of_stranded str_ivl.low.name in
-      Printf.sprintf "%s:%s:%s:%d"
-        name (string_of_strand str) (string_of_coord str_ivl.low.position) str_ivl.length
-    (* The module of things associated with a set of stranded sequence names *)
-    module StrandedStringMap = Map.Make (MakeComparable (struct type t = string stranded_t end))
+    (* A coordinate anchored to a stranded sequence *)
+    module Pointer =
+      struct
+        type t = Pointer.t BaseStranded.t
+        let to_string ?(based = Coordinate.One) sp =
+          let s, p = split sp in
+          Printf.sprintf "%s:%s:%d"
+            p.Pointer.sequence_name (Strand.to_string s) (Coordinate.to_int ~based p.coordinate)
+        let of_string ?(based = Coordinate.One) s =
+          try
+            let fields = String.Split.on_char_as_array ':' s in
+            if Array.length fields <> 3 then
+              Printf.sprintf "(%s): Invalid number of fields in argument '%s'" __FUNCTION__ s |> failwith;
+            join (Strand.of_string fields.(1)) {
+              Pointer.sequence_name = fields.(0);
+              coordinate = Coordinate.of_string ~based fields.(2)
+            }
+          with _ ->
+            Printf.sprintf "(%s): Syntax error in argument '%s'" __FUNCTION__ s |> failwith      
+        module Map = Map.Make (MakeComparable (struct type tt = t type t = tt end))
+      end
+    (* A stranded interval not associated with a specific sequence *)
+    module Interval =
+      struct
+        type t = Interval.t BaseStranded.t
+        module Map = Map.Make (MakeComparable (struct type tt = t type t = tt end))
+      end
+    (* An interval anchored to a stranded sequence *)
+    module Annotation =
+      struct
+        type t = Annotation.t BaseStranded.t
+        let to_string ?(based = Coordinate.One) sa =
+          let s, a = split sa in
+          Printf.sprintf "%s:%s:%d:%d"
+            a.Annotation.sequence_name (Strand.to_string s) (Coordinate.to_int ~based a.coordinate_lo) a.length
+
+        module Map = Map.Make (MakeComparable (struct type tt = t type t = tt end))
+      end
+    (* We redefine these ones last so as not to shadow the ones in the parent scope *)
+    module Coordinate =
+      struct
+        type t = Coordinate.t BaseStranded.t
+
+        module Map = Map.Make (MakeComparable (struct type tt = t type t = tt end))
+      end
+    module String =
+      struct
+        type t = string BaseStranded.t
+        let to_string ss =
+          let strand, name = split ss in
+          Printf.sprintf "%s:%s" name (Strand.to_string strand)
+
+        (* Association tables with stranded sequence names *)
+        module Map = Map.Make (MakeComparable (struct type tt = t type t = tt end))
+      end
   end
 
 module Junctions:
   sig
-    val parse: ?default_coverage:float -> (int -> string Types.stranded_t -> int -> int -> float -> unit) -> string -> unit
+    val parse: ?default_coverage:float -> (int -> Stranded.String.t -> int -> int -> float -> unit) -> string -> unit
   end
 = struct
     (* Helper function to parse what is produced by the GEM pipeline *)
@@ -255,7 +337,7 @@ module Junctions:
             match len with
             | 4 | 5 ->
               begin try
-                let dir = Types.strand_of_string line.(1)
+                let dir = Stranded.Strand.of_string line.(1)
                 and pos_don = int_of_string line.(2)
                 and pos_acc = int_of_string line.(3)
                 and cov =
@@ -263,15 +345,15 @@ module Junctions:
                     float_of_string line.(4)
                   else
                     default_coverage in
-                (Types.stranded_of_split dir line.(0)), pos_don, pos_acc, cov
+                (Stranded.join dir line.(0)), pos_don, pos_acc, cov
               with _ ->
                 error "Incorrect syntax"
               end
             | 6 | 7 ->
               begin try
-                let dir_don = Types.strand_of_string line.(1)
+                let dir_don = Stranded.Strand.of_string line.(1)
                 and pos_don = int_of_string line.(2)
-                and dir_acc = Types.strand_of_string line.(4)
+                and dir_acc = Stranded.Strand.of_string line.(4)
                 and pos_acc = int_of_string line.(5)
                 and cov =
                   if len = 7 then
@@ -280,7 +362,7 @@ module Junctions:
                     default_coverage in
                 if line.(0) <> line.(3) || dir_don <> dir_acc then
                   raise Exit;
-                (Types.stranded_of_split dir_don line.(0)), pos_don, pos_acc, cov
+                (Stranded.join dir_don line.(0)), pos_don, pos_acc, cov
               with _ ->
                 error "Incorrect syntax"
               end
@@ -573,15 +655,15 @@ module Reference:
     (* The last optional argument is a file containing translation tables.
         If they are absent, Table_1 (Standard) is assumed *)
     val add_from_fasta: ?linter:(string -> string) -> ?tables:string -> t -> string -> t
-    val find: t -> string Types.stranded_t -> string * Translation.t
-    val length: t -> string Types.stranded_t -> int
-    val get_sequence: t -> Types.stranded_interval_t -> string
-    val get_table: t -> Types.stranded_interval_t -> Translation.t
-    val get_sequence_and_table: t -> Types.stranded_interval_t -> string * Translation.t
+    val find: t -> Stranded.String.t -> string * Translation.t
+    val length: t -> Stranded.String.t -> int
+    val get_sequence: t -> Stranded.Annotation.t -> string
+    val get_table: t -> Stranded.Annotation.t -> Translation.t
+    val get_sequence_and_table: t -> Stranded.Annotation.t -> string * Translation.t
   end
 = struct
     (* We explicitly separate forward and reverse sequences *)
-    module StrandedStringMap = Types.StrandedStringMap
+    module StrandedStringMap = Stranded.String.Map
     (* To each sequence name we associate a sequence and a translation table *)
     type t = (string * Translation.t) StrandedStringMap.t
     let empty = StrandedStringMap.empty
@@ -625,8 +707,8 @@ module Reference:
               with _ ->
                 Printf.sprintf "(%s): Unknown translation table for sequence '%s'" __FUNCTION__ !name |> failwith in
           let seq = Buffer.contents seq in
-          res := StrandedStringMap.add (Types.Forward !name) (seq, table) !res;
-          res := StrandedStringMap.add (Types.Reverse !name) (Lint.rc seq, table) !res
+          res := StrandedStringMap.add (Stranded.Forward !name) (seq, table) !res;
+          res := StrandedStringMap.add (Stranded.Reverse !name) (Lint.rc seq, table) !res
         end in
       begin try
         while true do
@@ -653,31 +735,33 @@ module Reference:
       try
         StrandedStringMap.find str_name obj
       with Not_found ->
-        let _, name = Types.split_of_stranded str_name in
+        let _, name = Stranded.split str_name in
         Printf.sprintf "(%s): Unknown sequence '%s'" __FUNCTION__ name |> failwith
     let length obj str_name =
         let seq, _ = find obj str_name in
         String.length seq
-    let get_sequence obj str_ivl =
-      let { Types.low = { Types.name; position = lo }; length = len } = str_ivl in
-      let seq, _ = find obj name in
-      let hi = lo + len in
+    let get_sequence obj sa =
+      let str, { Annotation.sequence_name; coordinate_lo; length } = Stranded.split sa in
+      (* In this case we are accessing a string so we keep the coordinate zero-based *)
+      let str_name = Stranded.join str sequence_name and lo = Coordinate.to_int ~based:Zero coordinate_lo in
+      let seq, _ = find obj str_name in
+      let hi = lo + length in
       if lo < 0 then
         Printf.sprintf "(%s): Low coordinate '%d' is out of range" __FUNCTION__ lo |> failwith;
       if hi > String.length seq then
         Printf.sprintf "(%s): High coordinate '%d' is out of range" __FUNCTION__ hi |> failwith;
       (*let lo = max 0 lo and hi = min hi (String.length seq) in
-      let len = hi - lo in*)
-      if len = 0 then
+      let length = hi - lo in*)
+      if length = 0 then
         ""
       else begin
-        let res = Bytes.create len in
-        Bytes.blit_string seq lo res 0 len;
+        let res = Bytes.create length in
+        Bytes.blit_string seq lo res 0 length;
         Bytes.to_string res
       end
-    let get_table obj str_ivl =
-      let { Types.low = { Types.name; _ }; _ } = str_ivl in
-      let _, table = find obj name in
+    let get_table obj sa =
+      let str, ann = Stranded.split sa in
+      let _, table = Stranded.join str ann.Annotation.sequence_name |> find obj in
       table
     let get_sequence_and_table obj str_ivl =
       get_sequence obj str_ivl, get_table obj str_ivl
