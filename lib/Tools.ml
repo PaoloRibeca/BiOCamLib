@@ -301,18 +301,28 @@ module Trie:
     type t
     val empty: t
     val add: t -> string -> t
+    (* Enumerates the whole dictionary *)
+    val find_all: t -> string list
+    (* Find the longest match in the dictionary and decomposes the argument accordingly *)
+    val find_longest: t -> string -> string * string
     type result_t =
+      (* The string is not in the dictionary *)
       | Not_found
-      | Partial of string (* Partial match *)
-      | Ambiguous of string list (* Multiple partial matches *)
-      | Contained of string list (* Exact match, but also other longer matches containing it *)
-      | Unique of string (* Exact match and no other containing matches *)
+      (* There is one longer match in the dictionary *)
+      | Partial of string
+      (* There are multiple longer matches in the dictionary *)
+      | Ambiguous of string list
+      (* There is an exact match in the dictionary, but also other longer matches *)
+      | Contained of string list
+      (* There is an exact match and no other longer matches starting with the string *)
+      | Unique
     val find: t -> string -> result_t
     (* Converts the result to string whenever it is possible to do so unambiguously *)
     val find_string: t -> string -> string
-    val find_all: t -> string list
   end
 = struct
+    (* Each node is a map (char -> node).
+       Character '\000' is used to signal the end of a word at that node *)
     type t = Node of t CharMap.t
     let empty = Node CharMap.empty
     let find_all t =
@@ -329,6 +339,19 @@ module Trie:
           cm in
       _find_all t "";
       List.rev !res
+    let find_longest t s =
+      let n = String.length s in
+      let rec _find_longest t i =
+        let Node cm = t in
+        if i = n then
+          s, ""
+        else
+          match CharMap.find_opt s.[i] cm with
+          | None ->
+            String.sub s 0 i, String.sub s i (n - i)
+          | Some tt ->
+            _find_longest tt (i + 1) in
+      _find_longest t 0
     let add t s =
       let n = String.length s in
       let rec _add t i =
@@ -351,7 +374,8 @@ module Trie:
       | Partial of string
       | Ambiguous of string list
       | Contained of string list
-      | Unique of string
+      | Unique
+    (* Utility function to generate all existing completions *)
     let find_all_tails p t =
       let res = ref [] in
       let rec _find_all_tails t s =
@@ -375,7 +399,7 @@ module Trie:
             assert (CharMap.find '\000' cm = empty);
             match c with
             | 1 -> (* Exact match and no other containing matches *)
-              Unique s
+              Unique
             | _ -> (* Exact match, but also other longer matches containing it *)
               Contained (find_all_tails s t)
           end else begin
@@ -406,7 +430,7 @@ module Trie:
       | Partial s -> s
       | Ambiguous _ -> ""
       | Contained _ -> s
-      | Unique s -> s
+      | Unique -> s
   end
 
 module Argv:
