@@ -303,8 +303,13 @@ module Trie:
     val add: t -> string -> t
     (* Enumerates the whole dictionary *)
     val find_all: t -> string list
-    (* Find the longest match in the dictionary and decomposes the argument accordingly *)
-    val find_longest: t -> string -> string * string
+    (* Find the longest prefix of the argument present in the dictionary.
+       The length of the matched prefix is returned *)
+    val find_longest_prefix: t -> string -> int
+    (* Find the longest substring of the string argument present in the dictionary,
+        starting from the 0-based index specified by the integer argument.
+       The length of the match is returned *)
+    val find_longest_substring: t -> string -> int -> int
     type result_t =
       (* The string is not in the dictionary *)
       | Not_found
@@ -339,19 +344,36 @@ module Trie:
           cm in
       _find_all t "";
       List.rev !res
-    let find_longest t s =
+    let find_longest_prefix t s =
       let n = String.length s in
-      let rec _find_longest t i =
-        let Node cm = t in
+      let rec _find_longest_prefix t i =
         if i = n then
-          s, ""
+          n
         else
+          let Node cm = t in
           match CharMap.find_opt s.[i] cm with
           | None ->
-            String.sub s 0 i, String.sub s i (n - i)
+            i
           | Some tt ->
-            _find_longest tt (i + 1) in
-      _find_longest t 0
+            _find_longest_prefix tt (i + 1) in
+      _find_longest_prefix t 0
+    let find_longest_substring t s idx =
+      let n = String.length s in
+      if idx >= n then
+        0
+      else begin
+        let rec _find_longest_substring t i =
+          if i = n then
+            n - idx
+          else
+            let Node cm = t in
+            match CharMap.find_opt s.[i] cm with
+            | None ->
+              i - idx
+            | Some tt ->
+              _find_longest_substring tt (i + 1) in
+        _find_longest_substring t idx
+      end
     let add t s =
       let n = String.length s in
       let rec _add t i =
