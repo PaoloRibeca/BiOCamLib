@@ -539,7 +539,7 @@ module DNALevenshteinBall (K: IntParameter_t):
           | 'C' | 'c' -> 1
           | 'G' | 'g' -> 2
           | 'T' | 't' -> 3
-          | w -> -1
+          | _ -> -1
         let encode s =
           if String.length s <> k then
             Printf.sprintf "(%s): Invalid argument (string length must be k=%d, found %d)" __FUNCTION__ k (String.length s)
