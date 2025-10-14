@@ -310,6 +310,8 @@ module Trie:
         starting from the 0-based index specified by the integer argument.
        The length of the match is returned *)
     val find_longest_substring: t -> string -> int -> int
+    (* Same as find_longest_substring, but only return complete words in the dictionary *)
+    val find_longest_match: t -> string -> int -> int
     type result_t =
       (* The string is not in the dictionary *)
       | Not_found
@@ -373,6 +375,29 @@ module Trie:
             | Some tt ->
               _find_longest_substring tt (i + 1) in
         _find_longest_substring t idx
+      end
+    let find_longest_match t s idx =
+      let n = String.length s in
+      if idx >= n then
+        0
+      else begin
+        let rec _find_longest_match i_l t i =
+          let Node cm = t in
+          let i_l =
+            match CharMap.find_opt '\000' cm with
+            | None ->
+              i_l
+            | Some _ ->
+              i in
+          if i = n then
+            i_l - idx
+          else
+            match CharMap.find_opt s.[i] cm with
+            | None ->
+              i_l - idx
+            | Some tt ->
+              _find_longest_match i_l tt (i + 1) in
+        _find_longest_match idx t idx
       end
     let add t s =
       let n = String.length s in
