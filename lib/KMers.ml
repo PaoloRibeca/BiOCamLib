@@ -83,325 +83,436 @@ module DoubleSlidingWindow:
       Printf.sprintf "|%s| <-> |%s|" (SlidingWindow.contents d.one) (SlidingWindow.contents d.two)
   end
 
-(* Auxiliary module type to store and query frequencies of k-mers *)
-module type HashFrequencies_t =
-  sig
-    type hash_t
-    type t
-    val create: int -> t
-    val length: t -> int
-    val clear: t -> unit
-    (* The first parameter is the hash, the second its frequency *)
-    val add: t -> hash_t -> int -> unit
-    val iter: (hash_t -> int -> unit) -> t -> unit
-  end
-(* Implementation for integer hashes *)
-module IntHashFrequencies: HashFrequencies_t with type hash_t = int
-= struct
-    type hash_t = int
-    module H = IntHashtbl
-    type t = int ref H.t
-    let create = H.create
-    let length = H.length
-    let clear = H.clear
-    let add hf key occs =
-      match H.find_opt hf key with
-      | None -> H.add hf key (ref occs)
-      | Some r -> r := !r + occs
-      [@@inline]
-    let iter f = H.iter (fun key occs -> f key !occs) [@@inline]
-  end
-
-(* This base type doesn't have iterators *)
-module type BaseHash_t =
-  sig
-    type t
-    val k: int
-    val alphabet: string
-    val encode: string -> t
-    val encode_char: (char -> t) -> char -> t
-    val decode: t -> string
-    val to_hex: t -> string
-  end
-(* The following one is the complete type *)
+(* Auxiliary module type to generate hashes from sequences of integers *)
 module type Hash_t =
   sig
-    include BaseHash_t
-    (* Iterates a function over all hashes that can be extracted from a string
-        according to the specific method being used (for instance, in the case of DNA
-        iteration can happen both on the string and its RC).
-       Iteration is positional, i.e., k-mers can appear more than once *)
-    type iter_t
-    val iteri: (int -> iter_t -> unit) -> string -> unit
-    (* Iteration with counter update *)
-    module HashFrequencies: HashFrequencies_t
-    val iterc: HashFrequencies.t -> string -> unit
+    type t
+    (* Emitted when number of symbol bits and/or value of k are not OK *)
+    exception Invalid_bits of int
+    exception Invalid_k of int
+    exception Invalid_initializers of int * int
+    (* Compute the hash for an encoded k-mer.
+       Arguments are encoded vector and 0-based starting index.
+       There must be at least k symbols left from there to the end of the vector,
+        and the value of the symbol must not exceed the number of bits *)
+    exception Invalid_index of int * int * int
+    exception Invalid_symbol of int
+    val compute: int array -> int -> t
+    (* Return the hash for a k-mer obtained by adding one character to the right end
+        of the argument and discarding one character at the left end *)
+    val add_symbol: t -> int -> t
+    (* Suitable accumulators for values *)
+    module Accumulator1: Hashtbl.S with type key = t
+    module Accumulator2: Hashtbl.S with type key = t * t
+    (* Return the hash as a string, for instance in hex form *)
+    val to_string: t -> string
   end
-module type IntHash_t = Hash_t with type t = int and module HashFrequencies = IntHashFrequencies
-
-module ProteinHash (K: IntParameter_t): IntHash_t with type iter_t = int
-= struct
+module IntHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = int =
+  struct
     type t = int
+    exception Invalid_bits of int
+    let bits =
+      (* We need one additional bit to be able to compute the mask *)
+      if Bits.n < 1 || Bits.n >= Sys.int_size then
+        Invalid_bits Bits.n |> raise;
+      Bits.n
+    exception Invalid_k of int
+    exception Invalid_initializers of int * int
     let k =
-      if K.n > 12 then
-        Printf.sprintf "(%s): Invalid argument (k must be <= 12, found %d)" __FUNCTION__ K.n |> failwith;
+      if K.n < 1 then
+        Invalid_k K.n |> raise;
+      if K.n * Bits.n > Sys.int_size then
+        Invalid_initializers (Bits.n, K.n) |> raise;
       K.n
-    (* There are 22 symbols in the alphabet, each one encoded as a 5-bit number *)
-    let alphabet = "ACDEFGHIKLMNOPQRSTUVWY"
-    let hex_format = Scanf.format_from_string (Printf.sprintf "%%0%dx" ((k * 5 + 3) / 4)) "%d"
-    let to_hex = Printf.sprintf hex_format
-    let encode_char err_f = function
-      | 'A' | 'a' -> 0
-      | 'C' | 'c' -> 1
-      | 'D' | 'd' -> 2
-      | 'E' | 'e' -> 3
-      | 'F' | 'f' -> 4
-      | 'G' | 'g' -> 5
-      | 'H' | 'h' -> 6
-      | 'I' | 'i' -> 7
-      | 'K' | 'k' -> 8
-      | 'L' | 'l' -> 9
-      | 'M' | 'm' -> 10
-      | 'N' | 'n' -> 11
-      | 'O' | 'o' -> 12
-      | 'P' | 'p' -> 13
-      | 'Q' | 'q' -> 14
-      | 'R' | 'r' -> 15
-      | 'S' | 's' -> 16
-      | 'T' | 't' -> 17
-      | 'U' | 'u' -> 18
-      | 'V' | 'v' -> 19
-      | 'W' | 'w' -> 20
-      | 'Y' | 'y' -> 21
-      | w -> err_f w
-    let encode s =
-      if String.length s <> k then
-        Printf.sprintf "(%s): Invalid argument (string length must be k=%d, found %d)" __FUNCTION__ k (String.length s)
-          |> failwith;
+    let mask = 1 lsl (bits * k) - 1
+    let max_symbol = 1 lsl bits - 1
+    exception Invalid_index of int * int * int
+    exception Invalid_symbol of int
+    let compute a idx =
+      let l = Array.length a in
+      if idx + k > l then
+        Invalid_index (idx, l, k) |> raise;
       let res = ref 0 in
-      for i = 0 to k - 1 do
-        res :=
-          !res lsl 5 +
-          encode_char begin
-            fun w ->
-              Printf.sprintf "(%s): Invalid argument (expected character in [ACDEFGHIKLMNOPQRSTUVWYacdefghiklmnopqrstuvwy], found '%c')" __FUNCTION__ w
-                |> failwith
-          end s.[i]
+      for i = idx to idx + k - 1 do
+        let s = a.(i) in
+        if s > max_symbol then
+          Invalid_symbol s |> raise;
+        res := (!res lsl bits) + s
       done;
       !res
-    let decode hash =
-      let res = Bytes.create k in
-      let red_k = k - 1 and rem = ref hash in
-      for i = 0 to red_k do
-        res.Bytes.@(red_k - i) <-
-          begin match !rem land 31 with
-          | 0 -> 'A'
-          | 1 -> 'C'
-          | 2 -> 'D'
-          | 3 -> 'E'
-          | 4 -> 'F'
-          | 5 -> 'G'
-          | 6 -> 'H'
-          | 7 -> 'I'
-          | 8 -> 'K'
-          | 9 -> 'L'
-          | 10 -> 'M'
-          | 11 -> 'N'
-          | 12 -> 'O'
-          | 13 -> 'P'
-          | 14 -> 'Q'
-          | 15 -> 'R'
-          | 16 -> 'S'
-          | 17 -> 'T'
-          | 18 -> 'U'
-          | 19 -> 'V'
-          | 20 -> 'W'
-          | 21 -> 'Y'
-          | _ -> assert false
-          end;
-        rem := !rem lsr 5
-      done;
-      Bytes.to_string res
-    (* Iterates over all k-mers.
-       For each position it presents the forward hash only *)
-    type iter_t = int
-    let iteri f s =
-      (* Our k-mer over alphabet ACDEFGHIKLMNOPQRSTUVWY
-          is encoded into base-32 numbers.
-         The first 12 letters at most are used.
-         If there are Xs or other non-AA letters, the string is split *)
-      let l = String.length s
-      (* 0b--..--11..1100000 *)
-      and mask = 1 lsl (5 * k) - 32 in
-      let add_aa old_hash encoded =
-        ((old_hash lsl 5) land mask) lor encoded in
-      let rec shift start hash pos =
-        if pos - start >= k then
-          f (pos - k) hash;
-        let incr_pos = pos + 1 in
-        if incr_pos <= l then begin
-          let encoded = encode_char (fun _ -> -1) s.[pos] in
-          if encoded >= 0 then
-            shift start (add_aa hash encoded) incr_pos
-          else
-            (* In this case we restart *)
-            if incr_pos + k <= l then
-              shift incr_pos 0 incr_pos
-        end in
-      shift 0 0 0
-    module HashFrequencies = IntHashFrequencies
-    let iterc hf s =
-      iteri
-        (fun _ hash ->
-          HashFrequencies.add hf hash 1)
-        s
+    let add_symbol h s = ((h lsl bits) + s) land mask
+    module Accumulator1 = IntHashtbl
+    type tt = t * t
+    module Accumulator2 = Hashtbl.Make (MakeHashable (struct type t = tt end))
+    let hex_format = Scanf.format_from_string (Printf.sprintf "%%0%dx" ((bits * k + 3) / 4)) "%d"
+    let to_string = Printf.sprintf hex_format
   end
-
-(* Base type without iterators, which depend on the strandedness *)
-module DNABaseHash (K: IntParameter_t): BaseHash_t with type t = int
-= struct
-    type t = int
+module IntZHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = IntZ.t =
+  struct
+    type t = IntZ.t
+    exception Invalid_bits of int
+    let bits =
+      if Bits.n < 1 then
+        Invalid_bits Bits.n |> raise;
+      Bits.n
+    exception Invalid_k of int
+    exception Invalid_initializers of int * int
     let k =
-      if K.n > 30 then
-        Printf.sprintf "(%s): Invalid argument (k must be <= 30, found %d)" __FUNCTION__ K.n |> failwith;
+      if K.n < 1 then
+        Invalid_k K.n |> raise;
       K.n
-    (* There are 4 symbols in the alphabet, each one encoded as a 2-bit number *)
-    let alphabet = "ACGT"
-    let hex_format = Scanf.format_from_string (Printf.sprintf "%%0%dx" ((k * 2 + 3) / 4)) "%d"
-    let to_hex = Printf.sprintf hex_format
-    let encode_char err_f = function
-      | 'A' | 'a' -> 0
-      | 'C' | 'c' -> 1
-      | 'G' | 'g' -> 2
-      | 'T' | 't' -> 3
-      | w -> err_f w
-    let encode s =
-      if String.length s <> k then
-        Printf.sprintf "(%s): Invalid argument (string length must be k=%d, found %d)" __FUNCTION__ k (String.length s)
-          |> failwith;
-      let res = ref 0 in
-      for i = 0 to k - 1 do
-        res :=
-          !res lsl 2 +
-            match s.[i] with
-            | 'A' | 'a' -> 0
-            | 'C' | 'c' -> 1
-            | 'G' | 'g' -> 2
-            | 'T' | 't' -> 3
-            | w ->
-              Printf.sprintf "(%s): Invalid argument (expected character in [ACGTacgt], found '%c')" __FUNCTION__ w
-                |> failwith
+    let mask =
+      let bits_times_k = bits * k in
+      IntZ.(one lsl bits_times_k - one)
+    let max_symbol = 1 lsl bits - 1
+    exception Invalid_index of int * int * int
+    exception Invalid_symbol of int
+    let compute a idx =
+      let l = Array.length a in
+      if idx + k > l then
+        Invalid_index (idx, l, k) |> raise;
+      let res = ref IntZ.zero in
+      for i = idx to idx + k - 1 do
+        let s = a.(i) in
+        if s > max_symbol then
+          Invalid_symbol s |> raise;
+        res := IntZ.((!res lsl bits) + of_int s)
       done;
       !res
-    let decode hash =
-      let res = Bytes.create k in
-      let red_k = k - 1 and rem = ref hash in
-      for i = 0 to red_k do
-        res.Bytes.@(red_k - i) <-
-          begin match !rem land 3 with
-          | 0 -> 'A'
-          | 1 -> 'C'
-          | 2 -> 'G'
-          | 3 -> 'T'
-          | _ -> assert false
-          end;
-        rem := !rem lsr 2
-      done;
-      Bytes.to_string res
+    let add_symbol h s = IntZ.(((h lsl bits) + of_int s) land mask)
+    module Accumulator1 = IntZHashtbl
+    type tt = t * t
+    module Accumulator2 = Hashtbl.Make (MakeHashable (struct type t = tt end))
+    let hex_format = Printf.sprintf "%%0%dx" ((bits * k + 3) / 4)
+    let to_string = IntZ.format hex_format
   end
 
-module DNAHashSingleStranded (K: IntParameter_t): IntHash_t with type iter_t = int
-= struct
-    include DNABaseHash (K)
-    (* Iterates over all k-mers.
-       For each position it presents the forward hash only *)
-    type iter_t = int
-    let iteri f s =
-      (* Our k-mer over alphabet ACGT
-          is encoded into base-4 numbers.
-         The first 30 letters at most are used.
-         If there are Ns or other non-base letters, the string is split *)
-      let l = String.length s
-      (* 0b--..--11..1100 *)
-      and mask = 1 lsl (2 * k) - 4 in
-      let add_base old_hash encoded =
-        ((old_hash lsl 2) land mask) lor encoded in
-      let rec shift start hash pos =
-        if pos - start >= k then
-          f (pos - k) hash;
-        let incr_pos = pos + 1 in
-        if incr_pos <= l then
-          match s.[pos] with
-          | 'A' | 'a' -> shift start (add_base hash 0) incr_pos
-          | 'C' | 'c' -> shift start (add_base hash 1) incr_pos
-          | 'G' | 'g' -> shift start (add_base hash 2) incr_pos
-          | 'T' | 't' -> shift start (add_base hash 3) incr_pos
-          | _ ->
-            (* In this case we restart *)
-            if incr_pos + k <= l then
-              shift incr_pos 0 incr_pos in
-      shift 0 0 0
-    module HashFrequencies = IntHashFrequencies
-    let iterc hf s =
-      iteri
-        (fun _ hash ->
-          HashFrequencies.add hf hash 1)
-        s
-  end
-module DNAHashDoubleStrandedLexicographic (K: IntParameter_t): IntHash_t with type iter_t = int * int
-= struct
-    include DNABaseHash (K)
-    (* Iterates over all k-mers.
-       For each position it presents both forward and reverse hash *)
-    type iter_t = int * int
-    let iteri f s =
-      (* Our k-mer over alphabet ACGT and its reverse complement
-          are encoded into base-4 numbers.
-         The first 30 letters at most are used.
-         If there are Ns or other non-base letters, the string is split *)
-      let l = String.length s
-      (* 0b--..--11..1100 *)
-      and mask_f = 1 lsl (2 * k) - 4
-      and mask_r = 1 lsl (2 * k - 2) - 1 in
-      let add_base (old_hash_f, old_hash_r) encoded_f encoded_r =
-        ((old_hash_f lsl 2) land mask_f) lor encoded_f,
-        ((old_hash_r lsr 2) land mask_r) lor (encoded_r lsl (2 * (k - 1))) in
-      let rec shift start hashes pos =
-        if pos - start >= k then
-          f (pos - k) hashes;
-        let incr_pos = pos + 1 in
-        if incr_pos <= l then
-          match s.[pos] with
-          | 'A' | 'a' -> shift start (add_base hashes 0 3) incr_pos
-          | 'C' | 'c' -> shift start (add_base hashes 1 2) incr_pos
-          | 'G' | 'g' -> shift start (add_base hashes 2 1) incr_pos
-          | 'T' | 't' -> shift start (add_base hashes 3 0) incr_pos
-          | _ ->
-            (* In this case we restart *)
-            if incr_pos + k <= l then
-              shift incr_pos (0, 0) incr_pos in
-      shift 0 (0, 0) 0
-    module HashFrequencies = IntHashFrequencies
-    let iterc hf s =
-      iteri
-        (fun _ (hash_f, hash_r) ->
-          HashFrequencies.add hf (min hash_f hash_r) 1)
-        s
-  end
-module DNAHashDoubleStrandedBoth (K: IntParameter_t): IntHash_t with type iter_t = int * int
-= struct
-    include DNAHashDoubleStrandedLexicographic (K)
-    module HashFrequencies = IntHashFrequencies
-    let iterc hf s =
-      iteri
-        (fun _ (hash_f, hash_r) ->
-          HashFrequencies.add hf hash_f 1;
-          HashFrequencies.add hf hash_r 1)
-        s
-  end
+(* This module takes a number of parameters and generates an iterator over the k-mers
+    contained in a string. K-mers are turned into numerical hashes that get presented
+    to the iterator as strings.
+   First parameter is an adaptor function which, depending on what the string is
+    (DNA, protein, ...) turns the original input string into a set of strings
+    (for instance, the sequence and its reverse complement). This step might include
+    checks on the sequence, for instance linting.
+   Second parameter is a dictionary/trie which is used to turn the input strings
+    into vectors of numbers, depending on what the string is (DNA, protein, ...)
+    and the encoding strategy (single-letter alphabet, byte encoding, dictionary).
+    At this stage, strings containing unencodable characters get split.
+   Third parameter is a function to turn the vectors of numbers into a set of k-mers
+    (single sliding window of fixed length k, double gapped sliding window, ...).
+    Depending on parameters (for instance, a large k or the alphabet size), a
+    different integer implementation might be used to generate hashes (for instance,
+    machine integers or Zarith) *)
 
-module LevenshteinBall (H: BaseHash_t with type t = int):
+module KMerIterator:
   sig
+    module Content:
+      sig
+        type t =
+          | DNA_ss
+          | DNA_ds
+          | Protein
+          | Text
+        exception Unknown of string
+        val of_string: string -> t
+        val to_string: t -> string
+        val make: t -> (string -> string list)
+      end
+    module Encoder:
+      sig
+        type t =
+          | DNA
+          | Protein
+          | Dictionary of string (* File path *)
+
+          | Test of string list
+
+          exception Unknown of string
+        val of_string: string -> t
+        val to_string: t -> string
+        (* The integer is the alphabet size *)
+        val make: ?verbose:bool -> t -> int * (string -> int array list)
+      end
+    module Hasher:
+      sig
+        type t =
+          | K_mers of int
+          | Gapped of int * int
+        val of_string: string -> t
+        val to_string: t -> string
+        (* The integer is the alphabet size.
+           Two functions are returned, an accumulator and a finaliser.
+           The accumulator can be called repeatedly on different encoded strings;
+            its argument is the encoded vector.
+           The finaliser iterates its argument on the accumulated hashes
+            and deallocates storage *)
+        val make: int -> t -> (int array -> unit) * ((string -> int -> unit) -> unit)
+      end
+    type t = (string -> int -> unit) -> string -> unit
+    val make: Content.t -> Encoder.t -> Hasher.t -> t
+  end
+= struct
+    module Content =
+      struct
+        type t =
+          | DNA_ss
+          | DNA_ds
+          | Protein
+          | Text
+        exception Unknown of string
+        let of_string = function
+          | "DNA-ss" | "DNA-single-stranded" -> DNA_ss
+          | "DNA-ds" | "DNA-double-stranded" -> DNA_ds
+          | "protein" -> Protein
+          | "text" -> Text
+          | w ->
+            Unknown w |> raise
+        let to_string = function
+          | DNA_ss -> "DNA-ss"
+          | DNA_ds -> "DNA-ds"
+          | Protein -> "protein"
+          | Text -> "text"
+        (* Note that in what follows we _do_ want to turn lowercase characters
+            into uppercase ones, or the encoding might subsequently fail -
+            unless we doubled the number of bits needed for the encoding,
+            which would not be optimal.
+           As for dashes, we could as well leave them rather than turning them
+            into unknowns, but they would be stripped out later on anyway *)
+        let make = function
+          | DNA_ss ->
+            (fun s ->
+              [Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false s])
+          | DNA_ds ->
+            (fun s ->
+              let linted = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false s in
+              [linted; Sequences.Lint.rc linted])
+          | Protein ->
+            (fun s ->
+              [Sequences.Lint.proteinize ~keep_lowercase:false ~keep_dashes:false s])
+          | Text ->
+            (fun s ->
+              [s])
+      end
+    module Encoder =
+      struct
+        type t =
+          | DNA
+          | Protein
+          | Dictionary of string (* File path *)
+
+          | Test of string list
+
+          exception Unknown of string
+        let of_string = function
+          | "DNA" -> DNA
+          | "protein" -> Protein
+          | w ->
+            begin match String.sub w 0 5 with
+            | "dict:" | "file:" ->
+              Dictionary (String.sub w 5 (String.length w - 5))
+            | _ ->
+              Unknown w |> raise
+            end
+        let to_string = function
+          | DNA -> "DNA"
+          | Protein -> "protein"
+          | Dictionary w -> "dict:" ^ w
+          | Test _ -> assert false
+        let make ?(verbose = false) e =
+          let dict =
+            match e with
+            | Test l ->
+              l
+            | DNA ->
+              [ "A"; "C"; "G"; "T" ]
+            | Protein ->
+              [ "A"; "C"; "D"; "E"; "F"; "G"; "H"; "I"; "K"; "L"; "M";
+                "N"; "O"; "P"; "Q"; "R"; "S"; "T"; "U"; "V"; "W"; "Y" ]
+            | Dictionary filename ->
+              let file = open_in filename and progr = ref 0 and dict = ref [] in
+              if verbose then
+                Printf.eprintf "(%s): Reading dictionary file '%s': Begin\n%!" __FUNCTION__ filename;
+              begin try
+                while true do
+                  let line = input_line file in
+                  if line <> "" then
+                    List.accum dict line;
+                  incr progr
+                done
+              with End_of_file ->
+                close_in file;
+                if verbose then
+                  Printf.eprintf "(%s): Reading dictionary file '%s': End\n%!" __FUNCTION__ filename
+              end;
+              !dict in
+          let trie = ref Tools.Trie.empty and hash = StringHashtbl.create 1024 in
+          List.iteri
+            (fun i s ->
+              trie := Tools.Trie.add !trie s;
+              StringHashtbl.add hash s i)
+            dict;
+          let trie = !trie in
+          StringHashtbl.length hash,
+          (fun s ->
+            let l = String.length s and i = ref 0 and current = Tools.StackArray.create ()
+            and res = ref [] in
+            let add_current_to_res () =
+              if Tools.StackArray.length current > 0 then begin
+                Tools.StackArray.contents current |> List.accum res;
+                Tools.StackArray.clear current
+              end in
+            while !i < l do
+              let n = Tools.Trie.find_longest_match trie s !i in
+              if n = 0 then begin
+                (* Case of no dictionary word found - we just split the string and skip one character *)
+                add_current_to_res ();
+                incr i
+              end else begin
+                String.sub s !i n |> StringHashtbl.find hash |> Tools.StackArray.push current;
+                i := !i + n
+              end
+            done;
+            add_current_to_res ();
+            (* Here we cull the StackArray in order not to leave it around unused *)
+            Tools.StackArray.reset current;
+            (*
+            Printf.printf "Result has %d elements of lengths (" (List.length !res);
+            List.iter
+              (fun ia -> Array.length ia |> Printf.printf " %d")
+              !res;
+            Printf.printf " )\n%!";
+            *)
+            !res)
+      end
+    module Hasher =
+      struct
+        type t =
+          | K_mers of int
+          | Gapped of int * int
+        exception Unknown of string
+        let of_string_re = Str.regexp "[(,)]"
+        let of_string s =
+          match Str.full_split of_string_re s with
+          | [ Text "k-mers"; Delim "("; Text k; Delim ")" ] ->
+            begin try
+              K_mers (int_of_string k)
+            with _ ->
+              Unknown s |> raise
+            end
+          | [ Text "gapped"; Delim "("; Text k; Delim ","; Text gap_size; Delim ")" ] ->
+            begin try
+              Gapped (int_of_string k, int_of_string gap_size)
+            with _ ->
+              Unknown s |> raise
+            end
+          | _ ->
+            Unknown s |> raise
+        let to_string = function
+          | K_mers k ->
+            Printf.sprintf "k-mers(%d)" k
+          | Gapped (k, g) ->
+            Printf.sprintf "gapped(%d,%d)" k g
+        let make n_symbols h =
+          let impl =
+            let n_bits =
+              if n_symbols - 1 < 1 then
+                0
+              else begin
+                let res = ref 0 and rem = ref n_symbols in
+                while rem := !rem lsr 1; !rem > 0 do
+                  incr res
+                done;
+                !res
+              end
+            and k =
+              match h with
+              | K_mers k | Gapped (k, _) -> k in
+            try
+              Printf.printf "I am small (bits=%d, k=%d)\n%!" n_bits k;
+              (module IntHash (struct let n = n_bits end) (struct let n = k end): Hash_t)
+            with _ ->
+              Printf.printf "I am large (bits=%d, k=%d)\n%!" n_bits k;
+              (module IntZHash (struct let n = n_bits end) (struct let n = k end): Hash_t) in
+          let module Impl = (val impl: Hash_t) in
+          match h with
+          | K_mers k ->
+            let res = Impl.Accumulator1.create 1024 in
+            let add h =
+              match Impl.Accumulator1.find_opt res h with
+              | None ->
+                ref 1 |> Impl.Accumulator1.add res h
+              | Some n ->
+                incr n in
+            (* Accumulator *)
+            (fun ia ->
+              let l = Array.length ia in
+              if l >= k then begin
+                let current = Impl.compute ia 0 |> ref in
+                add !current;
+                for i = k to l - 1 do
+                  current := Impl.add_symbol !current ia.(i);
+                  add !current
+                done
+              end),
+            (* Finaliser *)
+            (fun f ->
+              Impl.Accumulator1.iter (fun h n -> f (Impl.to_string h) !n) res;
+              Impl.Accumulator1.reset res)
+          | Gapped (k, g) ->
+            let res = Impl.Accumulator2.create 1024 in
+            let add h1 h2 =
+              let h = (h1, h2) in
+              match Impl.Accumulator2.find_opt res h with
+              | None ->
+                ref 1 |> Impl.Accumulator2.add res h
+              | Some n ->
+                incr n in
+            (* Here we just have to simulate a longer k *)
+            let eff_k = 2 * k + g and offs = k + g in
+            (* Accumulator *)
+            (fun ia ->
+              let l = Array.length ia in
+              if l >= eff_k then begin
+                let current_1 = Impl.compute ia 0 |> ref
+                and current_2 = Impl.compute ia offs |> ref in
+                add !current_1 !current_2;
+                for i = eff_k to l - 1 do
+                  current_1 := Impl.add_symbol !current_1 ia.(i - offs);
+                  current_2 := Impl.add_symbol !current_2 ia.(i);
+                  add !current_1 !current_2
+                done
+              end),
+            (* Finaliser *)
+            (fun f ->
+              Impl.Accumulator2.iter
+                (fun (h1, h2) n ->
+                  f (Impl.to_string h1 ^ "_" ^ Impl.to_string h2) !n)
+                res;
+              Impl.Accumulator2.reset res)
+      end
+    type t = (string -> int -> unit) -> string -> unit
+    let make content encoder hasher =
+      let content = Content.make content and n_symbols, encoder = Encoder.make encoder in
+      let accumulator, finalizer = Hasher.make n_symbols hasher in
+      (fun f s ->
+        content s |>
+          List.iter
+            (fun s ->
+              encoder s |>
+                List.iter accumulator);
+        finalizer f)
+  end
+
+module DNALevenshteinBall (K: IntParameter_t):
+  sig
+    module H:
+      sig
+        type t = int
+        val k: int
+        val alphabet: string
+        val encode: string -> t
+        val encode_char: char -> t
+      end
     (* Iterators all have repetitions *)
     val iter: ?radius:int -> (string -> unit) -> string -> string -> string -> unit
     val iterh: ?radius:int -> (H.t -> unit) -> string -> string -> string -> unit
@@ -414,10 +525,44 @@ module LevenshteinBall (H: BaseHash_t with type t = int):
     val makek: ?radius:int -> string -> t
   end
 = struct
+    module H =
+      struct
+        type t = int
+        let k =
+          if K.n > 30 then
+            Printf.sprintf "(%s): Invalid argument (k must be <= 30, found %d)" __FUNCTION__ K.n |> failwith;
+          K.n
+        (* There are 4 symbols in the alphabet, each one encoded as a 2-bit number *)
+        let alphabet = "ACGT"
+        let encode_char = function
+          | 'A' | 'a' -> 0
+          | 'C' | 'c' -> 1
+          | 'G' | 'g' -> 2
+          | 'T' | 't' -> 3
+          | w -> -1
+        let encode s =
+          if String.length s <> k then
+            Printf.sprintf "(%s): Invalid argument (string length must be k=%d, found %d)" __FUNCTION__ k (String.length s)
+              |> failwith;
+          let res = ref 0 in
+          for i = 0 to k - 1 do
+            res :=
+              !res lsl 2 +
+                match s.[i] with
+                | 'A' | 'a' -> 0
+                | 'C' | 'c' -> 1
+                | 'G' | 'g' -> 2
+                | 'T' | 't' -> 3
+                | w ->
+                  Printf.sprintf "(%s): Invalid argument (expected character in [ACGTacgt], found '%c')" __FUNCTION__ w
+                    |> failwith
+          done;
+          !res
+      end
     let lint s =
       (* This is not entirely general, but OK for the time being *)
       let s = String.uppercase_ascii s |> Bytes.of_string
-      and encode = H.encode_char (fun _ -> -1) in
+      and encode = H.encode_char in
       Bytes.iteri
         (fun i c ->
           Bytes.(
