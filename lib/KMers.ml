@@ -101,6 +101,8 @@ module type Hash_t =
     (* Return the hash for a k-mer obtained by adding one character to the right end
         of the argument and discarding one character at the left end *)
     val add_symbol: t -> int -> t
+    (* Returns a generalised version of the reverse complement *)
+    val rc: t -> t
     (* Suitable accumulators for values *)
     module Accumulator1: Hashtbl.S with type key = t
     module Accumulator2: Hashtbl.S with type key = t * t
@@ -141,6 +143,13 @@ module IntHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = 
       done;
       !res
     let add_symbol h s = ((h lsl bits) + s) land mask
+    let rc h =
+      let h = ref h and res = ref 0 in
+      for _ = 1 to k do
+        res := (!res lsl bits) + (max_symbol - (!h land max_symbol));
+        h := !h lsr bits
+      done;
+      !res
     module Accumulator1 = IntHashtbl
     type tt = t * t
     module Accumulator2 = Hashtbl.Make (MakeHashable (struct type t = tt end))
@@ -165,6 +174,7 @@ module IntZHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t =
       let bits_times_k = bits * k in
       IntZ.(one lsl bits_times_k - one)
     let max_symbol = 1 lsl bits - 1
+    let max_symbol_z = IntZ.of_int max_symbol
     exception Invalid_index of int * int * int
     exception Invalid_symbol of int
     let compute a idx =
@@ -180,6 +190,14 @@ module IntZHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t =
       done;
       !res
     let add_symbol h s = IntZ.(((h lsl bits) + of_int s) land mask)
+    let rc h =
+      let h = ref h and res = ref IntZ.zero in
+      for _ = 1 to k do
+        res := IntZ.((!res lsl bits) + (max_symbol_z - (!h land max_symbol_z)));
+        (* IntZ doesn't seem to have lsr, but asr should be fine as h is positive *)
+        h := IntZ.(!h asr bits)
+      done;
+      !res
     module Accumulator1 = IntZHashtbl
     type tt = t * t
     module Accumulator2 = Hashtbl.Make (MakeHashable (struct type t = tt end))
@@ -193,7 +211,9 @@ module IntZHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t =
    First parameter is an adaptor function which, depending on what the string is
     (DNA, protein, ...) turns the original input string into a set of strings
     (for instance, the sequence and its reverse complement). This step might include
-    checks on the sequence, for instance linting.
+    checks on the sequence, for instance linting. Also this step produces flags for
+    a filter that will be applied to all the hashes prior to iteration, for instance
+    to remove duplicated DNA k-mers coming from reverse complementing the string.
    Second parameter is a dictionary/trie which is used to turn the input strings
     into vectors of numbers, depending on what the string is (DNA, protein, ...)
     and the encoding strategy (single-letter alphabet, byte encoding, dictionary).
@@ -204,7 +224,7 @@ module IntZHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t =
     different integer implementation might be used to generate hashes (for instance,
     machine integers or Zarith) *)
 
-module KMerIterator:
+module Iterator:
   sig
     module Content:
       sig
@@ -216,7 +236,8 @@ module KMerIterator:
         exception Unknown of string
         val of_string: string -> t
         val to_string: t -> string
-        val make: t -> (string -> string list)
+        (* The results are adaptor function and RC flag *)
+        val make: t -> (string -> string list) * bool
       end
     module Encoder:
       sig
@@ -224,9 +245,7 @@ module KMerIterator:
           | DNA
           | Protein
           | Dictionary of string (* File path *)
-
-          | Test of string list
-
+          | Test of string list (* No constructor from string - not really used in production *)
           exception Unknown of string
         val of_string: string -> t
         val to_string: t -> string
@@ -240,16 +259,23 @@ module KMerIterator:
           | Gapped of int * int
         val of_string: string -> t
         val to_string: t -> string
-        (* The integer is the alphabet size.
+        (* Arguments are alphabet size and iterator function - and an optional
+            max size parameter to determine if the accumulator should be
+            periodically processed through the iterator and flushed.
            Two functions are returned, an accumulator and a finaliser.
            The accumulator can be called repeatedly on different encoded strings;
-            its argument is the encoded vector.
-           The finaliser iterates its argument on the accumulated hashes
-            and deallocates storage *)
-        val make: int -> t -> (int array -> unit) * ((string -> int -> unit) -> unit)
+            its argument is the encoded vector. An optional argument can be provided
+             to weigh k-mers based on coverage.
+           The finaliser applies the iterator to the hashes accumulated so far
+            and deallocates storage, pretty much as what happens when flushing *)
+        val make: ?max_results_size:int -> ?deduplicate_rc_k_mers:bool -> ?verbose:bool ->
+                  int -> t -> (string -> int -> unit) ->
+                  (?weight:int -> int array -> unit) * (unit -> unit)
       end
-    type t = (string -> int -> unit) -> string -> unit
-    val make: Content.t -> Encoder.t -> Hasher.t -> t
+    type t = ?weight:int -> string -> unit
+    (* The last argument is the iterator function *)
+    val make: ?max_results_size:int -> ?verbose:bool ->
+              Content.t -> Encoder.t -> Hasher.t -> (string -> int -> unit) -> t
   end
 = struct
     module Content =
@@ -281,17 +307,20 @@ module KMerIterator:
         let make = function
           | DNA_ss ->
             (fun s ->
-              [Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false s])
+              [Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false s]),
+            false
           | DNA_ds ->
             (fun s ->
               let linted = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false s in
-              [linted; Sequences.Lint.rc linted])
+              [linted; Sequences.Lint.rc linted]),
+            true
           | Protein ->
             (fun s ->
-              [Sequences.Lint.proteinize ~keep_lowercase:false ~keep_dashes:false s])
+              [Sequences.Lint.proteinize ~keep_lowercase:false ~keep_dashes:false s]),
+            false
           | Text ->
-            (fun s ->
-              [s])
+            (fun s -> [s]),
+            false
       end
     module Encoder =
       struct
@@ -299,9 +328,7 @@ module KMerIterator:
           | DNA
           | Protein
           | Dictionary of string (* File path *)
-
           | Test of string list
-
           exception Unknown of string
         let of_string = function
           | "DNA" -> DNA
@@ -412,7 +439,7 @@ module KMerIterator:
             Printf.sprintf "k-mers(%d)" k
           | Gapped (k, g) ->
             Printf.sprintf "gapped(%d,%d)" k g
-        let make n_symbols h =
+        let make ?(max_results_size = 0) ?(deduplicate_rc_k_mers = false) ?(verbose = false) n_symbols h f =
           let impl =
             let n_bits =
               if n_symbols - 1 < 1 then
@@ -424,83 +451,118 @@ module KMerIterator:
                 done;
                 !res
               end
-            and k =
-              match h with
-              | K_mers k | Gapped (k, _) -> k in
+            and k = match h with K_mers k | Gapped (k, _) -> k in
             try
-              Printf.printf "I am small (bits=%d, k=%d)\n%!" n_bits k;
+              (*Printf.printf "I am small (bits=%d, k=%d)\n%!" n_bits k;*)
               (module IntHash (struct let n = n_bits end) (struct let n = k end): Hash_t)
             with _ ->
-              Printf.printf "I am large (bits=%d, k=%d)\n%!" n_bits k;
+              (*Printf.printf "I am large (bits=%d, k=%d)\n%!" n_bits k;*)
               (module IntZHash (struct let n = n_bits end) (struct let n = k end): Hash_t) in
           let module Impl = (val impl: Hash_t) in
           match h with
           | K_mers k ->
-            let res = Impl.Accumulator1.create 1024 in
-            let add h =
+            let res = Impl.Accumulator1.create 1024 and cntr = ref 0 in
+            let finalizer () =
+              let full = Impl.Accumulator1.length res > max_results_size in
+              if verbose && full then
+                Printf.eprintf "%s\r(%s): Maximum size (%d) reached. Outputting and removing hashes...%!"
+                  String.TermIO.clear __FUNCTION__ max_results_size;
+              let iterator =
+                if deduplicate_rc_k_mers then
+                  (fun h n ->
+                    if h <= Impl.rc h then
+                      f (Impl.to_string h) !n)
+                else
+                  (fun h n ->
+                    f (Impl.to_string h) !n) in
+              Impl.Accumulator1.iter iterator res;
+              Impl.Accumulator1.reset res;
+              if verbose && full then
+                Printf.eprintf " done.\n%!" in
+            let add h w =
+              incr cntr;
+              if max_results_size > 0 && !cntr mod 1000 = 0 && Impl.Accumulator1.length res > max_results_size then
+                finalizer ();
               match Impl.Accumulator1.find_opt res h with
               | None ->
-                ref 1 |> Impl.Accumulator1.add res h
+                ref w |> Impl.Accumulator1.add res h
               | Some n ->
-                incr n in
+                n := !n + w in
             (* Accumulator *)
-            (fun ia ->
+            (fun ?(weight = 1) ia ->
               let l = Array.length ia in
               if l >= k then begin
                 let current = Impl.compute ia 0 |> ref in
-                add !current;
+                add !current weight;
                 for i = k to l - 1 do
                   current := Impl.add_symbol !current ia.(i);
-                  add !current
+                  add !current weight
                 done
               end),
             (* Finaliser *)
-            (fun f ->
-              Impl.Accumulator1.iter (fun h n -> f (Impl.to_string h) !n) res;
-              Impl.Accumulator1.reset res)
+            finalizer
           | Gapped (k, g) ->
-            let res = Impl.Accumulator2.create 1024 in
-            let add h1 h2 =
+            let res = Impl.Accumulator2.create 1024 and cntr = ref 0 in
+            let finalizer () =
+              let full = Impl.Accumulator2.length res > max_results_size in
+              if verbose && full then
+                Printf.eprintf "%s\r(%s): Maximum size (%d) reached. Outputting and removing hashes...%!"
+                  String.TermIO.clear __FUNCTION__ max_results_size;
+              let iterator =
+                if deduplicate_rc_k_mers then
+                  (fun (h1, h2) n ->
+                    (* Here the equation is (h1|h2) <= rc(h1|h2) = rc(h2)|rc(h1) *)
+                    let rc_h2 = Impl.rc h2 in
+                    if h1 < rc_h2 || (h1 = rc_h2 && h2 <= Impl.rc h1) then
+                      f (Impl.to_string h1 ^ "_" ^ Impl.to_string h2) !n)
+                else
+                  (fun (h1, h2) n ->
+                    f (Impl.to_string h1 ^ "_" ^ Impl.to_string h2) !n) in
+              Impl.Accumulator2.iter iterator res;
+              Impl.Accumulator2.reset res;
+              if verbose && full then
+                Printf.eprintf " done.\n%!" in
+            let add h1 h2 w =
+              incr cntr;
+              if max_results_size > 0 && !cntr mod 1000 = 0 && Impl.Accumulator2.length res > max_results_size then
+                finalizer ();
               let h = (h1, h2) in
               match Impl.Accumulator2.find_opt res h with
               | None ->
-                ref 1 |> Impl.Accumulator2.add res h
+                ref w |> Impl.Accumulator2.add res h
               | Some n ->
-                incr n in
+                n := !n + w in
             (* Here we just have to simulate a longer k *)
             let eff_k = 2 * k + g and offs = k + g in
             (* Accumulator *)
-            (fun ia ->
+            (fun ?(weight = 1) ia ->
               let l = Array.length ia in
               if l >= eff_k then begin
                 let current_1 = Impl.compute ia 0 |> ref
                 and current_2 = Impl.compute ia offs |> ref in
-                add !current_1 !current_2;
+                add !current_1 !current_2 weight;
                 for i = eff_k to l - 1 do
                   current_1 := Impl.add_symbol !current_1 ia.(i - offs);
                   current_2 := Impl.add_symbol !current_2 ia.(i);
-                  add !current_1 !current_2
+                  add !current_1 !current_2 weight
                 done
               end),
             (* Finaliser *)
-            (fun f ->
-              Impl.Accumulator2.iter
-                (fun (h1, h2) n ->
-                  f (Impl.to_string h1 ^ "_" ^ Impl.to_string h2) !n)
-                res;
-              Impl.Accumulator2.reset res)
+            finalizer
       end
-    type t = (string -> int -> unit) -> string -> unit
-    let make content encoder hasher =
-      let content = Content.make content and n_symbols, encoder = Encoder.make encoder in
-      let accumulator, finalizer = Hasher.make n_symbols hasher in
-      (fun f s ->
+    type t = ?weight:int -> string -> unit
+    let make ?(max_results_size = 0) ?(verbose = false) content encoder hasher f =
+      let content, deduplicate_rc_k_mers = Content.make content
+      and n_symbols, encoder = Encoder.make ~verbose encoder in
+      let accumulator, finalizer =
+        Hasher.make ~max_results_size ~deduplicate_rc_k_mers ~verbose n_symbols hasher f in
+      (fun ?(weight = 1) s ->
         content s |>
           List.iter
             (fun s ->
               encoder s |>
-                List.iter accumulator);
-        finalizer f)
+                List.iter (accumulator ~weight));
+        finalizer ())
   end
 
 module DNALevenshteinBall (K: IntParameter_t):
