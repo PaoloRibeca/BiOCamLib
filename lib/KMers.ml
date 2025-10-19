@@ -98,11 +98,14 @@ module type Hash_t =
     exception Invalid_index of int * int * int
     exception Invalid_symbol of int
     val compute: int array -> int -> t
+    val symbol_complement: int -> int
     (* Returns a generalised version of the reverse complement *)
     val rc: t -> t
     (* Return the hash for a k-mer obtained by adding one character to the right end
         of the argument and discarding one character at the left end *)
-    val add_symbol: t -> int -> t
+    val add_symbol_right: t -> int -> t
+    (* Same but on the other end *)
+    val add_symbol_left: t -> int -> t
     (* Suitable accumulators for values
         (Accumulator1 for regular k-mers, Accumulator2 for gapped k-mers) *)
     module Accumulator1: Hashtbl.S with type key = t
@@ -129,6 +132,7 @@ module IntHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = 
       K.n
     let mask = 1 lsl (bits * k) - 1
     let max_symbol = 1 lsl bits - 1
+    let symbol_complement s = max_symbol - s
     exception Invalid_index of int * int * int
     exception Invalid_symbol of int
     let compute a idx =
@@ -143,7 +147,9 @@ module IntHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = 
         res := (!res lsl bits) + s
       done;
       !res
-    let add_symbol h s = ((h lsl bits) + s) land mask
+    let add_symbol_right h s = ((h lsl bits) lor s) land mask
+    let left_shift = bits * (k - 1)
+    let add_symbol_left h s = (s lsl left_shift) lor (h lsr bits)
     let rc h =
       let h = ref h and res = ref 0 in
       for _ = 1 to k do
@@ -175,6 +181,7 @@ module IntZHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t =
       let bits_times_k = bits * k in
       IntZ.(one lsl bits_times_k - one)
     let max_symbol = 1 lsl bits - 1
+    let symbol_complement s = max_symbol - s
     let max_symbol_z = IntZ.of_int max_symbol
     exception Invalid_index of int * int * int
     exception Invalid_symbol of int
@@ -190,7 +197,10 @@ module IntZHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t =
         res := IntZ.((!res lsl bits) + of_int s)
       done;
       !res
-    let add_symbol h s = IntZ.(((h lsl bits) + of_int s) land mask)
+    let add_symbol_right h s = IntZ.(((h lsl bits) lor of_int s) land mask)
+    let left_shift = bits * (k - 1)
+    (* IntZ doesn't seem to have lsr, but asr should be fine as h is positive *)
+    let add_symbol_left h s = IntZ.((of_int s lsl left_shift) lor (h asr bits))
     let rc h =
       let h = ref h and res = ref IntZ.zero in
       for _ = 1 to k do
@@ -237,8 +247,15 @@ module Iterator:
         exception Unknown of string
         val of_string: string -> t
         val to_string: t -> string
-        (* The results are adaptor function and RC flag *)
-        val make: t -> (string -> string list) * bool
+        module Flags:
+          sig
+            type t = {
+              rc_add: bool;
+              rc_deduplicate_k_mers: bool
+            }
+          end
+        (* The results are adaptor function and flags *)
+        val make: t -> (string -> string) * Flags.t
       end
     module Encoder:
       sig
@@ -269,8 +286,8 @@ module Iterator:
              to weigh k-mers based on coverage.
            The finaliser applies the iterator to the hashes accumulated so far
             and deallocates storage, pretty much as what happens when flushing *)
-        val make: ?max_results_size:int -> ?deduplicate_rc_k_mers:bool -> ?verbose:bool ->
-                  int -> t -> (string -> int -> unit) ->
+        val make: ?max_results_size:int -> ?verbose:bool ->
+                  Content.Flags.t -> int -> t -> (string -> int -> unit) ->
                   (?weight:int -> int array -> unit) * (unit -> unit)
       end
     type t = ?weight:int -> string -> unit
@@ -305,23 +322,26 @@ module Iterator:
             which would not be optimal.
            As for dashes, we could as well leave them rather than turning them
             into unknowns, but they would be stripped out later on anyway *)
-        let make = function
+          module Flags =
+            struct
+              type t = {
+                rc_add: bool;
+                rc_deduplicate_k_mers: bool
+              }
+            end
+          let make = function
           | DNA_ss ->
-            (fun s ->
-              [Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false s]),
-            false
+            (Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false),
+            { Flags.rc_add = false; rc_deduplicate_k_mers = false }
           | DNA_ds ->
-            (fun s ->
-              let linted = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false s in
-              [linted; Sequences.Lint.rc linted]),
-            true
+            (Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false),
+            { Flags.rc_add = true; rc_deduplicate_k_mers = true }
           | Protein ->
-            (fun s ->
-              [Sequences.Lint.proteinize ~keep_lowercase:false ~keep_dashes:false s]),
-            false
+            (Sequences.Lint.proteinize ~keep_lowercase:false ~keep_dashes:false),
+            { Flags.rc_add = false; rc_deduplicate_k_mers = false }
           | Text ->
-            (fun s -> [s]),
-            false
+            (fun s -> s),
+            { Flags.rc_add = false; rc_deduplicate_k_mers = false }
       end
     module Encoder =
       struct
@@ -379,11 +399,12 @@ module Iterator:
               trie := Tools.Trie.add !trie s)
             dict;
           let trie = !trie
-          and encoder_timer_id = Tools.Timer.of_string "KMers.Iterator.Encoder:encode"
-          and trie_timer_id = Tools.Timer.of_string "KMers.Iterator.Encoder:trie" in
+          and timer_id_encoder = Tools.Timer.of_string "KMers.Iterator.Encoder:encode"
+          and timer_id_trie = Tools.Timer.of_string "KMers.Iterator.Encoder:trie"
+          and timer_id_stackarray = Tools.Timer.of_string "KMers.Iterator.Encoder:stackarray" in
           Tools.Trie.length trie,
           (fun s ->
-            Tools.Timer.start encoder_timer_id;
+            (*Tools.Timer.start timer_id_encoder;*)
             let l = String.length s and i = ref 0 and current = Tools.StackArray.create ()
             and res = ref [] in
             let add_current_to_res () =
@@ -392,15 +413,17 @@ module Iterator:
                 Tools.StackArray.clear current
               end in
             while !i < l do
-              Tools.Timer.start trie_timer_id;
+              (*Tools.Timer.start timer_id_trie;*)
               let n, id = Tools.Trie.longest_match trie s !i in
-              Tools.Timer.stop trie_timer_id;
+              (*Tools.Timer.stop timer_id_trie;*)
               if n = 0 then begin
                 (* Case of no dictionary word found - we just split the string and skip one character *)
                 add_current_to_res ();
                 incr i
               end else begin
+                (*Tools.Timer.start timer_id_stackarray;*)
                 Tools.StackArray.push current id;
+                (*Tools.Timer.stop timer_id_stackarray;*)
                 i := !i + n
               end
             done;
@@ -414,7 +437,7 @@ module Iterator:
               !res;
             Printf.printf " )\n%!";
             *)
-            Tools.Timer.stop encoder_timer_id;
+            (*Tools.Timer.stop timer_id_encoder;*)
             !res)
       end
     module Hasher =
@@ -445,7 +468,7 @@ module Iterator:
             Printf.sprintf "k-mers(%d)" k
           | Gapped (k, g) ->
             Printf.sprintf "gapped(%d,%d)" k g
-        let make ?(max_results_size = 0) ?(deduplicate_rc_k_mers = false) ?(verbose = false) n_symbols h f =
+        let make ?(max_results_size = 0) ?(verbose = false) flags n_symbols h f =
           let impl =
             let n_bits =
               if n_symbols - 1 < 1 then
@@ -465,18 +488,16 @@ module Iterator:
               (*Printf.printf "I am large (bits=%d, k=%d)\n%!" n_bits k;*)
               (module IntZHash (struct let n = n_bits end) (struct let n = k end): Hash_t) in
           let module Impl = (val impl: Hash_t) in
-          let finalizer_timer_id = Tools.Timer.of_string "KMers.Iterator.Hasher:finalizer" in
           match h with
           | K_mers k ->
             let res = Impl.Accumulator1.create 1024 and cntr = ref 0 in
             let finalizer () =
-              Tools.Timer.start finalizer_timer_id;
               let full = Impl.Accumulator1.length res > max_results_size in
               if verbose && full then
                 Printf.eprintf "%s\r(%s): Maximum size (%d) reached. Outputting and removing hashes...%!"
                   String.TermIO.clear __FUNCTION__ max_results_size;
               let iterator =
-                if deduplicate_rc_k_mers then
+                if flags.Content.Flags.rc_deduplicate_k_mers then
                   (fun h n ->
                     if h <= Impl.rc h then
                       f (Impl.to_string h) !n)
@@ -486,8 +507,7 @@ module Iterator:
               Impl.Accumulator1.iter iterator res;
               Impl.Accumulator1.reset res;
               if verbose && full then
-                Printf.eprintf " done.\n%!";
-              Tools.Timer.stop finalizer_timer_id; in
+                Printf.eprintf " done.\n%!" in
             let add h w =
               incr cntr;
               if max_results_size > 0 && !cntr mod 1000 = 0 && Impl.Accumulator1.length res > max_results_size then
@@ -502,10 +522,17 @@ module Iterator:
               let l = Array.length ia in
               if l >= k then begin
                 let current = Impl.compute ia 0 |> ref in
+                let rc = Impl.rc !current |> ref in
                 add !current weight;
+                if flags.rc_add then
+                  add !rc weight;
                 for i = k to l - 1 do
-                  current := Impl.add_symbol !current ia.(i);
-                  add !current weight
+                  current := Impl.add_symbol_right !current ia.(i);
+                  add !current weight;
+                  if flags.rc_add then begin
+                    rc := Impl.symbol_complement ia.(i) |> Impl.add_symbol_left !rc;
+                    add !rc weight
+                  end
                 done
               end),
             (* Finaliser *)
@@ -513,13 +540,12 @@ module Iterator:
           | Gapped (k, g) ->
             let res = Impl.Accumulator2.create 1024 and cntr = ref 0 in
             let finalizer () =
-              Tools.Timer.start finalizer_timer_id;
               let full = Impl.Accumulator2.length res > max_results_size in
               if verbose && full then
                 Printf.eprintf "%s\r(%s): Maximum size (%d) reached. Outputting and removing hashes...%!"
                   String.TermIO.clear __FUNCTION__ max_results_size;
               let iterator =
-                if deduplicate_rc_k_mers then
+                if flags.rc_deduplicate_k_mers then
                   (fun (h1, h2) n ->
                     (* Here the equation is (h1|h2) <= rc(h1|h2) = rc(h2)|rc(h1) *)
                     let rc_h2 = Impl.rc h2 in
@@ -531,8 +557,7 @@ module Iterator:
               Impl.Accumulator2.iter iterator res;
               Impl.Accumulator2.reset res;
               if verbose && full then
-                Printf.eprintf " done.\n%!";
-              Tools.Timer.stop finalizer_timer_id in
+                Printf.eprintf " done.\n%!" in
             let add h1 h2 w =
               incr cntr;
               if max_results_size > 0 && !cntr mod 1000 = 0 && Impl.Accumulator2.length res > max_results_size then
@@ -552,10 +577,19 @@ module Iterator:
                 let current_1 = Impl.compute ia 0 |> ref
                 and current_2 = Impl.compute ia offs |> ref in
                 add !current_1 !current_2 weight;
+                let rc_1 = Impl.rc !current_1 |> ref
+                and rc_2 = Impl.rc !current_2 |> ref in
+                if flags.rc_add then
+                  add !rc_1 !rc_2 weight;
                 for i = eff_k to l - 1 do
-                  current_1 := Impl.add_symbol !current_1 ia.(i - offs);
-                  current_2 := Impl.add_symbol !current_2 ia.(i);
-                  add !current_1 !current_2 weight
+                  current_1 := Impl.add_symbol_right !current_1 ia.(i - offs);
+                  current_2 := Impl.add_symbol_right !current_2 ia.(i);
+                  add !current_1 !current_2 weight;
+                  if flags.rc_add then begin
+                    rc_1 := Impl.symbol_complement ia.(i - offs) |> Impl.add_symbol_left !rc_1;
+                    rc_2 := Impl.symbol_complement ia.(i) |> Impl.add_symbol_left !rc_2;
+                    add !rc_1 !rc_2 weight
+                  end
                 done
               end),
             (* Finaliser *)
@@ -563,16 +597,15 @@ module Iterator:
       end
     type t = ?weight:int -> string -> unit
     let make ?(max_results_size = 0) ?(verbose = false) content encoder hasher f =
-      let content, deduplicate_rc_k_mers = Content.make content
+      let content, flags = Content.make content
       and n_symbols, encoder = Encoder.make ~verbose encoder in
       let accumulator, finalizer =
-        Hasher.make ~max_results_size ~deduplicate_rc_k_mers ~verbose n_symbols hasher f in
+        Hasher.make ~max_results_size ~verbose flags n_symbols hasher f in
       (fun ?(weight = 1) s ->
         content s |>
-          List.iter
-            (fun s ->
-              encoder s |>
-                List.iter (accumulator ~weight));
+          (fun s ->
+            encoder s |>
+              List.iter (accumulator ~weight));
         finalizer ())
   end
 
