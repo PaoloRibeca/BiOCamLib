@@ -98,12 +98,13 @@ module type Hash_t =
     exception Invalid_index of int * int * int
     exception Invalid_symbol of int
     val compute: int array -> int -> t
+    (* Returns a generalised version of the reverse complement *)
+    val rc: t -> t
     (* Return the hash for a k-mer obtained by adding one character to the right end
         of the argument and discarding one character at the left end *)
     val add_symbol: t -> int -> t
-    (* Returns a generalised version of the reverse complement *)
-    val rc: t -> t
-    (* Suitable accumulators for values *)
+    (* Suitable accumulators for values
+        (Accumulator1 for regular k-mers, Accumulator2 for gapped k-mers) *)
     module Accumulator1: Hashtbl.S with type key = t
     module Accumulator2: Hashtbl.S with type key = t * t
     (* Return the hash as a string, for instance in hex form *)
@@ -372,15 +373,17 @@ module Iterator:
                   Printf.eprintf "(%s): Reading dictionary file '%s': End\n%!" __FUNCTION__ filename
               end;
               !dict in
-          let trie = ref Tools.Trie.empty and hash = StringHashtbl.create 1024 in
-          List.iteri
-            (fun i s ->
-              trie := Tools.Trie.add !trie s;
-              StringHashtbl.add hash s i)
+          let trie = Tools.Trie.create () |> ref in
+          List.iter
+            (fun s ->
+              trie := Tools.Trie.add !trie s)
             dict;
-          let trie = !trie in
-          StringHashtbl.length hash,
+          let trie = !trie
+          and encoder_timer_id = Tools.Timer.of_string "KMers.Iterator.Encoder:encode"
+          and trie_timer_id = Tools.Timer.of_string "KMers.Iterator.Encoder:trie" in
+          Tools.Trie.length trie,
           (fun s ->
+            Tools.Timer.start encoder_timer_id;
             let l = String.length s and i = ref 0 and current = Tools.StackArray.create ()
             and res = ref [] in
             let add_current_to_res () =
@@ -389,13 +392,15 @@ module Iterator:
                 Tools.StackArray.clear current
               end in
             while !i < l do
-              let n = Tools.Trie.find_longest_match trie s !i in
+              Tools.Timer.start trie_timer_id;
+              let n, id = Tools.Trie.longest_match trie s !i in
+              Tools.Timer.stop trie_timer_id;
               if n = 0 then begin
                 (* Case of no dictionary word found - we just split the string and skip one character *)
                 add_current_to_res ();
                 incr i
               end else begin
-                String.sub s !i n |> StringHashtbl.find hash |> Tools.StackArray.push current;
+                Tools.StackArray.push current id;
                 i := !i + n
               end
             done;
@@ -409,6 +414,7 @@ module Iterator:
               !res;
             Printf.printf " )\n%!";
             *)
+            Tools.Timer.stop encoder_timer_id;
             !res)
       end
     module Hasher =
@@ -459,10 +465,12 @@ module Iterator:
               (*Printf.printf "I am large (bits=%d, k=%d)\n%!" n_bits k;*)
               (module IntZHash (struct let n = n_bits end) (struct let n = k end): Hash_t) in
           let module Impl = (val impl: Hash_t) in
+          let finalizer_timer_id = Tools.Timer.of_string "KMers.Iterator.Hasher:finalizer" in
           match h with
           | K_mers k ->
             let res = Impl.Accumulator1.create 1024 and cntr = ref 0 in
             let finalizer () =
+              Tools.Timer.start finalizer_timer_id;
               let full = Impl.Accumulator1.length res > max_results_size in
               if verbose && full then
                 Printf.eprintf "%s\r(%s): Maximum size (%d) reached. Outputting and removing hashes...%!"
@@ -478,7 +486,8 @@ module Iterator:
               Impl.Accumulator1.iter iterator res;
               Impl.Accumulator1.reset res;
               if verbose && full then
-                Printf.eprintf " done.\n%!" in
+                Printf.eprintf " done.\n%!";
+              Tools.Timer.stop finalizer_timer_id; in
             let add h w =
               incr cntr;
               if max_results_size > 0 && !cntr mod 1000 = 0 && Impl.Accumulator1.length res > max_results_size then
@@ -504,6 +513,7 @@ module Iterator:
           | Gapped (k, g) ->
             let res = Impl.Accumulator2.create 1024 and cntr = ref 0 in
             let finalizer () =
+              Tools.Timer.start finalizer_timer_id;
               let full = Impl.Accumulator2.length res > max_results_size in
               if verbose && full then
                 Printf.eprintf "%s\r(%s): Maximum size (%d) reached. Outputting and removing hashes...%!"
@@ -521,7 +531,8 @@ module Iterator:
               Impl.Accumulator2.iter iterator res;
               Impl.Accumulator2.reset res;
               if verbose && full then
-                Printf.eprintf " done.\n%!" in
+                Printf.eprintf " done.\n%!";
+              Tools.Timer.stop finalizer_timer_id in
             let add h1 h2 w =
               incr cntr;
               if max_results_size > 0 && !cntr mod 1000 = 0 && Impl.Accumulator2.length res > max_results_size then

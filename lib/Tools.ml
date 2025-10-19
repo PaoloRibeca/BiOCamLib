@@ -296,188 +296,265 @@ end
     Array.sub s.data 0 s.size
 end
 
+(* Note that this is _not_ thread-safe *)
+module Timer:
+  sig
+    type t
+    val of_string: string -> t
+    val to_string: t -> string
+    val reset: t -> unit
+    val start: t -> unit
+    val stop: t -> unit
+    exception Not_found of string
+    val read: string -> float
+  end
+= struct
+    type t = int
+    let id_to_string = StackArray.create ()
+    and string_to_id = ref StringMap.empty
+    let counters = StackArray.create ()
+    and starts = StackArray.create ()
+    let ( .@() ) = StackArray.( .@() )
+    and ( .@() <- ) = StackArray.( .@() <- )
+    let of_string s =
+      match StringMap.find_opt s !string_to_id with
+      | None ->
+        let id = StackArray.length id_to_string in
+        StackArray.push id_to_string s;
+        string_to_id := StringMap.add s id !string_to_id;
+        StackArray.push counters 0.;
+        StackArray.push starts 0.;
+        id
+      | Some id ->
+        id
+    let to_string n = id_to_string.@(n)
+    let reset n =
+      counters.@(n) <- 0.;
+      starts.@(n) <- 0.
+    let start n =
+      if starts.@(n) = 0. then
+        starts.@(n) <- Unix.gettimeofday ()
+    let stop n =
+      if starts.@(n) > 0. then begin
+        counters.@(n) <- counters.@(n) +. (Unix.gettimeofday () -. starts.@(n));
+        starts.@(n) <- 0.
+      end
+    exception Not_found of string
+    let read s =
+      match StringMap.find_opt s !string_to_id with
+      | None ->
+        Not_found s |> raise
+      | Some n ->
+        counters.@(n)
+  end
+
 module Trie:
   sig
     type t
-    val empty: t
+    val create: unit -> t
     val add: t -> string -> t
+    val length: t -> int
+    exception Not_found
+    val nth: t -> int -> string
     (* Enumerates the whole dictionary *)
-    val find_all: t -> string list
+    val all: t -> string array
     (* Find the longest prefix of the argument present in the dictionary.
        The length of the matched prefix is returned *)
-    val find_longest_prefix: t -> string -> int
+    val longest_prefix: t -> string -> int
     (* Find the longest substring of the string argument present in the dictionary,
         starting from the 0-based index specified by the integer argument.
        The length of the match is returned *)
-    val find_longest_substring: t -> string -> int -> int
-    (* Same as find_longest_substring, but only return complete words in the dictionary *)
-    val find_longest_match: t -> string -> int -> int
-    type result_t =
-      (* The string is not in the dictionary *)
-      | Not_found
-      (* There is one longer match in the dictionary *)
-      | Partial of string
-      (* There are multiple longer matches in the dictionary *)
-      | Ambiguous of string list
-      (* There is an exact match in the dictionary, but also other longer matches *)
-      | Contained of string list
-      (* There is an exact match and no other longer matches starting with the string *)
-      | Unique
-    val find: t -> string -> result_t
-    (* Converts the result to string whenever it is possible to do so unambiguously *)
-    val find_string: t -> string -> string
+    val longest_substring: t -> string -> int -> int
+    (* Same as find_longest_substring, but only returning complete words in the dictionary.
+       Additionally, also returns for the word that was found its index in the dictionary *)
+    val longest_match: t -> string -> int -> (int * int)
+    type presence_t =
+      (* The full query is not present in the dictionary.
+         If one of its prefixes is, we return its length *)
+      | Not_found of int
+      (* There are no exact matches in the dictionary and precisely one, longer match *)
+      | Partial of int
+      (* There are no exact and several longer matches in the dictionary *)
+      | Ambiguous of int list
+      (* There is one exact match in the dictionary, but also other longer matches *)
+      | Contained of int * int list
+      (* There is one exact match and no other longer matches starting with the string *)
+      | Unique of int
+    val find: t -> string -> presence_t
+    val find_present: t -> string -> int option
+    val find_unambiguous: t -> string -> int option
   end
 = struct
-    (* Each node is a map (char -> node).
-       Character '\000' is used to signal the end of a word at that node *)
-    type t = Node of t CharMap.t
-    let empty = Node CharMap.empty
-    let find_all t =
-      let res = ref [] in
-      let rec _find_all t s =
-        let Node cm = t in
-        CharMap.iter
-          (fun c tt ->
-            if c = '\000' then begin
-              List.accum res s;
-              assert (tt = empty)
-            end else
-              s ^ String.make 1 c |> _find_all tt)
-          cm in
-      _find_all t "";
-      List.rev !res
-    let find_longest_prefix t s =
-      let n = String.length s in
-      let rec _find_longest_prefix t i =
-        if i = n then
-          n
-        else
-          let Node cm = t in
-          match CharMap.find_opt s.[i] cm with
-          | None ->
-            i
-          | Some tt ->
-            _find_longest_prefix tt (i + 1) in
-      _find_longest_prefix t 0
-    let find_longest_substring t s idx =
-      let n = String.length s in
-      if idx >= n then
-        0
-      else begin
-        let rec _find_longest_substring t i =
-          if i = n then
-            n - idx
-          else
-            let Node cm = t in
-            match CharMap.find_opt s.[i] cm with
-            | None ->
-              i - idx
-            | Some tt ->
-              _find_longest_substring tt (i + 1) in
-        _find_longest_substring t idx
-      end
-    let find_longest_match t s idx =
-      let n = String.length s in
-      if idx >= n then
-        0
-      else begin
-        let rec _find_longest_match i_l t i =
-          let Node cm = t in
-          let i_l =
-            match CharMap.find_opt '\000' cm with
-            | None ->
-              i_l
-            | Some _ ->
-              i in
-          if i = n then
-            i_l - idx
-          else
-            match CharMap.find_opt s.[i] cm with
-            | None ->
-              i_l - idx
-            | Some tt ->
-              _find_longest_match i_l tt (i + 1) in
-        _find_longest_match idx t idx
-      end
+    (* Each trie node is an array of nodes indexed by char code, plus an integer
+        describing whether there is a path terminating at that node.
+      When there are no further descendant paths, we leave the array empty.
+      If the array is not empty, it has length 256.
+      So
+        Node (false, [||])
+        means that there are no words in the dictionary, while
+        Node (true, [||])
+        means that there is one word in the dictionary, the empty string, and
+        Node (_, [| ... |])
+        means that there is at least one non-empty word in the dictionary.
+      The integer is the hashed index of the string, with -1 indicating absence *)
+    type node_t = Node of int * node_t array
+    type t = {
+      hash: string StackArray.t;
+      trie: node_t
+    }
+    (* Note that this is in fact immutable *)
+    let empty_node = Node (-1, [||])
+    let create () = {
+      hash = StackArray.create ();
+      trie = empty_node
+    }
+    let to_string t =
+      let res = Buffer.create 1024 in
+      let rec _to_string = function
+        | Node (path_ending_here, ta) ->
+          Buffer.add_char res '(';
+          if path_ending_here <> -1 then
+            Printf.sprintf " [%d]" path_ending_here |> Buffer.add_string res;
+          Array.iteri
+            (fun c t ->
+              if t <> empty_node then begin
+                Char.chr c |> Printf.sprintf " '%c'" |> Buffer.add_string res;
+                _to_string t
+              end)
+            ta;
+          Buffer.add_string res " )" in
+      _to_string t.trie;
+      Buffer.contents res
     let add t s =
       let n = String.length s in
-      let rec _add t i =
-        let Node cm = t in
-        if i = n then
-          Node (CharMap.add '\000' empty cm)
-        else
-          match CharMap.find_opt s.[i] cm with
-          | None ->
-            let tail = Node (CharMap.singleton '\000' empty) |> ref in
-            for ii = n - 1 downto i + 1 do
-              tail := Node (CharMap.singleton s.[ii] !tail)
-            done;
-            Node (CharMap.add s.[i] !tail cm)
-          | Some tt ->
-            Node (CharMap.add s.[i] (i + 1 |> _add tt) cm) in
-      _add t 0
-    type result_t =
-      | Not_found
-      | Partial of string
-      | Ambiguous of string list
-      | Contained of string list
-      | Unique
-    (* Utility function to generate all existing completions *)
-    let find_all_tails p t =
-      let res = ref [] in
-      let rec _find_all_tails t s =
-        let Node cm = t in
-        CharMap.iter
-          (fun c tt ->
-            if c = '\000' then
-              (p ^ s) |> List.accum res
-            else
-              s ^ String.make 1 c |> _find_all_tails tt)
-          cm in
-      _find_all_tails t "";
-      List.rev !res
-    let find t s =
-      let n = String.length s in
-      let rec _find t i =
-        let Node cm = t in
-        let c = CharMap.cardinal cm in
-        if i = n then begin
-          if CharMap.mem '\000' cm then begin
-            assert (CharMap.find '\000' cm = empty);
-            match c with
-            | 1 -> (* Exact match and no other containing matches *)
-              Unique
-            | _ -> (* Exact match, but also other longer matches containing it *)
-              Contained (find_all_tails s t)
+      let rec _add i = function
+        | Node (path_ending_here, ta) ->
+          if i = n then
+            if path_ending_here > -1 then
+            (* This means that the string is already in the dictionary *)
+              t.trie
+            else begin
+              let id = StackArray.length t.hash in
+              StackArray.push t.hash s;
+              Node (id, ta)
+            end
+          else
+            let ta =
+              if ta = [||] then
+                Array.make 256 empty_node
+              else
+                ta
+            and c = Char.code s.[i] in
+            if ta.(c) = empty_node then begin
+              let id = StackArray.length t.hash in
+              StackArray.push t.hash s;
+              let tail = Node (id, [||]) |> ref in
+              for ii = n - 1 downto i + 1 do
+                let ta = Array.make 256 empty_node in
+                ta.(Char.code s.[ii]) <- !tail;
+                tail := Node (-1, ta)
+              done;
+              ta.(c) <- !tail
+            end else
+              ta.(c) <- _add (i + 1) ta.(c);
+            Node (path_ending_here, ta) in
+      { t with trie = _add 0 t.trie }
+    let length t = StackArray.length t.hash
+    exception Not_found
+    let nth t i =
+      if i >= StackArray.length t.hash then
+        raise Not_found
+      else
+        StackArray.(t.hash.@(i))
+    let all t = StackArray.contents t.hash
+    (* Remember that in all the next functions there is only exactly _one_ path to explore *)
+    let _longest_substring t s idx =
+      let i = ref idx and n = String.length s and current_node = ref t.trie and res = ref (idx, -1) in
+      while !i <= n do
+        match !current_node with
+        | Node (path_ending_here, ta) ->
+          (* We have to update the result if
+              either a path ends here, or the array is not empty *)
+          if Array.length ta = 0 then begin
+            if path_ending_here > -1 then
+              res := (!i, path_ending_here);
+            (* Exit cycle *)
+            i := n
           end else begin
-            match c with
-            | 0 ->
-              Not_found
-            | 1 -> (* Partial match *)
-              begin match find_all_tails s t with
-              | [ ss ] ->
-                Partial ss
-              | l -> (* Multiple partial matches *)
-                Ambiguous l
-              end
-            | _ -> (* Multiple partial matches *)
-              Ambiguous (find_all_tails s t)
-          end
+            res := (!i, path_ending_here);
+            (* If we are at the last iteration, we don't want to update the node *)
+            if !i <> n then
+              current_node := ta.(Char.code s.[!i])
+          end;
+          incr i
+      done;
+      let i, id = !res in
+      i - idx, id, { t with trie = !current_node }
+    let longest_substring t s idx = let (res, _, _) = _longest_substring t s idx in res
+    let longest_prefix t s = let (res, _, _) = _longest_substring t s 0 in res
+    let longest_match t s idx =
+      let i = ref idx and n = String.length s and current_node = ref t.trie and res = ref (idx, -1) in
+      while !i <= n do
+        match !current_node with
+        | Node (path_ending_here, ta) ->
+          (* We update the result every time a path ends here *)
+          if path_ending_here > -1 then
+            res := (!i, path_ending_here);
+          if Array.length ta = 0 then
+            (* Exit cycle *)
+            i := n
+          else begin
+            (* If we are at the last iteration, we don't want to update the node *)
+            if !i <> n then
+              current_node := ta.(Char.code s.[!i])
+          end;
+          incr i
+      done;
+      let i, id = !res in
+      i - idx, id
+    type presence_t =
+      | Not_found of int
+      | Partial of int
+      | Ambiguous of int list
+      | Contained of int * int list
+      | Unique of int
+    let find t s =
+      (* First, we find the longest prefix *)
+      let n = String.length s and l, id, tt = _longest_substring t s 0 in
+      if l < n then
+        Not_found l
+      else begin
+        let tails = ref [] in
+        let rec _find_all_tails = function
+          | Node (path_ending_here, ta) ->
+            if path_ending_here > -1 then
+              List.accum tails path_ending_here;
+            (* It's OK to iterate on the array even if it is empty *)
+            Array.iter _find_all_tails ta in
+        _find_all_tails tt.trie;
+        let tails = List.rev !tails and card = List.length !tails in
+        if id = -1 then begin
+          (* The string matches, but only as a prefix of longer matches *)
+          assert (card > 0);
+          if card = 1 then
+            Partial id
+          else
+            Ambiguous tails
         end else begin
-          match CharMap.find_opt s.[i] cm with
-          | None ->
-            Not_found
-          | Some tt ->
-            i + 1 |> _find tt
-        end in
-      _find t 0
-    let find_string t s =
+          if card = 0 then
+            Unique id
+          else
+            Contained (id, tails)
+        end
+      end
+    let find_present t s =
       match find t s with
-      | Not_found -> ""
-      | Partial s -> s
-      | Ambiguous _ -> ""
-      | Contained _ -> s
-      | Unique -> s
+      | Not_found _ | Partial _ | Ambiguous _ -> None
+      | Contained (id, _) | Unique id -> Some id
+    let find_unambiguous t s =
+      match find t s with
+      | Not_found _ | Ambiguous _ -> None
+      | Partial id | Contained (id, _) | Unique id -> Some id
   end
 
 module Argv:
@@ -691,7 +768,7 @@ module Argv:
           need_table_header := false;
           "\n| Option | Argument(s) | Effect | Note(s) |\n|-|-|-|-|\n" |> accum_md_usage
         end
-      and trie = ref Trie.empty and table = ref StringMap.empty and mandatory = ref StringSet.empty in
+      and trie = Trie.create () |> ref and table = ref StringMap.empty and mandatory = ref StringSet.empty in
       List.iteri
         (fun i (opts, vl, help, class_, act) ->
           if opts = [] && help = [] then
@@ -729,7 +806,7 @@ module Argv:
                 (* No escaping needed here, as the text is already surrounded by quotes *)
                 "`" ^ opt ^ "`" |> accum_md_usage
               end;
-              if Trie.find_string !trie opt <> "" then
+              if Trie.find_present !trie opt <> None then
                 "Clashing command line option '" ^ opt ^ "' in table" |> error __FUNCTION__;
               trie := Trie.add !trie opt;
               if class_ = Mandatory then begin
@@ -822,11 +899,11 @@ module Argv:
       let trie = !trie and table = !table and len = Array.length argv in
       while !i < len do
         let arg = argv.(!i) in
-        begin try
-          StringMap.find (Trie.find_string trie arg) table
-        with Not_found ->
-          error __FUNCTION__ ("Unknown option '" ^ argv.(!i) ^ "'")
-        end arg;
+        begin match Trie.find_unambiguous trie arg with
+        | None -> error __FUNCTION__ ("Unknown option '" ^ arg ^ "'")
+        | Some id ->
+          arg |> StringMap.find (Trie.nth trie id) table
+        end;
         incr i
       done;
       if !mandatory <> StringSet.empty then
