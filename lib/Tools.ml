@@ -698,7 +698,7 @@ module Argv:
         try
           f ()
         with _ ->
-          error n ("Option '" ^ argv.(!i - 1) ^ "' needs " ^ what ^ " parameter"))
+          error n ("Option '" ^ argv.(!i - 1) ^ "' needs one (more)" ^ what ^ "parameter"))
     let template_filter f g =
       (fun () ->
         let res = f () in
@@ -707,30 +707,30 @@ module Argv:
         else
           raise Not_found)
     let get_parameter =
-      template_get __FUNCTION__ "a" (fun () -> incr i; argv.(!i))
+      template_get __FUNCTION__ " " (fun () -> incr i; argv.(!i))
     let get_parameter_boolean =
-      template_get __FUNCTION__ "a boolean" (fun () -> get_parameter () |> bool_of_string)
+      template_get __FUNCTION__ " boolean " (fun () -> get_parameter () |> bool_of_string)
     let get_parameter_int =
-      template_get __FUNCTION__ "an integer" (fun () -> get_parameter () |> int_of_string)
+      template_get __FUNCTION__ " integer " (fun () -> get_parameter () |> int_of_string)
     let get_parameter_float =
-      template_get __FUNCTION__ "a float" (fun () -> get_parameter () |> float_of_string)
+      template_get __FUNCTION__ " float " (fun () -> get_parameter () |> float_of_string)
     let get_parameter_int_pos =
-      template_get __FUNCTION__ "a positive integer"
+      template_get __FUNCTION__ " positive integer as "
       (template_filter get_parameter_int (fun x -> x > 0))
     let get_parameter_float_pos =
-      template_get __FUNCTION__ "a positive float"
+      template_get __FUNCTION__ " positive float as "
       (template_filter get_parameter_float (fun x -> x > 0.))
     let get_parameter_int_non_neg =
-      template_get __FUNCTION__ "a non-negative integer"
+      template_get __FUNCTION__ " non-negative integer as "
       (template_filter get_parameter_int (fun x -> x >= 0))
     let get_parameter_float_non_neg =
-      template_get __FUNCTION__ "a non-negative float"
+      template_get __FUNCTION__ " non-negative float as "
       (template_filter get_parameter_float (fun x -> x >= 0.))
     let get_parameter_int_percentage =
-      template_get __FUNCTION__ "an integer between 0 and 100 as"
+      template_get __FUNCTION__ " integer between 0 and 100 as "
       (template_filter get_parameter_int (fun x -> x >= 0 && x <= 100))
     let get_parameter_float_fraction =
-      template_get __FUNCTION__ "a float between 0 and 1 as"
+      template_get __FUNCTION__ " float between 0 and 1 as "
       (template_filter get_parameter_float (fun x -> x >= 0. && x <= 1.))
     let get_remaining_parameters () =
       let len = Array.length argv in
