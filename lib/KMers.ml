@@ -220,11 +220,10 @@ module IntZHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t =
     contained in a string. K-mers are turned into numerical hashes that get presented
     to the iterator as strings.
    First parameter is an adaptor function which, depending on what the string is
-    (DNA, protein, ...) turns the original input string into a set of strings
-    (for instance, the sequence and its reverse complement). This step might include
-    checks on the sequence, for instance linting. Also this step produces flags for
-    a filter that will be applied to all the hashes prior to iteration, for instance
-    to remove duplicated DNA k-mers coming from reverse complementing the string.
+    (DNA, protein, ...) performs checks on the sequence, for instance linting. Also
+    this step produces flags for a filter that will be applied to all the hashes
+    prior to iteration, for instance to remove duplicated DNA k-mers coming from
+    reverse complementing the string.
    Second parameter is a dictionary/trie which is used to turn the input strings
     into vectors of numbers, depending on what the string is (DNA, protein, ...)
     and the encoding strategy (single-letter alphabet, byte encoding, dictionary).
@@ -250,8 +249,7 @@ module Iterator:
         module Flags:
           sig
             type t = {
-              rc_add: bool;
-              rc_deduplicate_k_mers: bool
+              rc_symmetric_hash: bool
             }
           end
         (* The results are adaptor function and flags *)
@@ -325,23 +323,22 @@ module Iterator:
           module Flags =
             struct
               type t = {
-                rc_add: bool;
-                rc_deduplicate_k_mers: bool
+                rc_symmetric_hash: bool
               }
             end
           let make = function
           | DNA_ss ->
             (Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false),
-            { Flags.rc_add = false; rc_deduplicate_k_mers = false }
+            { Flags.rc_symmetric_hash = false }
           | DNA_ds ->
             (Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false),
-            { Flags.rc_add = true; rc_deduplicate_k_mers = true }
+            { rc_symmetric_hash = true }
           | Protein ->
             (Sequences.Lint.proteinize ~keep_lowercase:false ~keep_dashes:false),
-            { Flags.rc_add = false; rc_deduplicate_k_mers = false }
+            { rc_symmetric_hash = false }
           | Text ->
             (fun s -> s),
-            { Flags.rc_add = false; rc_deduplicate_k_mers = false }
+            { rc_symmetric_hash = false }
       end
     module Encoder =
       struct
@@ -398,38 +395,38 @@ module Iterator:
             (fun s ->
               trie := Tools.Trie.add !trie s)
             dict;
-          let trie = !trie
-          and timer_id_encoder = Tools.Timer.of_string "KMers.Iterator.Encoder:encode"
+          let trie = !trie in
+          (*let timer_id_encoder = Tools.Timer.of_string "KMers.Iterator.Encoder:encode"
           and timer_id_trie = Tools.Timer.of_string "KMers.Iterator.Encoder:trie"
-          and timer_id_stackarray = Tools.Timer.of_string "KMers.Iterator.Encoder:stackarray" in
+          and timer_id_stackarray = Tools.Timer.of_string "KMers.Iterator.Encoder:stackarray" in*)
           Tools.Trie.length trie,
           (fun s ->
             (*Tools.Timer.start timer_id_encoder;*)
-            let l = String.length s and i = ref 0 and current = Tools.StackArray.create ()
-            and res = ref [] in
+            let l_src = String.length s in
+            let current = Array.make l_src 0
+            and i_src = ref 0 and l_dst = ref 0 and res = ref [] in
             let add_current_to_res () =
-              if Tools.StackArray.length current > 0 then begin
-                Tools.StackArray.contents current |> List.accum res;
-                Tools.StackArray.clear current
+              if !l_dst > 0 then begin
+                Array.sub current 0 !l_dst |> List.accum res;
+                l_dst := 0
               end in
-            while !i < l do
+            while !i_src < l_src do
               (*Tools.Timer.start timer_id_trie;*)
-              let n, id = Tools.Trie.longest_match trie s !i in
+              let n, id = Tools.Trie.longest_match trie s !i_src in
               (*Tools.Timer.stop timer_id_trie;*)
               if n = 0 then begin
                 (* Case of no dictionary word found - we just split the string and skip one character *)
                 add_current_to_res ();
-                incr i
+                incr i_src
               end else begin
                 (*Tools.Timer.start timer_id_stackarray;*)
-                Tools.StackArray.push current id;
+                current.(!l_dst) <- id;
                 (*Tools.Timer.stop timer_id_stackarray;*)
-                i := !i + n
+                i_src := !i_src + n;
+                incr l_dst
               end
             done;
             add_current_to_res ();
-            (* Here we cull the StackArray in order not to leave it around unused *)
-            Tools.StackArray.reset current;
             (*
             Printf.printf "Result has %d elements of lengths (" (List.length !res);
             List.iter
@@ -496,15 +493,10 @@ module Iterator:
               if verbose && full then
                 Printf.eprintf "%s\r(%s): Maximum size (%d) reached. Outputting and removing hashes...%!"
                   String.TermIO.clear __FUNCTION__ max_results_size;
-              let iterator =
-                if flags.Content.Flags.rc_deduplicate_k_mers then
-                  (fun h n ->
-                    if h <= Impl.rc h then
-                      f (Impl.to_string h) !n)
-                else
-                  (fun h n ->
-                    f (Impl.to_string h) !n) in
-              Impl.Accumulator1.iter iterator res;
+              Impl.Accumulator1.iter
+                (fun h n ->
+                  f (Impl.to_string h) !n)
+                res;
               Impl.Accumulator1.reset res;
               if verbose && full then
                 Printf.eprintf " done.\n%!" in
@@ -517,24 +509,28 @@ module Iterator:
                 ref w |> Impl.Accumulator1.add res h
               | Some n ->
                 n := !n + w in
+            (*let timer_id_accumulate = Tools.Timer.of_string "KMers.Iterator.Encoder:accumulate" in*)
             (* Accumulator *)
             (fun ?(weight = 1) ia ->
+              (*Tools.Timer.start timer_id_accumulate;*)
               let l = Array.length ia in
               if l >= k then begin
                 let current = Impl.compute ia 0 |> ref in
                 let rc = Impl.rc !current |> ref in
-                add !current weight;
-                if flags.rc_add then
-                  add !rc weight;
+                if flags.Content.Flags.rc_symmetric_hash then
+                  add (min !current !rc) weight
+                else
+                  add !current weight;
                 for i = k to l - 1 do
                   current := Impl.add_symbol_right !current ia.(i);
-                  add !current weight;
-                  if flags.rc_add then begin
+                  if flags.rc_symmetric_hash then begin
                     rc := Impl.symbol_complement ia.(i) |> Impl.add_symbol_left !rc;
-                    add !rc weight
-                  end
+                    add (min !current !rc) weight
+                  end else
+                    add !current weight;
                 done
-              end),
+              end;
+              (*Tools.Timer.stop timer_id_accumulate*)),
             (* Finaliser *)
             finalizer
           | Gapped (k, g) ->
@@ -544,28 +540,20 @@ module Iterator:
               if verbose && full then
                 Printf.eprintf "%s\r(%s): Maximum size (%d) reached. Outputting and removing hashes...%!"
                   String.TermIO.clear __FUNCTION__ max_results_size;
-              let iterator =
-                if flags.rc_deduplicate_k_mers then
-                  (fun (h1, h2) n ->
-                    (* Here the equation is (h1|h2) <= rc(h1|h2) = rc(h2)|rc(h1) *)
-                    let rc_h2 = Impl.rc h2 in
-                    if h1 < rc_h2 || (h1 = rc_h2 && h2 <= Impl.rc h1) then
-                      f (Impl.to_string h1 ^ "_" ^ Impl.to_string h2) !n)
-                else
-                  (fun (h1, h2) n ->
-                    f (Impl.to_string h1 ^ "_" ^ Impl.to_string h2) !n) in
-              Impl.Accumulator2.iter iterator res;
+              Impl.Accumulator2.iter
+                (fun (h1, h2) n ->
+                  f (Impl.to_string h1 ^ "_" ^ Impl.to_string h2) !n)
+                res;
               Impl.Accumulator2.reset res;
               if verbose && full then
                 Printf.eprintf " done.\n%!" in
-            let add h1 h2 w =
+            let add hh w =
               incr cntr;
               if max_results_size > 0 && !cntr mod 1000 = 0 && Impl.Accumulator2.length res > max_results_size then
                 finalizer ();
-              let h = (h1, h2) in
-              match Impl.Accumulator2.find_opt res h with
+              match Impl.Accumulator2.find_opt res hh with
               | None ->
-                ref w |> Impl.Accumulator2.add res h
+                ref w |> Impl.Accumulator2.add res hh
               | Some n ->
                 n := !n + w in
             (* Here we just have to simulate a longer k *)
@@ -576,20 +564,29 @@ module Iterator:
               if l >= eff_k then begin
                 let current_1 = Impl.compute ia 0 |> ref
                 and current_2 = Impl.compute ia offs |> ref in
-                add !current_1 !current_2 weight;
                 let rc_1 = Impl.rc !current_1 |> ref
                 and rc_2 = Impl.rc !current_2 |> ref in
-                if flags.rc_add then
-                  add !rc_1 !rc_2 weight;
+                let get_min () =
+                  let h_1 = !current_1 and h_2 = !current_2 and rc_1 = !rc_1 and rc_2 = !rc_2 in
+                  (* Here the equation is (h1|h2) <= rc(h1|h2) = rc(h2)|rc(h1) *)
+                  if h_1 < rc_2 || (h_1 = rc_2 && h_2 <= rc_1) then
+                    h_1, h_2
+                  else
+                    rc_2, rc_1 in
+                if flags.rc_symmetric_hash then
+                  add (get_min ()) weight
+                else
+                  add (!current_1, !current_2) weight;
                 for i = eff_k to l - 1 do
-                  current_1 := Impl.add_symbol_right !current_1 ia.(i - offs);
-                  current_2 := Impl.add_symbol_right !current_2 ia.(i);
-                  add !current_1 !current_2 weight;
-                  if flags.rc_add then begin
-                    rc_1 := Impl.symbol_complement ia.(i - offs) |> Impl.add_symbol_left !rc_1;
-                    rc_2 := Impl.symbol_complement ia.(i) |> Impl.add_symbol_left !rc_2;
-                    add !rc_1 !rc_2 weight
-                  end
+                  let c_1 = ia.(i - offs) and c_2 = ia.(i) in
+                  current_1 := Impl.add_symbol_right !current_1 c_1;
+                  current_2 := Impl.add_symbol_right !current_2 c_2;
+                  if flags.rc_symmetric_hash then begin
+                    rc_1 := Impl.symbol_complement c_1 |> Impl.add_symbol_left !rc_1;
+                    rc_2 := Impl.symbol_complement c_2 |> Impl.add_symbol_left !rc_2;
+                    add (get_min ()) weight
+                  end else
+                    add (!current_1, !current_2) weight
                 done
               end),
             (* Finaliser *)

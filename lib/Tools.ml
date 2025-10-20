@@ -383,6 +383,8 @@ module Trie:
     val find: t -> string -> presence_t
     val find_present: t -> string -> int option
     val find_unambiguous: t -> string -> int option
+    (* Printer function, mostly for diagnostic purposes *)
+    val to_string: t -> string
   end
 = struct
     (* Each trie node is an array of nodes indexed by char code, plus an integer

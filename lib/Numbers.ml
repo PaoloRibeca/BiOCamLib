@@ -434,7 +434,33 @@ module Bigarray:
   end
 
 module FAVector = FloatarrayVector
-module BAVector = Bigarray.Vector
+module BigarrayVector = Bigarray.Vector
+module BAVector = BigarrayVector
+(* The following are common instances *)
+module IntBAVector = BAVector (
+  struct
+    include Int
+    type elt_t = Stdlib.Bigarray.int_elt
+    let elt = Stdlib.Bigarray.Int
+  end
+)
+module IBAVector = IntBAVector
+module Int32BAVector = BAVector (
+  struct
+    include Int32
+    type elt_t = Stdlib.Bigarray.int32_elt
+    let elt = Stdlib.Bigarray.Int32
+  end
+)
+module I32BAVector = Int32BAVector
+module FloatBAVector = BAVector (
+  struct
+    include Float
+    type elt_t = Stdlib.Bigarray.float64_elt
+    let elt = Stdlib.Bigarray.Float64
+  end
+)
+module FBAVector = FloatBAVector
 
 module LinearFit (V: Vector_t):
   sig
