@@ -238,17 +238,43 @@ module Iterator:
   sig
     module Content:
       sig
+        module Strandedness:
+          sig
+            type t =
+              | Single
+              | Double
+            exception Unknown of string
+          end
+        module CaseSensitivity:
+          sig
+            type t =
+              | Insensitive
+              | Sensitive
+            exception Unknown of string
+          end
+        module UnknownCharAction:
+          sig
+            type t =
+              | Split
+              | Ignore
+              | Error
+            exception Unknown of string
+            val of_string: string -> t
+            val to_string: t -> string
+          end
         type t =
-          | DNA_ss
-          | DNA_ds
-          | Protein
-          | Text
+          | DNA of Strandedness.t * CaseSensitivity.t * UnknownCharAction.t
+          | Protein of UnknownCharAction.t
+          (* The third parameter is the file path at which the dictionary can be found.
+             Note that case sensitivity has an effect on how such file is parsed *)
+          | Text of CaseSensitivity.t * UnknownCharAction.t * string (* File path *)
         exception Unknown of string
         val of_string: string -> t
         val to_string: t -> string
         module Flags:
           sig
             type t = {
+              unknown_char_action: UnknownCharAction.t;
               rc_symmetric_hash: bool
             }
           end
@@ -258,15 +284,17 @@ module Iterator:
     module Encoder:
       sig
         type t =
-          | DNA
+          | DNA of Content.CaseSensitivity.t
           | Protein
-          | Dictionary of string (* File path *)
-          | Test of string list (* No constructor from string - not really used in production *)
+          (* The second parameter is the file path at which the dictionary can be found.
+             Note that case sensitivity has an effect on how such file is parsed *)
+          | Dictionary of Content.CaseSensitivity.t * string (* File path *)
+          | Test of string list (* No constructor from content - not really used in production *)
           exception Unknown of string
-        val of_string: string -> t
-        val to_string: t -> string
+        val of_content: Content.t -> t
         (* The integer is the alphabet size *)
-        val make: ?verbose:bool -> t -> int * (string -> int array list)
+        exception Unknown_character of char
+        val make: ?verbose:bool -> Content.Flags.t -> t -> int * (string -> int array list)
       end
     module Hasher:
       sig
@@ -291,103 +319,201 @@ module Iterator:
     type t = ?weight:int -> string -> unit
     (* The last argument is the iterator function *)
     val make: ?max_results_size:int -> ?verbose:bool ->
-              Content.t -> Encoder.t -> Hasher.t -> (string -> int -> unit) -> t
+              Content.t -> Hasher.t -> (string -> int -> unit) -> t
   end
 = struct
     module Content =
       struct
+        module Strandedness =
+          struct
+            type t =
+              | Single
+              | Double
+            exception Unknown of string
+            let of_string = function
+              | "ss" | "SS" | "single-stranded" -> Single
+              | "ds" | "DS" | "double-stranded" -> Double
+              | w -> Unknown w |> raise
+            let to_string = function
+              | Single -> "single-stranded"
+              | Double -> "double-stranded"
+          end
+        module CaseSensitivity =
+          struct
+            type t =
+              | Insensitive
+              | Sensitive
+            exception Unknown of string
+            let of_string = function
+              | "ci" | "case-insensitive" -> Insensitive
+              | "cs" | "case-sensitive" -> Sensitive
+              | w -> Unknown w |> raise
+            let to_string = function
+              | Insensitive -> "case-insensitive"
+              | Sensitive -> "case-sensitive"
+          end
+        module UnknownCharAction =
+          struct
+            type t =
+              | Split
+              | Ignore
+              | Error
+            exception Unknown of string
+            let of_string = function
+              | "split" -> Split
+              | "ignore" | "skip" -> Ignore
+              | "error" | "abort" -> Error
+              | w -> Unknown w |> raise
+            let to_string = function
+              | Split -> "split"
+              | Ignore -> "ignore"
+              | Error -> "error"
+          end
         type t =
-          | DNA_ss
-          | DNA_ds
-          | Protein
-          | Text
+          | DNA of Strandedness.t * CaseSensitivity.t * UnknownCharAction.t
+          | Protein of UnknownCharAction.t
+          | Text of CaseSensitivity.t * UnknownCharAction.t * string
         exception Unknown of string
-        let of_string = function
-          | "DNA-ss" | "DNA-single-stranded" -> DNA_ss
-          | "DNA-ds" | "DNA-double-stranded" -> DNA_ds
-          | "protein" -> Protein
-          | "text" -> Text
-          | w ->
-            Unknown w |> raise
-        let to_string = function
-          | DNA_ss -> "DNA-ss"
-          | DNA_ds -> "DNA-ds"
-          | Protein -> "protein"
-          | Text -> "text"
-        (* Note that in what follows we _do_ want to turn lowercase characters
-            into uppercase ones, or the encoding might subsequently fail -
-            unless we doubled the number of bits needed for the encoding,
-            which would not be optimal.
-           As for dashes, we could as well leave them rather than turning them
-            into unknowns, but they would be stripped out later on anyway *)
-          module Flags =
-            struct
-              type t = {
-                rc_symmetric_hash: bool
-              }
+        let of_string_re = Str.regexp "[(,)]"
+        let of_string s =
+          match Str.full_split of_string_re s with
+          (* First, a few simplified options with default choices *)
+          | [ Text "ss-DNA" ] | [ Text "SS-DNA" ] | [ Text "single-stranded-DNA" ] ->
+            DNA (Strandedness.Single, CaseSensitivity.Insensitive, UnknownCharAction.Split)
+          | [ Text "ds-DNA" ] | [ Text "DS-DNA" ] | [ Text "double-stranded-DNA" ] ->
+            DNA (Strandedness.Double, CaseSensitivity.Insensitive, UnknownCharAction.Split)
+          | [ Text "protein" ] ->
+            Protein UnknownCharAction.Split
+          (* Then, the full versions *)
+          | [ Str.Text "DNA"; Delim "(";
+              Text strandedness; Delim ","; Text case_sensitivity; Delim ","; Text unknown_char_action;
+              Delim ")" ] ->
+            begin try
+              DNA (Strandedness.of_string strandedness,
+                   CaseSensitivity.of_string case_sensitivity,
+                   UnknownCharAction.of_string unknown_char_action)
+            with _ ->
+              Unknown s |> raise
             end
-          let make = function
-          | DNA_ss ->
-            (Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false),
-            { Flags.rc_symmetric_hash = false }
-          | DNA_ds ->
-            (Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false),
-            { rc_symmetric_hash = true }
-          | Protein ->
-            (Sequences.Lint.proteinize ~keep_lowercase:false ~keep_dashes:false),
-            { rc_symmetric_hash = false }
-          | Text ->
+          | [ Text "protein"; Delim "("; Text unknown_char_action; Delim ")" ] ->
+            begin try
+              Protein (UnknownCharAction.of_string unknown_char_action)
+            with _ ->
+              Unknown s |> raise
+            end
+          (* Unfortunately it does not make much sense to specify default options here *)
+          | Text "text" :: Delim "(" ::
+              Text case_sensitivity :: Delim "," :: Text unknown_char_action :: Delim "," ::
+              tl ->
+            (* We put the path back together *)
+            let tl = Array.of_list tl in
+            let l = Array.length tl in
+            let red_l = l - 1 in
+            if l = 0 || tl.(red_l) <> Delim ")" then
+              Unknown s |> raise;
+            let path = ref "" in
+            for i = 0 to red_l do
+              path := !path ^ (match tl.(i) with Text s | Delim s -> s)
+            done;
+            begin try
+              Text (CaseSensitivity.of_string case_sensitivity,
+                    UnknownCharAction.of_string unknown_char_action,
+                    !path)
+            with _ ->
+              Unknown s |> raise
+            end
+          | _ ->
+            Unknown s |> raise
+        let to_string = function
+          | DNA (strandedness, case_sensitivity, unknown_char_action) ->
+            Printf.sprintf "DNA(%s,%s,%s)"
+              (Strandedness.to_string strandedness)
+              (CaseSensitivity.to_string case_sensitivity)
+              (UnknownCharAction.to_string unknown_char_action)
+          | Protein unknown_char_action ->
+            Printf.sprintf "protein(%s)" (UnknownCharAction.to_string unknown_char_action)
+          | Text (case_sensitivity, unknown_char_action, path) ->
+            Printf.sprintf "text(%s,%s,%s)"
+              (CaseSensitivity.to_string case_sensitivity) (UnknownCharAction.to_string unknown_char_action) path
+        module Flags =
+          struct
+            type t = {
+              unknown_char_action: UnknownCharAction.t;
+              rc_symmetric_hash: bool
+            }
+          end
+        let make c =
+          let case_sensitivity_to_keep_lowercase = function
+            | CaseSensitivity.Insensitive -> false
+            | CaseSensitivity.Sensitive -> true in
+          match c with
+          | DNA (Strandedness.Single, case_sensitivity, unknown_char_action) ->
+            let keep_lowercase = case_sensitivity_to_keep_lowercase case_sensitivity in
+            Sequences.Lint.dnaize ~keep_lowercase ~keep_dashes:false,
+            { Flags.unknown_char_action; rc_symmetric_hash = false }
+          | DNA (Double, case_sensitivity, unknown_char_action) ->
+            let keep_lowercase = case_sensitivity_to_keep_lowercase case_sensitivity in
+            Sequences.Lint.dnaize ~keep_lowercase ~keep_dashes:false,
+            { unknown_char_action; rc_symmetric_hash = true }
+          | Protein unknown_char_action ->
+            Sequences.Lint.proteinize ~keep_lowercase:false ~keep_dashes:false,
+            { unknown_char_action; rc_symmetric_hash = false }
+          | Text (CaseSensitivity.Insensitive, unknown_char_action, _) ->
+            String.lowercase_ascii,
+            { unknown_char_action; rc_symmetric_hash = false }
+          | Text (CaseSensitivity.Sensitive, unknown_char_action, _) ->
             (fun s -> s),
-            { rc_symmetric_hash = false }
-      end
+            { unknown_char_action; rc_symmetric_hash = false }
+        end
     module Encoder =
       struct
         type t =
-          | DNA
+          | DNA of Content.CaseSensitivity.t
           | Protein
-          | Dictionary of string (* File path *)
+          | Dictionary of Content.CaseSensitivity.t * string
           | Test of string list
-          exception Unknown of string
-        let of_string = function
-          | "DNA" -> DNA
-          | "protein" -> Protein
-          | w ->
-            begin match String.sub w 0 5 with
-            | "dict:" | "file:" ->
-              Dictionary (String.sub w 5 (String.length w - 5))
-            | _ ->
-              Unknown w |> raise
-            end
-        let to_string = function
-          | DNA -> "DNA"
-          | Protein -> "protein"
-          | Dictionary w -> "dict:" ^ w
-          | Test _ -> assert false
-        let make ?(verbose = false) e =
+        exception Unknown of string
+        let of_content = function
+          | Content.DNA (_, case_sensitivity, _) -> DNA case_sensitivity
+          | Protein _ -> Protein
+          | Text (case_sensitivity, _, path) -> Dictionary (case_sensitivity, path)
+        exception Unknown_character of char
+        let make ?(verbose = false) flags e =
           let dict =
             match e with
             | Test l ->
               l
-            | DNA ->
-              [ "A"; "C"; "G"; "T" ]
+            | DNA case_sensitivity ->
+              begin match case_sensitivity with
+              | Content.CaseSensitivity.Insensitive ->
+                [ "A"; "C"; "G"; "T" ]
+              | Content.CaseSensitivity.Sensitive ->
+                [ "A"; "C"; "G"; "T"; "a"; "c"; "g"; "t" ]
+              end
             | Protein ->
               [ "A"; "C"; "D"; "E"; "F"; "G"; "H"; "I"; "K"; "L"; "M";
                 "N"; "O"; "P"; "Q"; "R"; "S"; "T"; "U"; "V"; "W"; "Y" ]
-            | Dictionary filename ->
-              let file = open_in filename and progr = ref 0 and dict = ref [] in
+            | Dictionary (case_sensitivity, path) ->
+              let case_adaptor =
+                match case_sensitivity with
+                | Content.CaseSensitivity.Insensitive ->
+                  String.lowercase_ascii
+                | Sensitive ->
+                  (fun s -> s)
+              and file = open_in path and progr = ref 0 and dict = ref [] in
               if verbose then
-                Printf.eprintf "(%s): Reading dictionary file '%s': Begin\n%!" __FUNCTION__ filename;
+                Printf.eprintf "(%s): Reading dictionary file '%s'...%!" __FUNCTION__ path;
               begin try
                 while true do
                   let line = input_line file in
                   if line <> "" then
-                    List.accum dict line;
+                    case_adaptor line |> List.accum dict;
                   incr progr
                 done
               with End_of_file ->
                 close_in file;
                 if verbose then
-                  Printf.eprintf "(%s): Reading dictionary file '%s': End\n%!" __FUNCTION__ filename
+                  Printf.eprintf " found %d %s.\n%!" !progr (String.pluralize_int "symbol" !progr)
               end;
               !dict in
           let trie = Tools.Trie.create () |> ref in
@@ -398,7 +524,7 @@ module Iterator:
           let trie = !trie in
           (*let timer_id_encoder = Tools.Timer.of_string "KMers.Iterator.Encoder:encode"
           and timer_id_trie = Tools.Timer.of_string "KMers.Iterator.Encoder:trie"
-          and timer_id_stackarray = Tools.Timer.of_string "KMers.Iterator.Encoder:stackarray" in*)
+          and timer_id_array = Tools.Timer.of_string "KMers.Iterator.Encoder:array" in*)
           Tools.Trie.length trie,
           (fun s ->
             (*Tools.Timer.start timer_id_encoder;*)
@@ -415,13 +541,20 @@ module Iterator:
               let n, id = Tools.Trie.longest_match trie s !i_src in
               (*Tools.Timer.stop timer_id_trie;*)
               if n = 0 then begin
-                (* Case of no dictionary word found - we just split the string and skip one character *)
-                add_current_to_res ();
-                incr i_src
+                (* Case of no dictionary word found - what we do depends on the flags *)
+                match flags.Content.Flags.unknown_char_action with
+                | Content.UnknownCharAction.Split ->
+                  (* We split the string and skip one character *)
+                  add_current_to_res ();
+                  incr i_src
+                | Error ->
+                  Unknown_character s.[!i_src] |> raise
+                | Ignore ->
+                  ()
               end else begin
-                (*Tools.Timer.start timer_id_stackarray;*)
+                (*Tools.Timer.start timer_id_array;*)
                 current.(!l_dst) <- id;
-                (*Tools.Timer.stop timer_id_stackarray;*)
+                (*Tools.Timer.stop timer_id_array;*)
                 i_src := !i_src + n;
                 incr l_dst
               end
@@ -445,20 +578,15 @@ module Iterator:
         exception Unknown of string
         let of_string_re = Str.regexp "[(,)]"
         let of_string s =
-          match Str.full_split of_string_re s with
-          | [ Text "k-mers"; Delim "("; Text k; Delim ")" ] ->
-            begin try
+          try
+            match Str.full_split of_string_re s with
+            | [ Text "k-mers"; Delim "("; Text k; Delim ")" ] ->
               K_mers (int_of_string k)
-            with _ ->
-              Unknown s |> raise
-            end
-          | [ Text "gapped"; Delim "("; Text k; Delim ","; Text gap_size; Delim ")" ] ->
-            begin try
+            | [ Text "gapped"; Delim "("; Text k; Delim ","; Text gap_size; Delim ")" ] ->
               Gapped (int_of_string k, int_of_string gap_size)
-            with _ ->
-              Unknown s |> raise
-            end
-          | _ ->
+            | _ ->
+              raise Not_found
+          with _ ->
             Unknown s |> raise
         let to_string = function
           | K_mers k ->
@@ -468,21 +596,21 @@ module Iterator:
         let make ?(max_results_size = 0) ?(verbose = false) flags n_symbols h f =
           let impl =
             let n_bits =
-              if n_symbols - 1 < 1 then
-                0
-              else begin
-                let res = ref 0 and rem = ref n_symbols in
-                while rem := !rem lsr 1; !rem > 0 do
-                  incr res
-                done;
-                !res
-              end
+              assert (n_symbols > 0);
+              let res = ref 1 and rem = n_symbols - 1 |> ref in
+              while rem := !rem lsr 1; !rem > 0 do
+                incr res
+              done;
+              !res
             and k = match h with K_mers k | Gapped (k, _) -> k in
             try
-              (*Printf.printf "I am small (bits=%d, k=%d)\n%!" n_bits k;*)
-              (module IntHash (struct let n = n_bits end) (struct let n = k end): Hash_t)
+              let res = (module IntHash (struct let n = n_bits end) (struct let n = k end): Hash_t) in
+              if verbose then
+                Printf.eprintf "(%s): Initializing small encoder (bits=%d, k=%d)\n%!" __FUNCTION__ n_bits k;
+              res
             with _ ->
-              (*Printf.printf "I am large (bits=%d, k=%d)\n%!" n_bits k;*)
+              if verbose then
+                Printf.eprintf "(%s): Initializing large encoder (bits=%d, k=%d)\n%!" __FUNCTION__ n_bits k;
               (module IntZHash (struct let n = n_bits end) (struct let n = k end): Hash_t) in
           let module Impl = (val impl: Hash_t) in
           match h with
@@ -593,9 +721,10 @@ module Iterator:
             finalizer
       end
     type t = ?weight:int -> string -> unit
-    let make ?(max_results_size = 0) ?(verbose = false) content encoder hasher f =
-      let content, flags = Content.make content
-      and n_symbols, encoder = Encoder.make ~verbose encoder in
+    let make ?(max_results_size = 0) ?(verbose = false) content hasher f =
+      let encoder = Encoder.of_content content
+      and content, flags = Content.make content in
+      let n_symbols, encoder = Encoder.make ~verbose flags encoder in
       let accumulator, finalizer =
         Hasher.make ~max_results_size ~verbose flags n_symbols hasher f in
       (fun ?(weight = 1) s ->

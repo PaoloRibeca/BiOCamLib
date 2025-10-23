@@ -437,14 +437,6 @@ module FAVector = FloatarrayVector
 module BigarrayVector = Bigarray.Vector
 module BAVector = BigarrayVector
 (* The following are common instances *)
-module IntBAVector = BAVector (
-  struct
-    include Int
-    type elt_t = Stdlib.Bigarray.int_elt
-    let elt = Stdlib.Bigarray.Int
-  end
-)
-module IBAVector = IntBAVector
 module Int32BAVector = BAVector (
   struct
     include Int32
@@ -453,6 +445,22 @@ module Int32BAVector = BAVector (
   end
 )
 module I32BAVector = Int32BAVector
+module IntBAVector = BAVector (
+  struct
+    include Int
+    type elt_t = Stdlib.Bigarray.int_elt
+    let elt = Stdlib.Bigarray.Int
+  end
+)
+module IBAVector = IntBAVector
+module Float32BAVector = BAVector (
+  struct
+    include Float (* Note that here the OCaml type used to represent the number is special *)
+    type elt_t = Stdlib.Bigarray.float32_elt
+    let elt = Stdlib.Bigarray.Float32
+  end
+)
+module F32BAVector = Float32BAVector
 module FloatBAVector = BAVector (
   struct
     include Float
