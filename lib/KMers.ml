@@ -412,7 +412,7 @@ module Iterator:
             if l = 0 || tl.(red_l) <> Delim ")" then
               Unknown s |> raise;
             let path = ref "" in
-            for i = 0 to red_l do
+            for i = 0 to red_l - 1 do
               path := !path ^ (match tl.(i) with Text s | Delim s -> s)
             done;
             begin try
@@ -547,10 +547,11 @@ module Iterator:
                   (* We split the string and skip one character *)
                   add_current_to_res ();
                   incr i_src
+                | Ignore ->
+                  (* We just skip the character *)
+                  incr i_src
                 | Error ->
                   Unknown_character s.[!i_src] |> raise
-                | Ignore ->
-                  ()
               end else begin
                 (*Tools.Timer.start timer_id_array;*)
                 current.(!l_dst) <- id;
