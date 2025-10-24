@@ -243,14 +243,12 @@ module Iterator:
             type t =
               | Single
               | Double
-            exception Unknown of string
           end
         module CaseSensitivity:
           sig
             type t =
               | Insensitive
               | Sensitive
-            exception Unknown of string
           end
         module UnknownCharAction:
           sig
@@ -258,7 +256,6 @@ module Iterator:
               | Split
               | Ignore
               | Error
-            exception Unknown of string
             val of_string: string -> t
             val to_string: t -> string
           end
@@ -268,7 +265,6 @@ module Iterator:
           (* The third parameter is the file path at which the dictionary can be found.
              Note that case sensitivity has an effect on how such file is parsed *)
           | Text of CaseSensitivity.t * UnknownCharAction.t * string (* File path *)
-        exception Unknown of string
         val of_string: string -> t
         val to_string: t -> string
         module Flags:
@@ -290,10 +286,8 @@ module Iterator:
              Note that case sensitivity has an effect on how such file is parsed *)
           | Dictionary of Content.CaseSensitivity.t * string (* File path *)
           | Test of string list (* No constructor from content - not really used in production *)
-          exception Unknown of string
         val of_content: Content.t -> t
         (* The integer is the alphabet size *)
-        exception Unknown_character of char
         val make: ?verbose:bool -> Content.Flags.t -> t -> int * (string -> int array list)
       end
     module Hasher:
@@ -329,11 +323,11 @@ module Iterator:
             type t =
               | Single
               | Double
-            exception Unknown of string
             let of_string = function
               | "ss" | "SS" | "single-stranded" -> Single
               | "ds" | "DS" | "double-stranded" -> Double
-              | w -> Unknown w |> raise
+              | s ->
+                Printf.sprintf "(%s): Unknown strandedness '%s'" __FUNCTION__ s |> failwith
             let to_string = function
               | Single -> "single-stranded"
               | Double -> "double-stranded"
@@ -343,11 +337,11 @@ module Iterator:
             type t =
               | Insensitive
               | Sensitive
-            exception Unknown of string
             let of_string = function
               | "ci" | "case-insensitive" -> Insensitive
               | "cs" | "case-sensitive" -> Sensitive
-              | w -> Unknown w |> raise
+              | s ->
+                Printf.sprintf "(%s): Unknown case sensitivity '%s'" __FUNCTION__ s |> failwith
             let to_string = function
               | Insensitive -> "case-insensitive"
               | Sensitive -> "case-sensitive"
@@ -358,12 +352,12 @@ module Iterator:
               | Split
               | Ignore
               | Error
-            exception Unknown of string
             let of_string = function
               | "split" -> Split
               | "ignore" | "skip" -> Ignore
               | "error" | "abort" -> Error
-              | w -> Unknown w |> raise
+              | s ->
+                Printf.sprintf "(%s): Unknown action '%s'" __FUNCTION__ s |> failwith
             let to_string = function
               | Split -> "split"
               | Ignore -> "ignore"
@@ -373,9 +367,10 @@ module Iterator:
           | DNA of Strandedness.t * CaseSensitivity.t * UnknownCharAction.t
           | Protein of UnknownCharAction.t
           | Text of CaseSensitivity.t * UnknownCharAction.t * string
-        exception Unknown of string
         let of_string_re = Str.regexp "[(,)]"
         let of_string s =
+          let fail () =
+            Printf.sprintf "(%s): Unknown content '%s'" __FUNCTION__ s |> failwith in
           match Str.full_split of_string_re s with
           (* First, a few simplified options with default choices *)
           | [ Text "ss-DNA" ] | [ Text "SS-DNA" ] | [ Text "single-stranded-DNA" ] ->
@@ -393,13 +388,13 @@ module Iterator:
                    CaseSensitivity.of_string case_sensitivity,
                    UnknownCharAction.of_string unknown_char_action)
             with _ ->
-              Unknown s |> raise
+              fail ()
             end
           | [ Text "protein"; Delim "("; Text unknown_char_action; Delim ")" ] ->
             begin try
               Protein (UnknownCharAction.of_string unknown_char_action)
             with _ ->
-              Unknown s |> raise
+              fail ()
             end
           (* Unfortunately it does not make much sense to specify default options here *)
           | Text "text" :: Delim "(" ::
@@ -410,7 +405,7 @@ module Iterator:
             let l = Array.length tl in
             let red_l = l - 1 in
             if l = 0 || tl.(red_l) <> Delim ")" then
-              Unknown s |> raise;
+              fail ();
             let path = ref "" in
             for i = 0 to red_l - 1 do
               path := !path ^ (match tl.(i) with Text s | Delim s -> s)
@@ -420,10 +415,10 @@ module Iterator:
                     UnknownCharAction.of_string unknown_char_action,
                     !path)
             with _ ->
-              Unknown s |> raise
+              fail ()
             end
           | _ ->
-            Unknown s |> raise
+            fail ()
         let to_string = function
           | DNA (strandedness, case_sensitivity, unknown_char_action) ->
             Printf.sprintf "DNA(%s,%s,%s)"
@@ -472,12 +467,10 @@ module Iterator:
           | Protein
           | Dictionary of Content.CaseSensitivity.t * string
           | Test of string list
-        exception Unknown of string
         let of_content = function
           | Content.DNA (_, case_sensitivity, _) -> DNA case_sensitivity
           | Protein _ -> Protein
           | Text (case_sensitivity, _, path) -> Dictionary (case_sensitivity, path)
-        exception Unknown_character of char
         let make ?(verbose = false) flags e =
           let dict =
             match e with
@@ -551,7 +544,7 @@ module Iterator:
                   (* We just skip the character *)
                   incr i_src
                 | Error ->
-                  Unknown_character s.[!i_src] |> raise
+                  Printf.sprintf "(%s): Unknown char '%c'" __FUNCTION__ s.[!i_src] |> failwith
               end else begin
                 (*Tools.Timer.start timer_id_array;*)
                 current.(!l_dst) <- id;
@@ -576,7 +569,6 @@ module Iterator:
         type t =
           | K_mers of int
           | Gapped of int * int
-        exception Unknown of string
         let of_string_re = Str.regexp "[(,)]"
         let of_string s =
           try
@@ -588,7 +580,7 @@ module Iterator:
             | _ ->
               raise Not_found
           with _ ->
-            Unknown s |> raise
+            Printf.sprintf "(%s): Unknown hasher '%s'" __FUNCTION__ s |> failwith
         let to_string = function
           | K_mers k ->
             Printf.sprintf "k-mers(%d)" k

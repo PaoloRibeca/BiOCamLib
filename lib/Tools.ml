@@ -899,15 +899,23 @@ module Argv:
         specs;
       (* And finally, the actual parsing :) *)
       let trie = !trie and table = !table and len = Array.length argv in
-      while !i < len do
-        let arg = argv.(!i) in
-        begin match Trie.find_unambiguous trie arg with
-        | None -> error __FUNCTION__ ("Unknown option '" ^ arg ^ "'")
-        | Some id ->
-          arg |> StringMap.find (Trie.nth trie id) table
-        end;
-        incr i
-      done;
+      begin try
+        while !i < len do
+          let arg = argv.(!i) in
+          begin match Trie.find_unambiguous trie arg with
+          | None -> error __FUNCTION__ ("Unknown option '" ^ arg ^ "'")
+          | Some id ->
+            (* Some exception might occur while parsing values *)
+            arg |> StringMap.find (Trie.nth trie id) table
+          end;
+          incr i
+        done
+      with
+      | Failure s ->
+        error __FUNCTION__ s
+      | e ->
+        error __FUNCTION__ (Printexc.to_string e)
+      end;
       if !mandatory <> StringSet.empty then
         StringSet.iter
           (fun opt ->

@@ -347,8 +347,8 @@ module Translation:
       | "30" | "Table30" | "Table_30" -> Table_30
       | "31" | "Table31" | "Table_31" -> Table_31
       | "33" | "Table33" | "Table_33" -> Table_33
-      | w ->
-        Printf.sprintf "(%s): Invalid translation table '%s'" __FUNCTION__ w |> failwith
+      | s ->
+        Printf.sprintf "(%s): Unknown table '%s'" __FUNCTION__ s |> failwith
     let [@warning "-32"] describe = function
       | Table_1 -> "Standard"
       | Table_2 -> "VertebrateMitochondrial"
