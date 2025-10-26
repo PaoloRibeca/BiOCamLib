@@ -80,12 +80,12 @@ include (
         Printf.eprintf "%s\r(%s): Writing table to file '%s': done %d/%d rows.\n%!"
           String.TermIO.clear __FUNCTION__ fname n_rows n_rows;
       close_out output
-    exception Quotes_in_name of string
     let re_quote = Str.regexp "\""
     let strip_external_quotes_and_check s =
+      let fail () = Printf.sprintf "(%s): Double quotes in name '%s'" __FUNCTION__ s |> failwith in
       match String.length s, s with
       | 0, _ -> ""
-      | 1, "\"" -> Quotes_in_name s |> raise
+      | 1, "\"" -> fail ()
       | l, _ ->
         let s =
           if s.[0] = '"' && s.[l - 1] = '"' then
@@ -94,7 +94,7 @@ include (
             s in
         try
           Str.search_forward re_quote s 0 |> ignore;
-          Quotes_in_name s |> raise
+          fail ()
         with Not_found ->
           s
     exception Wrong_number_of_columns of int * int * int
@@ -415,13 +415,13 @@ include (
       data: Float.Array.t array
     }
     val empty: t
+    (* Can fail if the label contains double quotes *)
+    val strip_external_quotes_and_check: string -> string
     (* We read in a matrix which has conditions as row names
         and a (large) number of tags (genes, k-mers, etc.) as column names.
        In keeping with the convention accepted by R, the first row would be a header,
         and the first column the row names.
-       Names might be quoted *)
-    exception Quotes_in_name of string
-    val strip_external_quotes_and_check: string -> string
+       Names might be quoted, but quotes are stripped out *)
     exception Wrong_number_of_columns of int * int * int
     val of_file: ?threads:int -> ?bytes_per_step:int -> ?verbose:bool -> string -> t
     val to_file: ?precision:int -> ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> string -> unit

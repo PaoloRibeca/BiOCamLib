@@ -305,7 +305,7 @@ module Timer:
     val reset: t -> unit
     val start: t -> unit
     val stop: t -> unit
-    exception Not_found of string
+    (* Can fail if timer undefined *)
     val read: string -> float
   end
 = struct
@@ -343,7 +343,7 @@ module Timer:
     let read s =
       match StringMap.find_opt s !string_to_id with
       | None ->
-        Not_found s |> raise
+        Printf.sprintf "(%s): Undefined timer '%s'" __FUNCTION__ s |> failwith
       | Some n ->
         counters.@(n)
   end
@@ -679,8 +679,8 @@ module Argv:
       (* At the moment, the synopsis and its markdown version are the same *)
       _synopsis := s;
       _md_synopsis := s
-    let argv = Sys.argv
-    let i = ref 1
+    let _argv = Sys.argv
+    let _i = ref 1
     (* Both _usage and _md will be completed by parse () *)
     let _usage = ref ""
     let _md_usage = ref ""
@@ -698,7 +698,7 @@ module Argv:
         try
           f ()
         with _ ->
-          error n ("Option '" ^ argv.(!i - 1) ^ "' needs one (more)" ^ what ^ "parameter"))
+          error n ("Option '" ^ _argv.(!_i - 1) ^ "' needs one (more)" ^ what ^ "parameter"))
     let template_filter f g =
       (fun () ->
         let res = f () in
@@ -707,7 +707,7 @@ module Argv:
         else
           raise Not_found)
     let get_parameter =
-      template_get __FUNCTION__ " " (fun () -> incr i; argv.(!i))
+      template_get __FUNCTION__ " " (fun () -> incr _i; _argv.(!_i))
     let get_parameter_boolean =
       template_get __FUNCTION__ " boolean " (fun () -> get_parameter () |> bool_of_string)
     let get_parameter_int =
@@ -733,9 +733,9 @@ module Argv:
       template_get __FUNCTION__ " float between 0 and 1 as "
       (template_filter get_parameter_float (fun x -> x >= 0. && x <= 1.))
     let get_remaining_parameters () =
-      let len = Array.length argv in
-      let res = Array.sub argv (!i + 1) (len - !i - 1) in
-      i := len;
+      let len = Array.length _argv in
+      let res = Array.sub _argv (!_i + 1) (len - !_i - 1) in
+      _i := len;
       res
     let make_separator s =
       [], None, [ s ], Optional, (fun _ -> ())
@@ -743,7 +743,7 @@ module Argv:
       [], None, a, Optional, (fun _ -> ())
     let parse specs =
       let open String.TermIO in
-      let basename = Filename.basename argv.(0) in
+      let basename = Filename.basename _argv.(0) in
       _usage := !_header ^ red " Usage:" ^ "\n  " ^ bold basename ^ " " ^ blue !_synopsis ^ "\n";
       _md_usage := "```\n" ^ !_md_header ^ "```\n*Usage:*\n```\n" ^ basename ^ " " ^ !_md_synopsis ^ "\n```\n";
       let accum_usage = String.accum _usage
@@ -897,18 +897,20 @@ module Argv:
               accum_md_usage " |\n"
           end)
         specs;
-      (* And finally, the actual parsing :) *)
-      let trie = !trie and table = !table and len = Array.length argv in
+      (* And finally, the actual parsing :) .
+         Don't forget that _i can be modified by other functions being called
+          when parsing options *)
+      let trie = !trie and table = !table and len = Array.length _argv in
       begin try
-        while !i < len do
-          let arg = argv.(!i) in
+        while !_i < len do
+          let arg = _argv.(!_i) in
           begin match Trie.find_unambiguous trie arg with
           | None -> error __FUNCTION__ ("Unknown or ambiguous option '" ^ arg ^ "'")
           | Some id ->
             (* Some exception might occur while parsing values *)
-            arg |> StringMap.find (Trie.nth trie id) table
+            StringMap.find (Trie.nth trie id) table arg (* Function call here! *)
           end;
-          incr i
+          incr _i
         done
       with
       | Failure s ->
