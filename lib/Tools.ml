@@ -539,7 +539,7 @@ module Trie:
           (* The string matches, but only as a prefix of longer matches *)
           assert (card > 0);
           if card = 1 then
-            Partial id
+            Partial (List.hd tails)
           else
             Ambiguous tails
         end else begin
@@ -903,7 +903,7 @@ module Argv:
         while !i < len do
           let arg = argv.(!i) in
           begin match Trie.find_unambiguous trie arg with
-          | None -> error __FUNCTION__ ("Unknown option '" ^ arg ^ "'")
+          | None -> error __FUNCTION__ ("Unknown or ambiguous option '" ^ arg ^ "'")
           | Some id ->
             (* Some exception might occur while parsing values *)
             arg |> StringMap.find (Trie.nth trie id) table
