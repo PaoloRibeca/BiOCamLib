@@ -146,15 +146,14 @@ module Multimap (CmpKey: ComparableType_t) (CmpVal: ComparableType_t) =
 module StackArray:
 sig
   type !'a t
-  exception Empty
   val create: unit -> 'a t
   val push: 'a t -> 'a -> unit (* We depart from Stdlib conventions here and swap arguments *)
   val push_array: 'a t -> 'a array -> unit
   val push_stackarray: 'a t -> 'a t -> unit
-  val pop: 'a t -> 'a
+  val pop: 'a t -> 'a (* Can fail *)
   val pop_opt: 'a t -> 'a option
-  val pop_n: 'a t -> int -> 'a
-  val top: 'a t -> 'a
+  val pop_n: 'a t -> int -> 'a (* Can fail *)
+  val top: 'a t -> 'a (* Can fail *)
   val top_opt: 'a t -> 'a option
   val clear: 'a t -> unit
   val reset: 'a t -> unit
@@ -169,11 +168,10 @@ sig
   val fold_top: ('b -> 'a -> 'b) -> 'b -> 'a t -> 'b
   val rfold: ('b -> 'a -> 'b) -> 'b -> 'a t -> 'b
   val fold_bottom: ('b -> 'a -> 'b) -> 'b -> 'a t -> 'b
-  exception Not_found
-  val get: 'a t -> int -> 'a
-  val ( .@() ): 'a t -> int -> 'a
-  val set: 'a t -> int -> 'a -> unit
-  val ( .@() <- ): 'a t -> int -> 'a -> unit
+  val get: 'a t -> int -> 'a (* Can fail *)
+  val ( .@() ): 'a t -> int -> 'a (* Can fail *)
+  val set: 'a t -> int -> 'a -> unit (* Can fail *)
+  val ( .@() <- ): 'a t -> int -> 'a -> unit (* Can fail *)
   val contents: 'a t -> 'a array
 end
 = struct
@@ -181,7 +179,6 @@ end
     mutable data: 'a array;
     mutable size: int
   }
-  exception Empty
   let create () = { data = [||]; size = 0 }
   let push s el =
     let aug_length = s.size + 1 in
@@ -216,7 +213,7 @@ end
       s.size <- s.size - 1;
       s.data.(s.size)
     end else
-      raise Empty
+      Exception.raise __FUNCTION__ Algorithm "Stackarray is empty"
   let pop_opt s =
     if s.size > 0 then begin
       s.size <- s.size - 1;
@@ -228,12 +225,13 @@ end
       s.size <- s.size - n;
       s.data.(s.size)
     end else
-      raise Empty
+      Exception.raise __FUNCTION__ Algorithm
+        (Printf.sprintf "Only %d elements in stackarray (requested %d)" s.size n)
   let top s =
     if s.size > 0 then
       s.data.(s.size - 1)
     else
-      raise Empty
+      Exception.raise __FUNCTION__ Algorithm "Stackarray is empty"
   let top_opt s =
     if s.size > 0 then
       Some s.data.(s.size - 1)
@@ -279,18 +277,19 @@ end
     _fold start 0
   let fold_top = fold
   let fold_bottom = rfold
-  exception Not_found
   let get s idx =
     if idx < s.size then
       s.data.(idx)
     else
-      raise Not_found
+      Exception.raise __FUNCTION__ Algorithm
+        (Printf.sprintf "Index %d is out of range (stackarray length=%d)" idx s.size)
   let ( .@() ) = get
   let set s idx el =
     if idx < s.size then
       s.data.(idx) <- el
     else
-      raise Not_found
+      Exception.raise __FUNCTION__ Algorithm
+        (Printf.sprintf "Index %d is out of range (stackarray length=%d)" idx s.size)
   let ( .@() <- ) = set
   let contents s =
     Array.sub s.data 0 s.size
@@ -305,8 +304,7 @@ module Timer:
     val reset: t -> unit
     val start: t -> unit
     val stop: t -> unit
-    (* Can fail if timer undefined *)
-    val read: string -> float
+    val read: string -> float (* Can fail if timer undefined *)
   end
 = struct
     type t = int
@@ -339,11 +337,10 @@ module Timer:
         counters.@(n) <- counters.@(n) +. (Unix.gettimeofday () -. starts.@(n));
         starts.@(n) <- 0.
       end
-    exception Not_found of string
     let read s =
       match StringMap.find_opt s !string_to_id with
       | None ->
-        Printf.sprintf "(%s): Undefined timer '%s'" __FUNCTION__ s |> failwith
+        Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Undefined timer '%s'" s)
       | Some n ->
         counters.@(n)
   end
@@ -354,7 +351,6 @@ module Trie:
     val create: unit -> t
     val add: t -> string -> t
     val length: t -> int
-    exception Not_found
     val nth: t -> int -> string
     (* Enumerates the whole dictionary *)
     val all: t -> string array
@@ -462,10 +458,11 @@ module Trie:
             Node (path_ending_here, ta) in
       { t with trie = _add 0 t.trie }
     let length t = StackArray.length t.hash
-    exception Not_found
     let nth t i =
-      if i >= StackArray.length t.hash then
-        raise Not_found
+      let l = StackArray.length t.hash in
+      if i < 0 || i >= l then
+        Exception.raise __FUNCTION__ Algorithm
+          (Printf.sprintf "Index %d is out of range (dictionary length=%d)" i l)
       else
         StackArray.(t.hash.@(i))
     let all t = StackArray.contents t.hash
@@ -913,8 +910,8 @@ module Argv:
           incr _i
         done
       with
-      | Failure s ->
-        error __FUNCTION__ s
+      | Exception.E (Exception.Kind.Initialize, _, _) | Exception.E (Exception.Kind.IO_Format, _, _) as e ->
+        error __FUNCTION__ (Exception.to_string e)
       | e ->
         error __FUNCTION__ (Printexc.to_string e)
       end;

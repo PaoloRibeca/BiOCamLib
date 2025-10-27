@@ -740,3 +740,37 @@ module IntHashtbl = Hashtbl.Make (IntHash)
 module IntZHashtbl = Hashtbl.Make (MakeHashable(IntZ))
 module StringHashtbl = Hashtbl.Make (MakeHashable(String))
 
+module Exception =
+  struct
+    module Kind =
+      struct
+        type t =
+          | Initialize
+          | IO_Format
+          | Algorithm
+      end
+    (* Kind, __FUNCTION__, message *)
+    type t = Kind.t * string * string
+    exception E of t
+    let raise __FUNCTION__ kind message =
+      E (kind, __FUNCTION__, message) |> raise
+    let print = function
+    | E (_, __FUNCTION__, message) ->
+      Printf.eprintf "(%s): %s\n%!" __FUNCTION__ message
+    | _ ->
+      assert false
+    let to_string = function
+    | E (_, __FUNCTION__, message) ->
+      Printf.sprintf "(%s): %s" __FUNCTION__ message
+    | _ ->
+      assert false
+    let fail e =
+      to_string e |> failwith
+    (* Install Printexc printer for this exception type *)
+    let () =
+      Printexc.register_printer
+        (function
+          | E _ as e -> Some (to_string e)
+          | _ -> None)
+  end
+

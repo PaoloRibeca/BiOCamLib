@@ -87,17 +87,12 @@ module DoubleSlidingWindow:
 module type Hash_t =
   sig
     type t
-    (* Emitted when number of symbol bits and/or value of k are not OK *)
-    exception Invalid_bits of int
-    exception Invalid_k of int
-    exception Invalid_initializers of int * int
     (* Compute the hash for an encoded k-mer.
        Arguments are encoded vector and 0-based starting index.
        There must be at least k symbols left from there to the end of the vector,
-        and the value of the symbol must not exceed the number of bits *)
-    exception Invalid_index of int * int * int
-    exception Invalid_symbol of int
-    val compute: int array -> int -> t
+        and the value of the symbol must not exceed 2^(the number of bits)-1,
+        or initialisation will fail *)
+    val compute: int array -> int -> t (* Can fail *)
     val symbol_complement: int -> int
     (* Returns a generalised version of the reverse complement *)
     val rc: t -> t
@@ -116,34 +111,31 @@ module type Hash_t =
 module IntHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = int =
   struct
     type t = int
-    exception Invalid_bits of int
     let bits =
       (* We need one additional bit to be able to compute the mask *)
       if Bits.n < 1 || Bits.n >= Sys.int_size then
-        Invalid_bits Bits.n |> raise;
+        Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Invalid number of bits %d" Bits.n);
       Bits.n
-    exception Invalid_k of int
-    exception Invalid_initializers of int * int
     let k =
       if K.n < 1 then
-        Invalid_k K.n |> raise;
+        Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Invalid k-mer size %d" K.n);
       if K.n * Bits.n > Sys.int_size then
-        Invalid_initializers (Bits.n, K.n) |> raise;
+        Exception.raise __FUNCTION__ Initialize
+          (Printf.sprintf "Invalid combination number of bits/k-mer size (%d, %d)" Bits.n K.n);
       K.n
     let mask = 1 lsl (bits * k) - 1
     let max_symbol = 1 lsl bits - 1
     let symbol_complement s = max_symbol - s
-    exception Invalid_index of int * int * int
-    exception Invalid_symbol of int
     let compute a idx =
       let l = Array.length a in
       if idx + k > l then
-        Invalid_index (idx, l, k) |> raise;
+        Exception.raise __FUNCTION__ Algorithm
+          (Printf.sprintf "Invalid index value %d (string length=%d, k-mer size=%d)" idx l k);
       let res = ref 0 in
       for i = idx to idx + k - 1 do
         let s = a.(i) in
         if s > max_symbol then
-          Invalid_symbol s |> raise;
+          Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Invalid symbol '%d' in input" s);
         res := (!res lsl bits) + s
       done;
       !res
@@ -166,16 +158,13 @@ module IntHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = 
 module IntZHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = IntZ.t =
   struct
     type t = IntZ.t
-    exception Invalid_bits of int
     let bits =
       if Bits.n < 1 then
-        Invalid_bits Bits.n |> raise;
+        Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Invalid number of bits %d" Bits.n);
       Bits.n
-    exception Invalid_k of int
-    exception Invalid_initializers of int * int
     let k =
       if K.n < 1 then
-        Invalid_k K.n |> raise;
+        Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Invalid k-mer size %d" K.n);
       K.n
     let mask =
       let bits_times_k = bits * k in
@@ -183,17 +172,16 @@ module IntZHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t =
     let max_symbol = 1 lsl bits - 1
     let symbol_complement s = max_symbol - s
     let max_symbol_z = IntZ.of_int max_symbol
-    exception Invalid_index of int * int * int
-    exception Invalid_symbol of int
     let compute a idx =
       let l = Array.length a in
       if idx + k > l then
-        Invalid_index (idx, l, k) |> raise;
+        Exception.raise __FUNCTION__ Algorithm
+          (Printf.sprintf "Invalid index value %d (string length=%d, k-mer size=%d)" idx l k);
       let res = ref IntZ.zero in
       for i = idx to idx + k - 1 do
         let s = a.(i) in
         if s > max_symbol then
-          Invalid_symbol s |> raise;
+          Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Invalid symbol '%d' in input" s);
         res := IntZ.((!res lsl bits) + of_int s)
       done;
       !res
@@ -240,24 +228,15 @@ module Iterator:
       sig
         module Strandedness:
           sig
-            type t =
-              | Single
-              | Double
+            type t = Single | Double
           end
         module CaseSensitivity:
           sig
-            type t =
-              | Insensitive
-              | Sensitive
+            type t = Insensitive | Sensitive
           end
         module UnknownCharAction:
           sig
-            type t =
-              | Split
-              | Ignore
-              | Error
-            val of_string: string -> t
-            val to_string: t -> string
+            type t = Split | Ignore | Error
           end
         type t =
           | DNA of Strandedness.t * CaseSensitivity.t * UnknownCharAction.t
@@ -265,7 +244,7 @@ module Iterator:
           (* The third parameter is the file path at which the dictionary can be found.
              Note that case sensitivity has an effect on how such file is parsed *)
           | Text of CaseSensitivity.t * UnknownCharAction.t * string (* File path *)
-        val of_string: string -> t
+        val of_string: string -> t (* Can fail *)
         val to_string: t -> string
         module Flags:
           sig
@@ -327,7 +306,7 @@ module Iterator:
               | "ss" | "SS" | "single-stranded" -> Single
               | "ds" | "DS" | "double-stranded" -> Double
               | s ->
-                Printf.sprintf "(%s): Unknown strandedness '%s'" __FUNCTION__ s |> failwith
+                Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Unknown strandedness '%s'" s)
             let to_string = function
               | Single -> "single-stranded"
               | Double -> "double-stranded"
@@ -341,7 +320,7 @@ module Iterator:
               | "ci" | "case-insensitive" -> Insensitive
               | "cs" | "case-sensitive" -> Sensitive
               | s ->
-                Printf.sprintf "(%s): Unknown case sensitivity '%s'" __FUNCTION__ s |> failwith
+                Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Unknown case sensitivity '%s'" s)
             let to_string = function
               | Insensitive -> "case-insensitive"
               | Sensitive -> "case-sensitive"
@@ -357,7 +336,7 @@ module Iterator:
               | "ignore" | "skip" -> Ignore
               | "error" | "abort" -> Error
               | s ->
-                Printf.sprintf "(%s): Unknown action '%s'" __FUNCTION__ s |> failwith
+                Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Unknown action '%s'" s)
             let to_string = function
               | Split -> "split"
               | Ignore -> "ignore"
@@ -369,8 +348,7 @@ module Iterator:
           | Text of CaseSensitivity.t * UnknownCharAction.t * string
         let of_string_re = Str.regexp "[(,)]"
         let of_string s =
-          let fail () =
-            Printf.sprintf "(%s): Unknown content '%s'" __FUNCTION__ s |> failwith in
+          let raise () = Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Unknown content '%s'" s) in
           match Str.full_split of_string_re s with
           (* First, a few simplified options with default choices *)
           | [ Text "ss-DNA" ] | [ Text "SS-DNA" ] | [ Text "single-stranded-DNA" ] ->
@@ -388,13 +366,13 @@ module Iterator:
                    CaseSensitivity.of_string case_sensitivity,
                    UnknownCharAction.of_string unknown_char_action)
             with _ ->
-              fail ()
+              raise ()
             end
           | [ Text "protein"; Delim "("; Text unknown_char_action; Delim ")" ] ->
             begin try
               Protein (UnknownCharAction.of_string unknown_char_action)
             with _ ->
-              fail ()
+              raise ()
             end
           (* Unfortunately it does not make much sense to specify default options here *)
           | Text "text" :: Delim "(" ::
@@ -405,7 +383,7 @@ module Iterator:
             let l = Array.length tl in
             let red_l = l - 1 in
             if l = 0 || tl.(red_l) <> Delim ")" then
-              fail ();
+              raise ();
             let path = ref "" in
             for i = 0 to red_l - 1 do
               path := !path ^ (match tl.(i) with Text s | Delim s -> s)
@@ -415,10 +393,10 @@ module Iterator:
                     UnknownCharAction.of_string unknown_char_action,
                     !path)
             with _ ->
-              fail ()
+              raise ()
             end
           | _ ->
-            fail ()
+            raise ()
         let to_string = function
           | DNA (strandedness, case_sensitivity, unknown_char_action) ->
             Printf.sprintf "DNA(%s,%s,%s)"
@@ -544,7 +522,7 @@ module Iterator:
                   (* We just skip the character *)
                   incr i_src
                 | Error ->
-                  Printf.sprintf "(%s): Unknown char '%c'" __FUNCTION__ s.[!i_src] |> failwith
+                  Exception.raise __FUNCTION__ IO_Format (Printf.sprintf "Unknown char '%c'" s.[!i_src])
               end else begin
                 (*Tools.Timer.start timer_id_array;*)
                 current.(!l_dst) <- id;
@@ -580,7 +558,7 @@ module Iterator:
             | _ ->
               raise Not_found
           with _ ->
-            Printf.sprintf "(%s): Unknown hasher '%s'" __FUNCTION__ s |> failwith
+            Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Unknown hasher '%s'" s)
         let to_string = function
           | K_mers k ->
             Printf.sprintf "k-mers(%d)" k
@@ -728,6 +706,7 @@ module Iterator:
         finalizer ())
   end
 
+(* TODO: THIS ONE SHOULD PROBABLY BE REWRITTEN *)
 module DNALevenshteinBall (K: IntParameter_t):
   sig
     module H:
@@ -755,7 +734,8 @@ module DNALevenshteinBall (K: IntParameter_t):
         type t = int
         let k =
           if K.n > 30 then
-            Printf.sprintf "(%s): Invalid argument (k must be <= 30, found %d)" __FUNCTION__ K.n |> failwith;
+            Exception.raise __FUNCTION__ Initialize
+              (Printf.sprintf "Invalid argument (k must be <= 30, found %d)" K.n);
           K.n
         (* There are 4 symbols in the alphabet, each one encoded as a 2-bit number *)
         let alphabet = "ACGT"
@@ -767,8 +747,8 @@ module DNALevenshteinBall (K: IntParameter_t):
           | _ -> -1
         let encode s =
           if String.length s <> k then
-            Printf.sprintf "(%s): Invalid argument (string length must be k=%d, found %d)" __FUNCTION__ k (String.length s)
-              |> failwith;
+            Exception.raise __FUNCTION__ Initialize
+              (Printf.sprintf "Invalid argument (string length must be k=%d, found %d)" k (String.length s));
           let res = ref 0 in
           for i = 0 to k - 1 do
             res :=
@@ -778,9 +758,9 @@ module DNALevenshteinBall (K: IntParameter_t):
                 | 'C' | 'c' -> 1
                 | 'G' | 'g' -> 2
                 | 'T' | 't' -> 3
-                | w ->
-                  Printf.sprintf "(%s): Invalid argument (expected character in [ACGTacgt], found '%c')" __FUNCTION__ w
-                    |> failwith
+                | c ->
+                  Exception.raise __FUNCTION__ Initialize
+                    (Printf.sprintf "Invalid argument (expected character in [ACGTacgt], found '%c')" c);
           done;
           !res
       end
@@ -801,7 +781,7 @@ module DNALevenshteinBall (K: IntParameter_t):
       Bytes.to_string s
     let iter ?(radius = 1) f l_ctxt s r_ctxt =
       if radius < 0 then
-        Printf.sprintf "(%s): Invalid radius %d" __FUNCTION__ radius |> failwith;
+        Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Invalid radius %d" radius);
       let l_ctxt, s, r_ctxt = lint l_ctxt, lint s, lint r_ctxt in
       (* We trim/pad contexts whenever needed *)
       let padding = String.make radius ' ' in
