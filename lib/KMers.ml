@@ -306,7 +306,7 @@ module Iterator:
               | "ss" | "SS" | "single-stranded" -> Single
               | "ds" | "DS" | "double-stranded" -> Double
               | s ->
-                Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Unknown strandedness '%s'" s)
+                Exception.raise_unrecognized_initializer __FUNCTION__ "strandedness" s
             let to_string = function
               | Single -> "single-stranded"
               | Double -> "double-stranded"
@@ -320,7 +320,7 @@ module Iterator:
               | "ci" | "case-insensitive" -> Insensitive
               | "cs" | "case-sensitive" -> Sensitive
               | s ->
-                Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Unknown case sensitivity '%s'" s)
+                Exception.raise_unrecognized_initializer __FUNCTION__ "case sensitivity" s
             let to_string = function
               | Insensitive -> "case-insensitive"
               | Sensitive -> "case-sensitive"
@@ -336,7 +336,7 @@ module Iterator:
               | "ignore" | "skip" -> Ignore
               | "error" | "abort" -> Error
               | s ->
-                Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Unknown action '%s'" s)
+                Exception.raise_unrecognized_initializer __FUNCTION__ "action" s
             let to_string = function
               | Split -> "split"
               | Ignore -> "ignore"
@@ -348,7 +348,7 @@ module Iterator:
           | Text of CaseSensitivity.t * UnknownCharAction.t * string
         let of_string_re = Str.regexp "[(,)]"
         let of_string s =
-          let raise () = Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Unknown content '%s'" s) in
+          let raise () = Exception.raise_unrecognized_initializer __FUNCTION__ "content" s in
           match Str.full_split of_string_re s with
           (* First, a few simplified options with default choices *)
           | [ Text "ss-DNA" ] | [ Text "SS-DNA" ] | [ Text "single-stranded-DNA" ] ->
@@ -522,7 +522,7 @@ module Iterator:
                   (* We just skip the character *)
                   incr i_src
                 | Error ->
-                  Exception.raise __FUNCTION__ IO_Format (Printf.sprintf "Unknown char '%c'" s.[!i_src])
+                  Exception.raise_unrecognized_initializer __FUNCTION__ "char" (string_of_char s.[!i_src])
               end else begin
                 (*Tools.Timer.start timer_id_array;*)
                 current.(!l_dst) <- id;
@@ -549,16 +549,13 @@ module Iterator:
           | Gapped of int * int
         let of_string_re = Str.regexp "[(,)]"
         let of_string s =
-          try
-            match Str.full_split of_string_re s with
-            | [ Text "k-mers"; Delim "("; Text k; Delim ")" ] ->
-              K_mers (int_of_string k)
-            | [ Text "gapped"; Delim "("; Text k; Delim ","; Text gap_size; Delim ")" ] ->
-              Gapped (int_of_string k, int_of_string gap_size)
-            | _ ->
-              raise Not_found
-          with _ ->
-            Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Unknown hasher '%s'" s)
+          match Str.full_split of_string_re s with
+          | [ Text "k-mers"; Delim "("; Text k; Delim ")" ] ->
+            K_mers (int_of_string k)
+          | [ Text "gapped"; Delim "("; Text k; Delim ","; Text gap_size; Delim ")" ] ->
+            Gapped (int_of_string k, int_of_string gap_size)
+          | _ ->
+            Exception.raise_unrecognized_initializer __FUNCTION__ "hasher" s
         let to_string = function
           | K_mers k ->
             Printf.sprintf "k-mers(%d)" k
@@ -661,31 +658,31 @@ module Iterator:
             (fun ?(weight = 1) ia ->
               let l = Array.length ia in
               if l >= eff_k then begin
-                let current_1 = Impl.compute ia 0 |> ref
-                and current_2 = Impl.compute ia offs |> ref in
-                let rc_1 = Impl.rc !current_1 |> ref
-                and rc_2 = Impl.rc !current_2 |> ref in
+                let current1 = Impl.compute ia 0 |> ref
+                and current2 = Impl.compute ia offs |> ref in
+                let rc1 = Impl.rc !current1 |> ref
+                and rc2 = Impl.rc !current2 |> ref in
                 let get_min () =
-                  let h_1 = !current_1 and h_2 = !current_2 and rc_1 = !rc_1 and rc_2 = !rc_2 in
+                  let h1 = !current1 and h2 = !current2 and rc1 = !rc1 and rc2 = !rc2 in
                   (* Here the equation is (h1|h2) <= rc(h1|h2) = rc(h2)|rc(h1) *)
-                  if h_1 < rc_2 || (h_1 = rc_2 && h_2 <= rc_1) then
-                    h_1, h_2
+                  if h1 < rc2 || (h1 = rc2 && h2 <= rc1) then
+                    h1, h2
                   else
-                    rc_2, rc_1 in
+                    rc2, rc1 in
                 if flags.rc_symmetric_hash then
                   add (get_min ()) weight
                 else
-                  add (!current_1, !current_2) weight;
+                  add (!current1, !current2) weight;
                 for i = eff_k to l - 1 do
-                  let c_1 = ia.(i - offs) and c_2 = ia.(i) in
-                  current_1 := Impl.add_symbol_right !current_1 c_1;
-                  current_2 := Impl.add_symbol_right !current_2 c_2;
+                  let c1 = ia.(i - offs) and c2 = ia.(i) in
+                  current1 := Impl.add_symbol_right !current1 c1;
+                  current2 := Impl.add_symbol_right !current2 c2;
                   if flags.rc_symmetric_hash then begin
-                    rc_1 := Impl.symbol_complement c_1 |> Impl.add_symbol_left !rc_1;
-                    rc_2 := Impl.symbol_complement c_2 |> Impl.add_symbol_left !rc_2;
+                    rc1 := Impl.symbol_complement c1 |> Impl.add_symbol_left !rc1;
+                    rc2 := Impl.symbol_complement c2 |> Impl.add_symbol_left !rc2;
                     add (get_min ()) weight
                   end else
-                    add (!current_1, !current_2) weight
+                    add (!current1, !current2) weight
                 done
               end),
             (* Finaliser *)

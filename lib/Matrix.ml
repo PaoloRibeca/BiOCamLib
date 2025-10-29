@@ -32,11 +32,9 @@ include (
       row_names: string array;
       data: Float.Array.t array
     }
-    let empty =
-      { col_names = [||]; row_names = [||]; data = [||] }
-    let to_file ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) m fname =
-      let n_cols = Array.length m.col_names and n_rows = Array.length m.row_names
-      and output = open_out fname in
+    let empty = { col_names = [||]; row_names = [||]; data = [||] } (* Immutable *)
+    let to_channel ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) m output =
+      let n_cols = Array.length m.col_names and n_rows = Array.length m.row_names in
       if n_rows > 0 && n_cols > 0 then begin
         (* We output column names *)
         Printf.fprintf output "";
@@ -71,21 +69,24 @@ include (
             Printf.fprintf output "%s" block;
             let new_processed_rows = !processed_rows + n_processed in
             if verbose && new_processed_rows / rows_per_step > !processed_rows / rows_per_step then
-              Printf.eprintf "%s\r(%s): Writing table to file '%s': done %d/%d rows%!"
-                String.TermIO.clear __FUNCTION__ fname new_processed_rows n_rows;
+              Printf.eprintf "%s\r(%s): Writing table to channel: done %d/%d rows%!"
+                String.TermIO.clear __FUNCTION__ new_processed_rows n_rows;
             processed_rows := new_processed_rows)
           threads
       end;
       if verbose then
-        Printf.eprintf "%s\r(%s): Writing table to file '%s': done %d/%d rows.\n%!"
-          String.TermIO.clear __FUNCTION__ fname n_rows n_rows;
+        Printf.eprintf "%s\r(%s): Writing table to channel: done %d/%d rows.\n%!"
+          String.TermIO.clear __FUNCTION__ n_rows n_rows
+    let to_file ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) m path =
+      let output = open_out path in
+      to_channel ~precision ~threads ~elements_per_step ~verbose m output;
       close_out output
     let re_quote = Str.regexp "\""
     let strip_external_quotes_and_check s =
-      let fail () = Printf.sprintf "(%s): Double quotes in name '%s'" __FUNCTION__ s |> failwith in
+      let raise () = Exception.raise __FUNCTION__ IO_Format (Printf.sprintf "Double quotes in name '%s'" s) in
       match String.length s, s with
       | 0, _ -> ""
-      | 1, "\"" -> fail ()
+      | 1, "\"" -> raise ()
       | l, _ ->
         let s =
           if s.[0] = '"' && s.[l - 1] = '"' then
@@ -94,13 +95,11 @@ include (
             s in
         try
           Str.search_forward re_quote s 0 |> ignore;
-          fail ()
+          raise ()
         with Not_found ->
           s
-    exception Wrong_number_of_columns of int * int * int
-    let of_file ?(threads = 1) ?(bytes_per_step = 4194304) ?(verbose = false) filename =
-      let input = open_in filename and line_num = ref 0
-      and col_names = ref [||] and row_names = ref [] and data = ref [] in
+    let of_channel ?(threads = 1) ?(bytes_per_step = 4194304) ?(verbose = false) input =
+      let line_num = ref 0 and col_names = ref [||] and row_names = ref [] and data = ref [] in
       begin try
         (* We process the header *)
         let line = input_line input |> String.Split.on_char_as_array '\t' in
@@ -126,6 +125,9 @@ include (
               while !cntr < bytes_per_step do
                 let line = input_line input in
                 incr line_num;
+                (* If there is an empty line, we stop processing input *)
+                if line = "" then
+                  raise End_of_file;
                 List.accum res (!line_num, line);
                 cntr := !cntr + String.length line
               done
@@ -141,7 +143,9 @@ include (
               let line = String.Split.on_char_as_array '\t' line in
               let l = Array.length line in
               if l <> num_cols + 1 then
-                Wrong_number_of_columns (line_num, l, num_cols + 1) |> raise;
+                Exception.raise __FUNCTION__ IO_Format
+                  (Printf.sprintf "On line %d: Inconsistent number of columns (found %d, expected %d)"
+                    line_num l (num_cols + 1));
               let array = Float.Array.create num_cols in
               Array.iteri
                 (fun i el ->
@@ -159,21 +163,27 @@ include (
               List.accum data numbers;
               let new_elts_read = !elts_read + num_cols in
               if verbose && new_elts_read / 100000 > !elts_read / 100000 then
-                Printf.eprintf "%s\r(%s): On line %d of file '%s': Read %d elements%!"
-                  String.TermIO.clear __FUNCTION__ !line_num filename new_elts_read;
+                Printf.eprintf "%s\r(%s): After %d %s: Read %d %s%!" String.TermIO.clear __FUNCTION__
+                  !line_num (String.pluralize_int "line" !line_num)
+                  new_elts_read (String.pluralize_int "element" new_elts_read);
               elts_read := new_elts_read))
           threads;
-        close_in input;
         if verbose then
-          Printf.eprintf "%s\r(%s): On line %d of file '%s': Read %d elements.\n%!"
-            String.TermIO.clear __FUNCTION__ !line_num filename !elts_read
+          Printf.eprintf "%s\r(%s): After %d %s: Read %d %s.%!" String.TermIO.clear __FUNCTION__
+            !line_num (String.pluralize_int "line" !line_num)
+            !elts_read (String.pluralize_int "element" !elts_read)
       with End_of_file ->
-        (* Empty file *)
-        close_in input
+        (* Empty channel *)
+        raise End_of_file
       end;
       { col_names = !col_names;
         row_names = Array.of_rlist !row_names;
         data = Array.of_rlist !data }
+    let of_file ?(threads = 1) ?(bytes_per_step = 4194304) ?(verbose = false) path =
+      let input = open_in path in
+      let res = of_channel ~threads ~bytes_per_step ~verbose input in
+      close_in input;
+      res
     let [@warning "-27"] transpose_single_threaded ?(verbose = false) m =
       { col_names = m.row_names;
         row_names = m.col_names;
@@ -220,15 +230,27 @@ include (
       { col_names = m.row_names;
         row_names = m.col_names;
         data = data }
-    exception Incompatible_geometries of string array * string array
-    exception Duplicate_label of string
+    module Exception =
+      struct
+        include Exception
+        let raise_incompatible_geometries __FUNCTION__ sa1 sa2 =
+          Exception.raise __FUNCTION__ IO_Format begin
+            let res = Buffer.create 1024 in
+            Buffer.add_string res "Matrices have incompatible column names\n [";
+            Array.iter (fun s -> Printf.sprintf " '%s'" s |> Buffer.add_string res) sa1;
+            Buffer.add_string res " ]\n [";
+            Array.iter (fun s -> Printf.sprintf " '%s'" s |> Buffer.add_string res) sa2;
+            Buffer.add_string res " ]\n";
+            Buffer.contents res
+          end
+      end
     let merge_rowwise ?(verbose = false) m1 m2 =
       let merged_col_names =
         if m1 = empty then
           m2.col_names
         else m1.col_names in
       if merged_col_names <> m2.col_names then
-        Incompatible_geometries (m1.col_names, m2.col_names) |> raise;
+        Exception.raise_incompatible_geometries __FUNCTION__ m1.col_names m2.col_names;
       if verbose then
         Printf.eprintf "(%s): Merging matrices (%d+%d rows)...%!"
           __FUNCTION__ (Array.length m1.row_names) (Array.length m2.row_names);
@@ -242,7 +264,7 @@ include (
         (fun i name ->
           match StringMap.find_opt name !merged_rows with
           | Some _ ->
-            Duplicate_label name |> raise
+            Exception.raise __FUNCTION__ IO_Format (Printf.sprintf "Label '%s' is present in both matrices" name);
           | None ->
             merged_rows := StringMap.add name m2.data.(i) !merged_rows)
         m2.row_names;
@@ -261,7 +283,7 @@ include (
         data = merged_data }
     let multiply_matrix_vector_single_threaded ?(verbose = false) m v =
       if Array.length m.col_names <> Float.Array.length v then
-        Incompatible_geometries (m.col_names, Array.make (Float.Array.length v) "") |> raise;
+        Exception.raise_incompatible_geometries __FUNCTION__ m.col_names (Array.make (Float.Array.length v) "");
       let d = Array.length m.row_names in
       (* We immediately allocate all the needed memory, as we already know how much we will need *)
       let res = Float.Array.create d and elts_done = ref 0 in
@@ -287,7 +309,7 @@ include (
     }
     let multiply_matrix_sparse_vector_single_threaded ?(verbose = false) m s_v =
       if Array.length m.col_names <> s_v.length then
-        Incompatible_geometries (m.col_names, Array.make (s_v.length) "") |> raise;
+        Exception.raise_incompatible_geometries __FUNCTION__ m.col_names (Array.make (s_v.length) "");
       let d = Array.length m.row_names in
       (* We immediately allocate all the needed memory, as we already know how much we will need *)
       let res = Float.Array.make d 0. and elts_done = ref 0 in
@@ -310,7 +332,7 @@ include (
     let multiply_matrix_vector ?(threads = 1) ?(elements_per_step = 10000) ?(verbose = false) m v =
       let n_rows = Array.length m.row_names and n_cols = Array.length m.col_names in
       if n_cols <> Float.Array.length v then
-        Incompatible_geometries (m.col_names, Array.make (Float.Array.length v) "") |> raise;
+        Exception.raise_incompatible_geometries __FUNCTION__ m.col_names (Array.make (Float.Array.length v) "");
       (* We immediately allocate all the needed memory, as we already know how much we will need *)
       let res = Float.Array.create n_rows
       and rows_per_step = max 1 (elements_per_step / n_cols) and processed_rows = ref 0 in
@@ -354,7 +376,7 @@ include (
       res
     let multiply_matrix_matrix ?(threads = 1) ?(elements_per_step = 10000) ?(verbose = false) m1 m2 =
       if m1.col_names <> m2.row_names then
-        Incompatible_geometries (m1.col_names, m2.row_names) |> raise;
+        Exception.raise_incompatible_geometries __FUNCTION__ m1.col_names m2.row_names;
       let row_num = Array.length m1.row_names and col_num = Array.length m2.col_names in
       (* We immediately allocate all the needed memory, as we already know how much we will need *)
       let data = Array.init row_num (fun _ -> Float.Array.create col_num) in
@@ -415,20 +437,27 @@ include (
       data: Float.Array.t array
     }
     val empty: t
-    (* Can fail if the label contains double quotes *)
-    val strip_external_quotes_and_check: string -> string
+    module Exception:
+      sig
+        include module type of Exception
+        val raise_incompatible_geometries: string -> string array -> string array -> unit
+      end
+    val strip_external_quotes_and_check: string -> string (* Can fail if the label contains double quotes *)
     (* We read in a matrix which has conditions as row names
         and a (large) number of tags (genes, k-mers, etc.) as column names.
        In keeping with the convention accepted by R, the first row would be a header,
         and the first column the row names.
        Names might be quoted, but quotes are stripped out *)
-    exception Wrong_number_of_columns of int * int * int
+    (* The following one reads from an open channel, and stops either at End_of_file
+        or at the first empty line. It can be used to read concatenated files *)
+    val of_channel: ?threads:int -> ?bytes_per_step:int -> ?verbose:bool -> in_channel -> t
+    (* The following one only reads one matrix, plus optionally an empty line at its end *)
     val of_file: ?threads:int -> ?bytes_per_step:int -> ?verbose:bool -> string -> t
+    val to_channel: ?precision:int -> ?threads:int -> ?elements_per_step:int -> ?verbose:bool ->
+                    t -> out_channel -> unit
     val to_file: ?precision:int -> ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> string -> unit
     val transpose_single_threaded: ?verbose:bool -> t -> t
     val transpose: ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> t
-    exception Incompatible_geometries of string array * string array
-    exception Duplicate_label of string
     val merge_rowwise: ?verbose:bool -> t -> t -> t
     val multiply_matrix_vector:
       ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> Float.Array.t -> Float.Array.t

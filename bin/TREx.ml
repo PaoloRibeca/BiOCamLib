@@ -49,7 +49,7 @@ module TandemRepeatExplorer =
               IntSet.iter
                 (fun i ->
                   if i <= max_i then begin
-                    let k_mer = k_mer ^ String.make 1 s.[i + red_k] in
+                    let k_mer = k_mer ^ string_of_char s.[i + red_k] in
                     current := PrefixMultimap.add k_mer i !current
                   end)
                 set)

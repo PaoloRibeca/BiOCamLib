@@ -208,12 +208,14 @@ end
       Array.blit src.data 0 dst.data dst.size src.size;
       dst.size <- aug_length
     end
+  let raise_stackarray_is_empty __FUNCTION__ =
+    Exception.raise __FUNCTION__ Algorithm "Stackarray is empty"
   let pop s =
     if s.size > 0 then begin
       s.size <- s.size - 1;
       s.data.(s.size)
     end else
-      Exception.raise __FUNCTION__ Algorithm "Stackarray is empty"
+      raise_stackarray_is_empty __FUNCTION__
   let pop_opt s =
     if s.size > 0 then begin
       s.size <- s.size - 1;
@@ -231,7 +233,7 @@ end
     if s.size > 0 then
       s.data.(s.size - 1)
     else
-      Exception.raise __FUNCTION__ Algorithm "Stackarray is empty"
+      raise_stackarray_is_empty __FUNCTION__
   let top_opt s =
     if s.size > 0 then
       Some s.data.(s.size - 1)
@@ -281,15 +283,13 @@ end
     if idx < s.size then
       s.data.(idx)
     else
-      Exception.raise __FUNCTION__ Algorithm
-        (Printf.sprintf "Index %d is out of range (stackarray length=%d)" idx s.size)
+      Exception.raise_index_out_of_range __FUNCTION__ idx "stackarray" s.size
   let ( .@() ) = get
   let set s idx el =
     if idx < s.size then
       s.data.(idx) <- el
     else
-      Exception.raise __FUNCTION__ Algorithm
-        (Printf.sprintf "Index %d is out of range (stackarray length=%d)" idx s.size)
+      Exception.raise_index_out_of_range __FUNCTION__ idx "stackarray" s.size
   let ( .@() <- ) = set
   let contents s =
     Array.sub s.data 0 s.size
@@ -461,8 +461,7 @@ module Trie:
     let nth t i =
       let l = StackArray.length t.hash in
       if i < 0 || i >= l then
-        Exception.raise __FUNCTION__ Algorithm
-          (Printf.sprintf "Index %d is out of range (dictionary length=%d)" i l)
+        Exception.raise_index_out_of_range __FUNCTION__ i "dictionary" l
       else
         StackArray.(t.hash.@(i))
     let all t = StackArray.contents t.hash
@@ -696,13 +695,13 @@ module Argv:
           f ()
         with _ ->
           error n ("Option '" ^ _argv.(!_i - 1) ^ "' needs one (more)" ^ what ^ "parameter"))
-    let template_filter f g =
+    and template_filter f g =
       (fun () ->
         let res = f () in
         if g res then
           res
         else
-          raise Not_found)
+          raise Not_found) (* It is OK to raise this as it will always be caught *)
     let get_parameter =
       template_get __FUNCTION__ " " (fun () -> incr _i; _argv.(!_i))
     let get_parameter_boolean =
@@ -750,7 +749,7 @@ module Argv:
           (function
             | '\\' | '`' | '*' | '_' | '{' | '}' | '[' | ']' | '(' | ')' | '#' | '+' | '-' | '.' | '!' | '~'
                 as c when escape ->
-              "\\" ^ String.make 1 c |> String.accum res
+              "\\" ^ string_of_char c |> String.accum res
             | '<' when escape ->
               "&lt;" |> String.accum res
             | '>' when escape ->
@@ -758,7 +757,7 @@ module Argv:
             | '|' when escape ->
               "&#124;" |> String.accum res
             | c ->
-              String.make 1 c |> String.accum res)
+              string_of_char c |> String.accum res)
           s;
         String.accum _md_usage !res
       and need_table_header = ref false in

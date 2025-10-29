@@ -30,6 +30,50 @@ let min_max a b =
   else
     a, b
 
+let string_of_char = String.make 1
+
+module Exception =
+  struct
+    module Kind =
+      struct
+        type t =
+          | Initialize
+          | IO_Format
+          | Algorithm
+      end
+    (* Kind, __FUNCTION__, message *)
+    type t = Kind.t * string * string
+    exception E of t
+    let print = function
+    | E (_, __FUNCTION__, message) ->
+      Printf.eprintf "(%s): %s\n%!" __FUNCTION__ message
+    | _ ->
+      assert false
+    let to_string = function
+    | E (_, __FUNCTION__, message) ->
+      Printf.sprintf "(%s): %s" __FUNCTION__ message
+    | _ ->
+      assert false
+    (* Install Printexc printer for this exception type *)
+    let () =
+      Printexc.register_printer
+        (function
+          | E _ as e -> Some (to_string e)
+          | _ -> None)
+    let fail e =
+      to_string e |> failwith
+    let raise __FUNCTION__ kind message =
+      E (kind, __FUNCTION__, message) |> raise
+    let raise_index_out_of_range __FUNCTION__ i what l =
+      raise __FUNCTION__ Algorithm (Printf.sprintf "Index %d is out of range (%s length=%d)" i what l)
+    let raise_object_is_empty __FUNCTION__ what =
+      raise __FUNCTION__ Algorithm (Printf.sprintf "The %s is empty" what)
+    let raise_incompatible_lengths __FUNCTION__ what l1 l2 =
+      raise __FUNCTION__ IO_Format (Printf.sprintf "The two %s have incompatible lengths (%d, %d)" what l1 l2)
+    let raise_unrecognized_initializer __FUNCTION__ what init =
+      raise __FUNCTION__ Initialize (Printf.sprintf "Unrecognized %s '%s'" what init)
+  end
+
 module Option:
   sig
     val unbox: 'a option -> 'a
@@ -263,7 +307,7 @@ module List:
     let accum rl el = rl := el :: !rl
     let pop rl =
       match !rl with
-      | [] -> raise Not_found
+      | [] -> Exception.raise_object_is_empty __FUNCTION__ "List"
       | hd :: tail ->
         rl := tail;
         hd
@@ -327,37 +371,35 @@ module MakeExtendedArrayFunctionality (Array: Array_t): ExtendedArrayFunctionali
       for i = Array.length a - 1 downto 0 do
         Array.unsafe_get a i |> f i
       done
-    let check__raise_different_lengths l_1 l_2 =
-      if l_1 <> l_2 then 
-        Invalid_argument
-          (Printf.sprintf "(%s): The two arrays have different lengths (%d and %d)" __FUNCTION__ l_1 l_2)
-        |> raise
-    let iter2i f a_1 a_2 =
-      let l = Array.length a_1 in
-      Array.length a_2 |> check__raise_different_lengths l;
+    let check__raise_different_lengths l1 l2 =
+      if l1 <> l2 then
+        Exception.raise_incompatible_lengths __FUNCTION__ "arrays" l1 l2
+    let iter2i f a1 a2 =
+      let l = Array.length a1 in
+      Array.length a2 |> check__raise_different_lengths l;
       for i = 0 to l - 1 do
-        f i (Array.unsafe_get a_1 i) (Array.unsafe_get a_2 i)
+        f i (Array.unsafe_get a1 i) (Array.unsafe_get a2 i)
       done
-    let riter2 f a_1 a_2 =
-      let l = Array.length a_1 in
-      Array.length a_2 |> check__raise_different_lengths l;
+    let riter2 f a1 a2 =
+      let l = Array.length a1 in
+      Array.length a2 |> check__raise_different_lengths l;
       for i = l - 1 downto 0 do
-        f (Array.unsafe_get a_1 i) (Array.unsafe_get a_2 i)
+        f (Array.unsafe_get a1 i) (Array.unsafe_get a2 i)
       done
-    let riter2i f a_1 a_2 =
-      let l = Array.length a_1 in
-      Array.length a_2 |> check__raise_different_lengths l;
+    let riter2i f a1 a2 =
+      let l = Array.length a1 in
+      Array.length a2 |> check__raise_different_lengths l;
       for i = l - 1 downto 0 do
-        f i (Array.unsafe_get a_1 i) (Array.unsafe_get a_2 i)
+        f i (Array.unsafe_get a1 i) (Array.unsafe_get a2 i)
       done
-    let map2 f a_1 a_2 =
-      let l = Array.length a_1 in
-      Array.length a_2 |> check__raise_different_lengths l;
-      Array.mapi (fun i e_1 -> f e_1 a_2.@(i)) a_1
-    let map2i f a_1 a_2 =
-      let l = Array.length a_1 in
-      Array.length a_2 |> check__raise_different_lengths l;
-      Array.mapi (fun i e_1 -> f i e_1 a_2.@(i)) a_1
+    let map2 f a1 a2 =
+      let l = Array.length a1 in
+      Array.length a2 |> check__raise_different_lengths l;
+      Array.mapi (fun i e1 -> f e1 a2.@(i)) a1
+    let map2i f a1 a2 =
+      let l = Array.length a1 in
+      Array.length a2 |> check__raise_different_lengths l;
+      Array.mapi (fun i e1 -> f i e1 a2.@(i)) a1
     let resize ?(is_buffer = false) n fill_with a =
       let l = Array.length a in
       if n > l then begin
@@ -739,38 +781,4 @@ module Hashtbl:
 module IntHashtbl = Hashtbl.Make (IntHash)
 module IntZHashtbl = Hashtbl.Make (MakeHashable(IntZ))
 module StringHashtbl = Hashtbl.Make (MakeHashable(String))
-
-module Exception =
-  struct
-    module Kind =
-      struct
-        type t =
-          | Initialize
-          | IO_Format
-          | Algorithm
-      end
-    (* Kind, __FUNCTION__, message *)
-    type t = Kind.t * string * string
-    exception E of t
-    let raise __FUNCTION__ kind message =
-      E (kind, __FUNCTION__, message) |> raise
-    let print = function
-    | E (_, __FUNCTION__, message) ->
-      Printf.eprintf "(%s): %s\n%!" __FUNCTION__ message
-    | _ ->
-      assert false
-    let to_string = function
-    | E (_, __FUNCTION__, message) ->
-      Printf.sprintf "(%s): %s" __FUNCTION__ message
-    | _ ->
-      assert false
-    let fail e =
-      to_string e |> failwith
-    (* Install Printexc printer for this exception type *)
-    let () =
-      Printexc.register_printer
-        (function
-          | E _ as e -> Some (to_string e)
-          | _ -> None)
-  end
 

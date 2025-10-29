@@ -357,7 +357,7 @@ module Bigarray:
         let decr_by ba n v = ba.@(n) <- N.(ba.@(n) - v) [@@inline]
         let ( .-()<- ) = decr_by
         let sub = BA1.sub
-        let blit ba_1 i_1 ba_2 i_2 l = BA1.(blit (sub ba_1 i_1 l) (sub ba_2 i_2 l))
+        let blit ba1 i1 ba2 i2 l = BA1.(blit (sub ba1 i1 l) (sub ba2 i2 l))
         let fill ba i l n = BA1.(fill (sub ba i l) n)
         let iter f v =
           for i = 0 to length v - 1 do
@@ -367,14 +367,12 @@ module Bigarray:
           for i = 0 to length v - 1 do
             f i v.@(i)
           done
-        let iter2 f v_1 v_2 =
-          let l = length v_1 in
-          if length v_2 <> l then
-            Invalid_argument
-              (Printf.sprintf "(%s): Arguments have incompatible lengths (%d and %d)" __FUNCTION__ l (length v_2))
-            |> raise;
+        let iter2 f v1 v2 =
+          let l = length v1 in
+          if length v2 <> l then
+            Exception.raise_incompatible_lengths __FUNCTION__ "vectors" l (length v2);
           for i = 0 to l - 1 do
-            f v_1.@(i) v_2.@(i)
+            f v1.@(i) v2.@(i)
           done
         let map f v =
           let n = length v in
@@ -478,7 +476,7 @@ module LinearFit (V: Vector_t):
     val get_slope: t -> N.t
     (* We return model, predictions and differences/residuals *)
     exception SingularInput
-    val make: V.t -> V.t -> t * V.t * V.t
+    val make: V.t -> V.t -> t * V.t * V.t (* Can fail *)
     val predict: t -> V.t -> V.t
   end
 = struct
@@ -503,13 +501,13 @@ module LinearFit (V: Vector_t):
       let sum_x = !sum_x and sum_y = !sum_y and sum_xx = !sum_xx and sum_xy = !sum_xy and n = V.length x |> N.of_int in
       let denominator = N.(n * sum_xx - sum_x * sum_x) in
       if denominator = N.zero then
-        raise SingularInput;
+        Exception.raise __FUNCTION__ IO_Format "Input is singular";
       let m = {
         intercept = N.((sum_y * sum_xx - sum_x * sum_xy) / denominator);
         slope = N.((n * sum_xy - sum_x * sum_y) / denominator)
       } in
       let prediction = predict m x in
-      m, prediction, V.map2 (fun y_1 y_2 -> N.(y_1 - y_2)) y prediction
+      m, prediction, V.map2 (fun y1 y2 -> N.(y1 - y2)) y prediction
   end
 
 (* Functor to wrap uniform numbers into comparable types *)
@@ -544,22 +542,19 @@ module FrequenciesVector (N: ComparableScalar_t):
     val make: ?non_negative:bool -> unit -> t
     val clear: t -> unit
     val is_non_negative: t -> bool
-    exception Negative_element of N.t
-    val add: t -> N.t -> unit
+    val add: t -> N.t -> unit (* Will fail if a negative element is being added to a non-negative vector *)
     val iter: (N.t -> int -> unit) -> t -> unit
     val length: t -> int
     (* Returns the frequency of a given value *)
     val frequency: t -> N.t -> int
-    exception Empty
-    (* The next 6 functions can raise Empty.
-       The results of the next four functions depend on the definition of the comparison function *)
-    val first: t -> N.t
+    (* The results of the next four functions depend on the definition of the comparison function *)
+    val first: t -> N.t (* Can fail if the vector is empty *)
     val first_opt: t -> N.t option
-    val last: t -> N.t
+    val last: t -> N.t (* Can fail if the vector is empty *)
     val last_opt: t -> N.t option
     (* In case of ties, one random binding is returned *)
-    val most_frequent: t -> N.t * int
-    val median: t -> N.t
+    val most_frequent: t -> N.t * int (* Can fail if the vector is empty *)
+    val median: t -> N.t (* Can fail if the vector is empty *)
     val sum: t -> N.t
     val mean: t -> float
     val sum_abs: t -> N.t
@@ -581,7 +576,6 @@ module FrequenciesVector (N: ComparableScalar_t):
     val pow_abs: N.t -> t -> t
     (* The vector FV(v/sum(abs(v))) *)
     val normalize_abs: t -> t
-    exception Invalid_threshold of float
     (* Examine values in order, and null frequencies when accumulated absolute values are > threshold * sum_abs.
        Threshold must be between 0. and 1. *)
     val threshold_accum_abs: float -> t -> t
@@ -628,10 +622,10 @@ module FrequenciesVector (N: ComparableScalar_t):
       fv.most_frequent <- N.zero, 0;
       fv.median <- N.zero, 0
     let is_non_negative fv = fv.non_negative
-    exception Negative_element of N.t
     let add fv n =
       if fv.non_negative && n < N.zero then
-        Negative_element n |> raise;
+        Exception.raise __FUNCTION__ IO_Format
+          (N.to_string n |> Printf.sprintf "Cannot add element %s to non-negative vector");
       begin match M.find_opt n fv.data with
       | None ->
         fv.data <- M.add n (ref 1) fv.data
@@ -696,10 +690,11 @@ module FrequenciesVector (N: ComparableScalar_t):
       match M.find_opt n fv.data with
       | None -> 0
       | Some n -> !n
-    exception Empty
+    let empty __FUNCTION__ =
+      Exception.raise_object_is_empty __FUNCTION__ "vector"
     let first fv =
       match M.min_binding_opt fv.data with
-      | None -> raise Empty
+      | None -> empty __FUNCTION__
       | Some (n, _) -> n
     let first_opt fv =
       match M.min_binding_opt fv.data with
@@ -707,7 +702,7 @@ module FrequenciesVector (N: ComparableScalar_t):
       | Some (n, _) -> Some n
     let last fv =
       match M.max_binding_opt fv.data with
-      | None -> raise Empty
+      | None -> empty __FUNCTION__
       | Some (n, _) -> n
     let last_opt fv =
       match M.max_binding_opt fv.data with
@@ -715,7 +710,7 @@ module FrequenciesVector (N: ComparableScalar_t):
       | Some (n, _) -> Some n
     let most_frequent { length; most_frequent; _ } =
       if length = 0 then
-        raise Empty
+        empty __FUNCTION__
       else
         most_frequent
     let two = N.of_int 2
@@ -797,10 +792,9 @@ module FrequenciesVector (N: ComparableScalar_t):
         res
       end
     (* This function must _not_ change the total number of elements *)
-    exception Invalid_threshold of float
     let threshold_accum_abs t fv =
       if t < 0. || t > 1. then
-        Invalid_threshold t |> raise;
+        Exception.raise __FUNCTION__ Initialize (Printf.sprintf "Invalid threshold %g" t);
       if t = 1. then
         fv
       else begin
