@@ -1,5 +1,5 @@
 (*
-    Sequences.ml -- (c) 2018-2023 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    Sequences.ml -- (c) 2018-2025 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     This file is part of BiOCamLib, the OCaml foundations upon which
     a number of the bioinformatics tools I developed are built.
@@ -168,7 +168,7 @@ module Types =
       | "F" | "f" | "+" | "forward" | "Forward" -> forward
       | "R" | "r" | "-" | "reverse" | "Reverse" -> reverse
       | s ->
-        Printf.sprintf "(%s): Unrecognized strand '%s'" __FUNCTION__ s |> failwith
+        Exception.raise_unrecognized_initializer __FUNCTION__ "strand" s
     let string_of_strand = function
       | Forward _ -> "+"
       | Reverse _ -> "-"
@@ -198,14 +198,14 @@ module Types =
       try
         let fields = String.Split.on_char_as_array ':' s in
         if Array.length fields <> 3 then
-          raise Exit;
+          raise Exit; (* This one is OK as it will be caught *)
         let str = strand_of_string fields.(1)
         and pos = coord_of_string fields.(2) in
         if pos < 0 then
-          raise Exit;
+          raise Exit; (* This one is OK as it will be caught *)
         { name = stranded_of_split str fields.(0); position = pos }
       with _ ->
-        Printf.sprintf "(%s): Syntax error" __FUNCTION__ |> failwith
+        Exception.raise_unrecognized_initializer __FUNCTION__ "stranded pointer" s
     (*
     module StrandedPointerSet =
       Set.Make (MakeComparable (struct type t = stranded_pointer_t end))
@@ -236,18 +236,19 @@ module Types =
 
 module Junctions:
   sig
-    val parse: ?default_coverage:float -> (int -> string Types.stranded_t -> int -> int -> float -> unit) -> string -> unit
+    val parse: ?default_coverage:float ->
+               (int -> string Types.stranded_t -> int -> int -> float -> unit) -> string -> unit
   end
 = struct
-    (* Helper function to parse what is produced by the GEM pipeline *)
+    (* Helper function to parse what is produced by the GEM pipeline - legacy code? *)
     let parse ?(default_coverage = 0.) f introns =
       let introns = open_in introns and cntr = ref 0 in
       try
         while true do
           let line = String.Split.on_char_as_array '\t' (input_line introns) in
           incr cntr;
-          let error what =
-            Printf.sprintf "(%s): On line %d: %s\n%!" __FUNCTION__ !cntr what |> failwith in
+          let error message =
+            Exception.raise __FUNCTION__ IO_Format (Printf.sprintf "On line %d: %s" !cntr message) in
           (* Format is: <name_1> <str_1> <pos_1> <name_2> <str_2> <pos_2> [<cov>],
               or:       <name> <str> <pos_1> <pos_2> [<cov>] *)
           let stranded_name, pos_don, pos_acc, cov =
@@ -279,7 +280,7 @@ module Junctions:
                   else
                     default_coverage in
                 if line.(0) <> line.(3) || dir_don <> dir_acc then
-                  raise Exit;
+                  raise Exit; (* This one is OK as it will be caught *)
                 (Types.stranded_of_split dir_don line.(0)), pos_don, pos_acc, cov
               with _ ->
                 error "Incorrect syntax"
@@ -348,8 +349,8 @@ module Translation:
       | "31" | "Table31" | "Table_31" -> Table_31
       | "33" | "Table33" | "Table_33" -> Table_33
       | s ->
-        Printf.sprintf "(%s): Unknown table '%s'" __FUNCTION__ s |> failwith
-    let [@warning "-32"] describe = function
+        Exception.raise_unrecognized_initializer __FUNCTION__ "table" s
+    let describe = function
       | Table_1 -> "Standard"
       | Table_2 -> "VertebrateMitochondrial"
       | Table_3 -> "YeastMitochondrial"
@@ -386,6 +387,9 @@ module Translation:
             i := !i + 3
           done)
         frames
+    let raise_not_yet_implemented __FUNCTION__ t =
+      Exception.raise __FUNCTION__ Algorithm
+        (describe t |> Printf.sprintf "Translation table '%s' not yet implemented, sorry")
     let get_starts ?(frames = [0; 1; 2]) ?(get_alternative_start_codons = false) table s =
       let starts = ref IntSet.empty in
       let add pos =
@@ -399,7 +403,7 @@ module Translation:
             | _ -> ()
             end
           | _ ->
-            Printf.sprintf "(%s): Translation table not yet implemented, sorry" __FUNCTION__ |> failwith)
+            raise_not_yet_implemented __FUNCTION__ table)
         s;
       !starts
     let get_stops ?(frames = [0; 1; 2]) table s =
@@ -545,13 +549,13 @@ Printf.eprintf "<<<Start=%d\n%!" start;
                     | _ -> 'X' (*assert false*)
                     end
                   | _ ->
-                    Printf.sprintf "(%s): Translation table not yet implemented, sorry" __FUNCTION__ |> failwith
+                    raise_not_yet_implemented __FUNCTION__ table
                   end;
 (*
 Printf.eprintf "%d>>>%s\n%!" pos (Buffer.contents buf);
 *)
                 if IntSet.mem (start + pos) stops then
-                  raise Exit)
+                  raise Exit)  (* This one is OK as it will be caught *)
               (String.sub s start (String.length s - start))
           with Exit ->
 (*
@@ -586,8 +590,7 @@ module Reference:
     type t = (string * Translation.t) StrandedStringMap.t
     let empty = StrandedStringMap.empty
     let fasta_name_re = Str.regexp "^>"
-    let add_from_fasta ?(linter = Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(tables = "")
-                       obj input =
+    let add_from_fasta ?(linter = Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(tables = "") obj input =
       let tables =
         let res = ref StringMap.empty in
         if tables <> "" then begin
@@ -601,12 +604,12 @@ module Reference:
                 try
                   let len = Array.length line in
                   if len <> 2 then
-                    raise Exit;
+                    raise Exit; (* This one is OK as it will be caught *)
                   let table = Translation.of_string line.(1) in
                   line.(0), table
                 with _ ->
-                  Printf.sprintf "(%s): On line %d: Incorrect translation table file syntax" __FUNCTION__ !cntr
-                    |> failwith in
+                  Exception.raise __FUNCTION__ IO_Format
+                    (Printf.sprintf "On line %d: Incorrect translation table syntax" !cntr) in
               res := StringMap.add name table !res
             done
           with End_of_file -> ()
@@ -623,7 +626,8 @@ module Reference:
               try
                 StringMap.find !name tables
               with _ ->
-                Printf.sprintf "(%s): Unknown translation table for sequence '%s'" __FUNCTION__ !name |> failwith in
+                Exception.raise __FUNCTION__ Algorithm
+                  (Printf.sprintf "Sequence '%s' has no associated translation table" !name) in
           let seq = Buffer.contents seq in
           res := StrandedStringMap.add (Types.Forward !name) (seq, table) !res;
           res := StrandedStringMap.add (Types.Reverse !name) (Lint.rc seq, table) !res
@@ -654,7 +658,7 @@ module Reference:
         StrandedStringMap.find str_name obj
       with Not_found ->
         let _, name = Types.split_of_stranded str_name in
-        Printf.sprintf "(%s): Unknown sequence '%s'" __FUNCTION__ name |> failwith
+        Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Sequence '%s' not found in reference" name)
     let length obj str_name =
         let seq, _ = find obj str_name in
         String.length seq
@@ -662,10 +666,9 @@ module Reference:
       let { Types.low = { Types.name; position = lo }; length = len } = str_ivl in
       let seq, _ = find obj name in
       let hi = lo + len in
-      if lo < 0 then
-        Printf.sprintf "(%s): Low coordinate '%d' is out of range" __FUNCTION__ lo |> failwith;
-      if hi > String.length seq then
-        Printf.sprintf "(%s): High coordinate '%d' is out of range" __FUNCTION__ hi |> failwith;
+      if lo < 0 || hi > String.length seq then
+        Exception.raise __FUNCTION__ Algorithm
+          (Printf.sprintf "Invalid interval [%d, %d] (expected range is [0, %d])" lo hi (String.length seq));
       (*let lo = max 0 lo and hi = min hi (String.length seq) in
       let len = hi - lo in*)
       if len = 0 then

@@ -30,7 +30,7 @@ open Better
 (* Simple wrapper around Unix sub-processes *)
 module Subprocess:
   sig
-    exception Some_problem_occurred of string * string
+    (* It is possible for all these functions to fail *)
     (* Execute a simple command - the executables do not need to be a fully qualified path *)
     val spawn: ?verbose:bool -> string -> unit
     val spawn_and_read_single_line: ?verbose:bool -> string -> string
@@ -43,19 +43,21 @@ module Subprocess:
       (unit -> unit) -> (int -> string -> unit) -> (unit -> unit) -> string -> string array -> unit
   end
 = struct
-    exception Some_problem_occurred of string * string
     (* PRIVATE *)
-    let handle_termination_status command stderr_contents = function
+    let handle_termination_status command stderr_contents status =
+      let raise_command_failed problem =
+        Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Command '%s' failed (%s)" command problem) in
+      match status with
       | Unix.WEXITED 0 -> ()
       | e ->
         Printf.eprintf "%s%!" stderr_contents;
         match e with
         | WEXITED n ->
-          Some_problem_occurred (command, Printf.sprintf "Process exit status was %d" n) |> raise
+          raise_command_failed (Printf.sprintf "Process exit status was %d" n)
         | WSIGNALED n ->
-          Some_problem_occurred (command, Printf.sprintf "Process killed by signal %d" n) |> raise
+          raise_command_failed (Printf.sprintf "Process killed by signal %d" n)
         | WSTOPPED n ->
-          Some_problem_occurred (command, Printf.sprintf "Process stopped by signal %d" n) |> raise
+          raise_command_failed (Printf.sprintf "Process stopped by signal %d" n)
     (* PUBLIC *)
     let spawn ?(verbose = false) command =
       if verbose then
@@ -171,8 +173,7 @@ module Memory:
 module Parallel:
   sig
     val get_nproc: unit -> int
-    exception Number_of_chunks_must_be_positive of int
-    exception Number_of_threads_must_be_positive of int
+    (* The following functions can fail if the number of chunks/threads is not positive *)
     val process_stream_chunkwise: ?buffered_chunks_per_thread:int ->
       (* Beware: for everything to terminate properly, f shall raise End_of_file when done.
          Side effects are propagated within f (not exported) and within h (exported) *)
@@ -187,14 +188,12 @@ module Parallel:
         Subprocess.spawn_and_read_single_line "nproc" |> int_of_string
       with _ ->
         1
-    exception Number_of_chunks_must_be_positive of int
-    exception Number_of_threads_must_be_positive of int
     let process_stream_chunkwise ?(buffered_chunks_per_thread = 10)
         (f:unit -> 'a) (g:'a -> 'b) (h:'b -> unit) threads =
-      if buffered_chunks_per_thread < 1 then
-        Number_of_chunks_must_be_positive buffered_chunks_per_thread |> raise;
-      if threads < 1 then
-        Number_of_threads_must_be_positive threads |> raise;
+      if buffered_chunks_per_thread < 1 || threads < 1 then
+        Exception.raise __FUNCTION__ Initialize
+          (Printf.sprintf "Number of chunks per thread and number of threads must be positive (found %d, %d)"
+            buffered_chunks_per_thread threads);
       let red_threads = threads - 1 in
       (* I am the ouptut process *)
       let close_pipe (pipe_in, pipe_out) = Unix.close pipe_in; Unix.close pipe_out in

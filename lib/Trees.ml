@@ -158,7 +158,6 @@ module Splits:
     val array_of_string: string -> t array
     val of_file: string -> t
     val array_of_file: string -> t array
-    exception Incompatible_archive_version of string * string
     val of_channel: in_channel -> t
     val of_binary: ?verbose:bool -> string -> t
     (* Output *)
@@ -181,8 +180,8 @@ module Splits:
       | w when String.length w >= 5 && String.sub w 0 5 = "/dev/" -> w
       | prefix -> prefix ^ ".PhyloSplits.txt"
     let _of_file f prefix =
-      let fname = make_filename_text prefix in
-      let input = open_in fname and state = Trees_Lex.Splits.create () in
+      let path = make_filename_text prefix in
+      let input = open_in path and state = Trees_Lex.Splits.create () in
       let res = f (Trees_Lex.splits state) (Lexing.from_channel ~with_positions:true input) in
       close_in input;
       res
@@ -213,14 +212,14 @@ module Splits:
       Array.iter (fun t -> Buffer.add_char (add_to_buffer ~precision buf t) '\n') a;
       Buffer.contents buf
     let to_file ?(precision = 15) t prefix =
-      let fname = make_filename_text prefix in
-      let output = open_out fname and buf = Buffer.create 1024 in
+      let path = make_filename_text prefix in
+      let output = open_out path and buf = Buffer.create 1024 in
       Buffer.add_char (add_to_buffer ~precision buf t) '\n';
       Buffer.output_buffer output buf;
       close_out output
     let array_to_file ?(precision = 15) a prefix =
-      let fname = make_filename_text prefix in
-      let output = open_out fname and buf = Buffer.create 1024 in
+      let path = make_filename_text prefix in
+      let output = open_out path and buf = Buffer.create 1024 in
       Array.iter (fun t -> Buffer.add_char (add_to_buffer ~precision buf t) '\n') a;
       Buffer.output_buffer output buf;
       close_out output
@@ -234,25 +233,24 @@ module Splits:
       archive_version |> output_value output;
       output_value output ss
     let to_binary ?(verbose = false) ss prefix =
-      let fname = make_filename_binary prefix in
-      let output = open_out fname in
+      let path = make_filename_binary prefix in
+      let output = open_out path in
       if verbose then
-        Printf.eprintf "(%s): Outputting DB to file '%s'...%!" __FUNCTION__ fname;
+        Printf.eprintf "(%s): Outputting DB to file '%s'...%!" __FUNCTION__ path;
       to_channel output ss;
       close_out output;
       if verbose then
         Printf.eprintf " done.\n%!"
-    exception Incompatible_archive_version of string * string
     let of_channel input =
       let version = (input_value input: string) in
       if version <> archive_version then
-        Incompatible_archive_version (version, archive_version) |> raise;
+        Exception.raise_incompatible_archive_version __FUNCTION__ version archive_version;
       (input_value input: t)
     let of_binary ?(verbose = false) prefix =
-      let fname = make_filename_binary prefix in
-      let input = open_in fname in
+      let path = make_filename_binary prefix in
+      let input = open_in path in
       if verbose then
-        Printf.eprintf "(%s): Reading DB from file '%s'...%!" __FUNCTION__ fname;
+        Printf.eprintf "(%s): Reading DB from file '%s'...%!" __FUNCTION__ path;
       let res = of_channel input in
       close_in input;
       if verbose then

@@ -72,6 +72,9 @@ module Exception =
       raise __FUNCTION__ IO_Format (Printf.sprintf "The two %s have incompatible lengths (%d, %d)" what l1 l2)
     let raise_unrecognized_initializer __FUNCTION__ what init =
       raise __FUNCTION__ Initialize (Printf.sprintf "Unrecognized %s '%s'" what init)
+    let raise_incompatible_archive_version __FUNCTION__ found expected =
+      raise __FUNCTION__ IO_Format
+        (Printf.sprintf "Incompatible archive version (found '%s', expected '%s')" found expected)
   end
 
 module Option:
