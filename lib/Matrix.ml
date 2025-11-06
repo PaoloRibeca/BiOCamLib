@@ -23,64 +23,30 @@
 
 open Better
 
-(* General matrix class.
-   We include in order not to have a repeated module prefix *)
-include (
-  struct
-    type t = {
-      col_names: string array;
-      row_names: string array;
-      data: Float.Array.t array
-    }
-    let empty = { col_names = [||]; row_names = [||]; data = [||] } (* Immutable *)
-    let to_channel ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) m output =
-      let n_cols = Array.length m.col_names and n_rows = Array.length m.row_names in
-      if n_rows > 0 && n_cols > 0 then begin
-        (* We output column names *)
-        Printf.fprintf output "";
-        Array.iter
-          (fun name ->
-            Printf.fprintf output "\t%s" name)
-          m.col_names;
-        Printf.fprintf output "\n%!";
-        let rows_per_step = max 1 (elements_per_step / n_cols) and processed_rows = ref 0
-        and buf = Buffer.create 1048576 in
-        Processes.Parallel.process_stream_chunkwise
-          (fun () ->
-            if !processed_rows < n_rows then
-              let to_do = min rows_per_step (n_rows - !processed_rows) in
-              let new_processed_rows = !processed_rows + to_do in
-              let res = !processed_rows, new_processed_rows - 1 in
-              processed_rows := new_processed_rows;
-              res
-            else
-              raise End_of_file)
-          (fun (lo_row, hi_row) ->
-            Buffer.clear buf;
-            (* We output rows *)
-            for i = lo_row to hi_row do
-              (* We output the row name *)
-              m.row_names.(i) |> Printf.bprintf buf "%s";
-              Float.Array.iter (Printf.bprintf buf "\t%.*g" precision) m.data.(i);
-              Printf.bprintf buf "\n"
-            done;
-            hi_row - lo_row + 1, Buffer.contents buf)
-          (fun (n_processed, block) ->
-            Printf.fprintf output "%s" block;
-            let new_processed_rows = !processed_rows + n_processed in
-            if verbose && new_processed_rows / rows_per_step > !processed_rows / rows_per_step then
-              Printf.eprintf "%s\r(%s): Writing table to channel: done %d/%d rows%!"
-                String.TermIO.clear __FUNCTION__ new_processed_rows n_rows;
-            processed_rows := new_processed_rows)
-          threads
-      end;
-      if verbose then
-        Printf.eprintf "%s\r(%s): Writing table to channel: done %d/%d rows.\n%!"
-          String.TermIO.clear __FUNCTION__ n_rows n_rows
-    let to_file ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) m path =
-      let output = open_out path in
-      to_channel ~precision ~threads ~elements_per_step ~verbose m output;
-      close_out output
+(* General facility to read/write files into/from a matrix with a generic type *)
+module IO:
+  sig
+    val strip_external_quotes_and_check: string -> string
+    module type Vector_t =
+      sig
+        (* Here we do not expose the element type and get everything from/to strings *)
+        type t
+        val create: int -> t
+        val get: ?precision:int -> t -> int -> string
+        val set: t -> int -> string -> unit
+      end
+      module Make (V:Vector_t):
+      sig
+        type t = {
+          col_names: string array;
+          row_names: string array;
+          data: V.t array
+        }
+        val of_channel: ?threads:int -> ?bytes_per_step:int -> ?verbose:bool -> in_channel -> t
+        val to_channel: ?precision:int -> ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> out_channel -> unit
+      end
+  end
+= struct
     let re_quote = Str.regexp "\""
     let strip_external_quotes_and_check s =
       let raise () = Exception.raise __FUNCTION__ IO_Format (Printf.sprintf "Double quotes in name '%s'" s) in
@@ -94,91 +60,191 @@ include (
           else
             s in
         try
-          Str.search_forward re_quote s 0 |> ignore;
+          Str.search_forward re_quote s 0 |> ignore; (* This could certainly be optimised *)
           raise ()
         with Not_found ->
           s
-    let of_channel ?(threads = 1) ?(bytes_per_step = 4194304) ?(verbose = false) input =
-      let line_num = ref 0 and col_names = ref [||] and row_names = ref [] and data = ref [] in
-      begin try
-        (* We process the header *)
-        let line = input_line input |> String.Split.on_char_as_array '\t' in
-        incr line_num;
-        let l = Array.length line in
-        (* We assume the matrix always to have row names, and ignore the first name in the header if present *)
-        let num_cols = l - 1 in
-        col_names := Array.make num_cols "";
-        Array.iteri
-          (fun i name ->
-            if i > 0 then
-              !col_names.(i - 1) <- strip_external_quotes_and_check name)
-          line;
-        (* We process the rest of the lines in parallel. The first element will be the name *)
-        let end_reached = ref false and elts_read = ref 0 in
-        Processes.Parallel.process_stream_chunkwise
-          (fun () ->
-            if !end_reached then
-              raise End_of_file;
-            let res = ref [] in
-            begin try
-              let cntr = ref 0 in
-              while !cntr < bytes_per_step do
-                let line = input_line input in
-                incr line_num;
-                (* If there is an empty line, we stop processing input *)
-                if line = "" then
+    module type Vector_t =
+      sig
+        (* Here we do not expose the element type and get everything from/to strings *)
+        type t
+        val create: int -> t
+        val get: ?precision:int -> t -> int -> string
+        val set: t -> int -> string -> unit
+      end
+    module type S_t =
+      sig
+        type vector_t
+        type t = {
+          col_names: string array;
+          row_names: string array;
+          data: vector_t array
+        }
+        val of_channel: ?threads:int -> ?bytes_per_step:int -> ?verbose:bool -> in_channel -> t
+        val to_channel: ?precision:int -> ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> out_channel -> unit
+      end
+    module Make (V: Vector_t): S_t with type vector_t := V.t =
+      struct
+        type t = {
+          col_names: string array;
+          row_names: string array;
+          data: V.t array
+        }
+        let of_channel ?(threads = 1) ?(bytes_per_step = 4194304) ?(verbose = false) input =
+          let line_num = ref 0 and col_names = ref [||] and row_names = ref [] and data = ref [] in
+          begin try
+            (* We process the header *)
+            let line = input_line input |> String.Split.on_char_as_array '\t' in
+            incr line_num;
+            let l = Array.length line in
+            (* We assume the matrix always to have row names, and ignore the first name in the header if present *)
+            let num_cols = l - 1 in
+            col_names := Array.make num_cols "";
+            Array.iteri
+              (fun i name ->
+                if i > 0 then
+                  !col_names.(i - 1) <- strip_external_quotes_and_check name)
+              line;
+            (* We process the rest of the lines in parallel. The first element will be the name *)
+            let end_reached = ref false and elts_read = ref 0 in
+            Processes.Parallel.process_stream_chunkwise
+              (fun () ->
+                if !end_reached then
                   raise End_of_file;
-                List.accum res (!line_num, line);
-                cntr := !cntr + String.length line
-              done
-            with End_of_file ->
-              end_reached := true;
-              if !res = [] then
-                raise End_of_file
-            end;
-            List.rev !res)
-          (List.map
-            (fun (line_num, line) ->
-              (* We decorate the line number with the results of parsing the line *)
-              let line = String.Split.on_char_as_array '\t' line in
-              let l = Array.length line in
-              if l <> num_cols + 1 then
-                Exception.raise __FUNCTION__ IO_Format
-                  (Printf.sprintf "On line %d: Inconsistent number of columns (found %d, expected %d)"
-                    line_num l (num_cols + 1));
-              let array = Float.Array.create num_cols in
-              Array.iteri
-                (fun i el ->
-                  if i > 0 then
-                    (* The first element is the name *)
-                    float_of_string el |> Float.Array.set array (i - 1))
-                line;
-              line_num, strip_external_quotes_and_check line.(0), array))
-          (List.iter
-            (fun (obs_line_num, name, numbers) ->
-              incr line_num;
-              assert (obs_line_num = !line_num);
-              (* Only here do we actually fill out the memory for the result *)
-              List.accum row_names name;
-              List.accum data numbers;
-              let new_elts_read = !elts_read + num_cols in
-              if verbose && new_elts_read / 100000 > !elts_read / 100000 then
-                Printf.eprintf "%s\r(%s): After %d %s: Read %d %s%!" String.TermIO.clear __FUNCTION__
-                  !line_num (String.pluralize_int "line" !line_num)
-                  new_elts_read (String.pluralize_int "element" new_elts_read);
-              elts_read := new_elts_read))
-          threads;
-        if verbose then
-          Printf.eprintf "%s\r(%s): After %d %s: Read %d %s.%!" String.TermIO.clear __FUNCTION__
-            !line_num (String.pluralize_int "line" !line_num)
-            !elts_read (String.pluralize_int "element" !elts_read)
-      with End_of_file ->
-        (* Empty channel *)
-        raise End_of_file
-      end;
-      { col_names = !col_names;
-        row_names = Array.of_rlist !row_names;
-        data = Array.of_rlist !data }
+                let res = ref [] in
+                begin try
+                  let cntr = ref 0 in
+                  while !cntr < bytes_per_step do
+                    let line = input_line input in
+                    incr line_num;
+                    (* If there is an empty line, we stop processing input *)
+                    if line = "" then
+                      raise End_of_file;
+                    List.accum res (!line_num, line);
+                    cntr := !cntr + String.length line
+                  done
+                with End_of_file ->
+                  end_reached := true;
+                  if !res = [] then
+                    raise End_of_file
+                end;
+                List.rev !res)
+              (List.map
+                (fun (line_num, line) ->
+                  (* We decorate the line number with the results of parsing the line *)
+                  let line = String.Split.on_char_as_array '\t' line in
+                  let l = Array.length line in
+                  if l <> num_cols + 1 then
+                    Exception.raise __FUNCTION__ IO_Format
+                      (Printf.sprintf "On line %d: Inconsistent number of columns (found %d, expected %d)"
+                        line_num l (num_cols + 1));
+                  let array = V.create num_cols in
+                  Array.iteri
+                    (fun i el ->
+                      if i > 0 then
+                        (* The first element is the name *)
+                        V.set array (i - 1) el)
+                    line;
+                  line_num, strip_external_quotes_and_check line.(0), array))
+              (List.iter
+                (fun (obs_line_num, name, numbers) ->
+                  incr line_num;
+                  assert (obs_line_num = !line_num);
+                  (* Only here do we actually fill out the memory for the result *)
+                  List.accum row_names name;
+                  List.accum data numbers;
+                  let new_elts_read = !elts_read + num_cols in
+                  if verbose && new_elts_read / 100000 > !elts_read / 100000 then
+                    Printf.eprintf "%s\r(%s): After %d %s: Read %d %s%!" String.TermIO.clear __FUNCTION__
+                      !line_num (String.pluralize_int "line" !line_num)
+                      new_elts_read (String.pluralize_int "element" new_elts_read);
+                  elts_read := new_elts_read))
+              threads;
+            if verbose then
+              Printf.eprintf "%s\r(%s): After %d %s: Read %d %s.%!" String.TermIO.clear __FUNCTION__
+                !line_num (String.pluralize_int "line" !line_num)
+                !elts_read (String.pluralize_int "element" !elts_read)
+          with End_of_file ->
+            (* Empty channel *)
+            raise End_of_file
+          end;
+          { col_names = !col_names;
+            row_names = Array.of_rlist !row_names;
+            data = Array.of_rlist !data }
+        let to_channel ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) (m:t) output =
+          let n_cols = Array.length m.col_names and n_rows = Array.length m.row_names in
+          if n_rows > 0 && n_cols > 0 then begin
+            (* We output column names *)
+            Printf.fprintf output "";
+            Array.iter
+              (fun name ->
+                Printf.fprintf output "\t%s" name)
+              m.col_names;
+            Printf.fprintf output "\n%!";
+            let rows_per_step = max 1 (elements_per_step / n_cols) and processed_rows = ref 0
+            and buf = Buffer.create 1048576 in
+            Processes.Parallel.process_stream_chunkwise
+              (fun () ->
+                if !processed_rows < n_rows then
+                  let to_do = min rows_per_step (n_rows - !processed_rows) in
+                  let new_processed_rows = !processed_rows + to_do in
+                  let res = !processed_rows, new_processed_rows - 1 in
+                  processed_rows := new_processed_rows;
+                  res
+                else
+                  raise End_of_file)
+              (fun (lo_row, hi_row) ->
+                Buffer.clear buf;
+                (* We output rows *)
+                for i = lo_row to hi_row do
+                  (* We output the row name *)
+                  m.row_names.(i) |> Printf.bprintf buf "%s";
+                  for j = 0 to n_cols - 1 do
+                    Printf.bprintf buf "\t%s" (V.get ~precision m.data.(i) j)
+                  done;
+                  Printf.bprintf buf "\n"
+                done;
+                hi_row - lo_row + 1, Buffer.contents buf)
+              (fun (n_processed, block) ->
+                Printf.fprintf output "%s" block;
+                let new_processed_rows = !processed_rows + n_processed in
+                if verbose && new_processed_rows / rows_per_step > !processed_rows / rows_per_step then
+                  Printf.eprintf "%s\r(%s): Writing table to channel: done %d/%d rows%!"
+                    String.TermIO.clear __FUNCTION__ new_processed_rows n_rows;
+                processed_rows := new_processed_rows)
+              threads
+          end;
+          if verbose then
+            Printf.eprintf "%s\r(%s): Writing table to channel: done %d/%d rows.\n%!"
+              String.TermIO.clear __FUNCTION__ n_rows n_rows
+      end
+  end
+
+(* General float matrix class.
+   We include in order not to have a repeated module prefix *)
+include (
+  struct    
+    include (
+      (* Auxiliary unnamed module to implement type and basic I/O *)
+      IO.Make (
+        struct
+          type t = Float.Array.t
+          let create = Float.Array.create
+          let set fa i init =
+            try
+              float_of_string init |> Float.Array.set fa i
+            with _ ->
+              Exception.raise_unrecognized_initializer __FUNCTION__ "float" init
+          let get ?(precision = 15) fa i =
+            Float.Array.get fa i |> Printf.sprintf "%.*g" precision
+        end
+      )
+    )
+    let empty = { col_names = [||]; row_names = [||]; data = [||] } (* Immutable *)
+    let to_file ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) m path =
+      let output = open_out path in
+      to_channel ~precision ~threads ~elements_per_step ~verbose m output;
+      close_out output
     let of_file ?(threads = 1) ?(bytes_per_step = 4194304) ?(verbose = false) path =
       let input = open_in path in
       let res = of_channel ~threads ~bytes_per_step ~verbose input in
@@ -442,7 +508,6 @@ include (
         include module type of Exception
         val raise_incompatible_geometries: string -> string array -> string array -> unit
       end
-    val strip_external_quotes_and_check: string -> string (* Can fail if the label contains double quotes *)
     (* We read in a matrix which has conditions as row names
         and a (large) number of tags (genes, k-mers, etc.) as column names.
        In keeping with the convention accepted by R, the first row would be a header,
