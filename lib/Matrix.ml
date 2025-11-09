@@ -193,7 +193,7 @@ module IO:
                   elts_read := new_elts_read))
               threads;
             if verbose then
-              Printf.eprintf "%s\r(%s): After %d %s: Read %d %s.%!" String.TermIO.clear __FUNCTION__
+              Printf.eprintf "%s\r(%s): After %d %s: Read %d %s.\n%!" String.TermIO.clear __FUNCTION__
                 !line_num (String.pluralize_int "line" !line_num)
                 !elts_read (String.pluralize_int "element" !elts_read)
           with End_of_file ->
