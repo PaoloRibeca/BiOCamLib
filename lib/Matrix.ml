@@ -29,21 +29,39 @@ module IO:
     val strip_external_quotes_and_check: string -> string
     module type Vector_t =
       sig
-        (* Here we do not expose the element type and get everything from/to strings *)
+        module Element:
+          sig
+            type t
+            val of_string: string -> t
+            val to_string: ?precision:int -> t -> string
+          end
         type t
+        (* When writing, we expose a more general interface to allow output of mapped objects *)
+        val get_col_name: string array -> int -> string
+        val get_row_name: string array -> int -> string
+        (*  Indices are row, column *)
+        val get_datum: t array -> int -> int -> Element.t
+        (* When reading from a file, we just build the result row by row as expected *)
         val create: int -> t
-        val get: ?precision:int -> t -> int -> string
-        val set: t -> int -> string -> unit
+        val set: t -> int -> Element.t -> unit
       end
-      module Make (V:Vector_t):
+    module Make (V:Vector_t):
       sig
         type t = {
           col_names: string array;
           row_names: string array;
           data: V.t array
         }
+        val empty: t
+        val transpose: ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> t
         val of_channel: ?threads:int -> ?bytes_per_step:int -> ?verbose:bool -> in_channel -> t
-        val to_channel: ?precision:int -> ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> out_channel -> unit
+        type kind_t =
+          (* An actual matrix *)
+          | Real of t
+          (* A simulated matrix - parameters are number of rows and number of columns *)
+          | Virtual of int * int
+        val to_channel: ?precision:int -> ?threads:int -> ?elements_per_step:int -> ?verbose:bool ->
+                        kind_t -> out_channel -> unit
       end
   end
 = struct
@@ -66,11 +84,18 @@ module IO:
           s
     module type Vector_t =
       sig
-        (* Here we do not expose the element type and get everything from/to strings *)
+        module Element:
+          sig
+            type t
+            val of_string: string -> t
+            val to_string: ?precision:int -> t -> string
+          end
         type t
+        val get_col_name: string array -> int -> string
+        val get_row_name: string array -> int -> string
+        val get_datum: t array -> int -> int -> Element.t
         val create: int -> t
-        val get: ?precision:int -> t -> int -> string
-        val set: t -> int -> string -> unit
+        val set: t -> int -> Element.t -> unit
       end
     module type S_t =
       sig
@@ -80,8 +105,14 @@ module IO:
           row_names: string array;
           data: vector_t array
         }
+        val empty: t
+        val transpose: ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> t
         val of_channel: ?threads:int -> ?bytes_per_step:int -> ?verbose:bool -> in_channel -> t
-        val to_channel: ?precision:int -> ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> out_channel -> unit
+        type kind_t =
+          | Real of t
+          | Virtual of int * int
+        val to_channel: ?precision:int -> ?threads:int -> ?elements_per_step:int -> ?verbose:bool ->
+                        kind_t -> out_channel -> unit
       end
     module Make (V: Vector_t): S_t with type vector_t := V.t =
       struct
@@ -90,6 +121,7 @@ module IO:
           row_names: string array;
           data: V.t array
         }
+        let empty = { col_names = [||]; row_names = [||]; data = [||] } (* Immutable *)
         let of_channel ?(threads = 1) ?(bytes_per_step = 4194304) ?(verbose = false) input =
           let line_num = ref 0 and col_names = ref [||] and row_names = ref [] and data = ref [] in
           begin try
@@ -143,7 +175,7 @@ module IO:
                     (fun i el ->
                       if i > 0 then
                         (* The first element is the name *)
-                        V.set array (i - 1) el)
+                        V.Element.of_string el |> V.set array (i - 1))
                     line;
                   line_num, strip_external_quotes_and_check line.(0), array))
               (List.iter
@@ -154,7 +186,7 @@ module IO:
                   List.accum row_names name;
                   List.accum data numbers;
                   let new_elts_read = !elts_read + num_cols in
-                  if verbose && new_elts_read / 100000 > !elts_read / 100000 then
+                  if verbose && new_elts_read / 10000 > !elts_read / 10000 then
                     Printf.eprintf "%s\r(%s): After %d %s: Read %d %s%!" String.TermIO.clear __FUNCTION__
                       !line_num (String.pluralize_int "line" !line_num)
                       new_elts_read (String.pluralize_int "element" new_elts_read);
@@ -166,20 +198,27 @@ module IO:
                 !elts_read (String.pluralize_int "element" !elts_read)
           with End_of_file ->
             (* Empty channel *)
-            raise End_of_file
+            ()
           end;
           { col_names = !col_names;
             row_names = Array.of_rlist !row_names;
             data = Array.of_rlist !data }
-        let to_channel ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) (m:t) output =
-          let n_cols = Array.length m.col_names and n_rows = Array.length m.row_names in
+        type kind_t =
+          | Real of t
+          | Virtual of int * int
+        let to_channel ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) m output =
+          let n_rows, n_cols, m =
+            match m with
+            | Real m ->
+              Array.length m.row_names, Array.length m.col_names, m
+            | Virtual (n_rows, n_cols) ->
+              n_rows, n_cols, empty in
           if n_rows > 0 && n_cols > 0 then begin
             (* We output column names *)
             Printf.fprintf output "";
-            Array.iter
-              (fun name ->
-                Printf.fprintf output "\t%s" name)
-              m.col_names;
+            for i = 0 to n_cols - 1 do
+              V.get_col_name m.col_names i |> Printf.fprintf output "\t%s"
+            done;
             Printf.fprintf output "\n%!";
             let rows_per_step = max 1 (elements_per_step / n_cols) and processed_rows = ref 0
             and buf = Buffer.create 1048576 in
@@ -198,9 +237,9 @@ module IO:
                 (* We output rows *)
                 for i = lo_row to hi_row do
                   (* We output the row name *)
-                  m.row_names.(i) |> Printf.bprintf buf "%s";
+                  V.get_row_name m.row_names i |> Printf.bprintf buf "%s";
                   for j = 0 to n_cols - 1 do
-                    Printf.bprintf buf "\t%s" (V.get ~precision m.data.(i) j)
+                    Printf.bprintf buf "\t%s" (V.get_datum m.data i j |> V.Element.to_string ~precision)
                   done;
                   Printf.bprintf buf "\n"
                 done;
@@ -217,10 +256,52 @@ module IO:
           if verbose then
             Printf.eprintf "%s\r(%s): Writing table to channel: done %d/%d rows.\n%!"
               String.TermIO.clear __FUNCTION__ n_rows n_rows
+        let transpose ?(threads = 1) ?(elements_per_step = 10000) ?(verbose = false) m =
+          let n_rows = Array.length m.col_names and n_cols = Array.length m.row_names in
+          let data = Array.init n_rows (fun _ -> V.create 0)
+          and rows_per_step = max 1 (elements_per_step / n_cols) and processed_rows = ref 0 in
+          (* Generate points to be computed by the parallel process *)
+          Processes.Parallel.process_stream_chunkwise
+            (fun () ->
+              if !processed_rows < n_rows then (* The original columns *)
+                let to_do = min rows_per_step (n_rows - !processed_rows) in
+                let new_processed_rows = !processed_rows + to_do in
+                let res = !processed_rows, new_processed_rows - 1 in
+                processed_rows := new_processed_rows;
+                res
+              else
+                raise End_of_file)
+            (fun (lo_row, hi_row) ->
+              let res = ref [] in
+              (* We iterate backwards so as to avoid to have to reverse the list in the end *)
+              for i = hi_row downto lo_row do
+                (* The new row is the original column *)
+                let row = V.create n_cols in
+                for col = 0 to n_cols - 1 do
+                  V.get_datum m.data col i |> V.set row col
+                done;
+                List.accum res row
+              done;
+              lo_row, !res)
+            (fun (lo_row, rows) ->
+              List.iteri
+                (fun offs_i row_i ->
+                  data.(lo_row + offs_i) <- row_i;
+                  if verbose && !processed_rows mod rows_per_step = 0 then
+                    Printf.eprintf "%s\r(%s): Done %d/%d rows%!"
+                      String.TermIO.clear __FUNCTION__ !processed_rows n_rows;
+                  incr processed_rows)
+                rows)
+            threads;
+          if verbose then
+            Printf.eprintf "%s\r(%s): Done %d/%d rows.\n%!" String.TermIO.clear __FUNCTION__ !processed_rows n_rows;
+          { col_names = m.row_names;
+            row_names = m.col_names;
+            data = data }
       end
   end
 
-(* General float matrix class.
+(* General immutable float matrix class.
    We include in order not to have a repeated module prefix *)
 include (
   struct    
@@ -228,19 +309,23 @@ include (
       (* Auxiliary unnamed module to implement type and basic I/O *)
       IO.Make (
         struct
+          module Element =
+            struct
+              type t = float
+              let of_string = float_of_string
+              let to_string ?(precision = 15) = Printf.sprintf "%.*g" precision
+            end
           type t = Float.Array.t
           let create = Float.Array.create
-          let set fa i init =
-            try
-              float_of_string init |> Float.Array.set fa i
-            with _ ->
-              Exception.raise_unrecognized_initializer __FUNCTION__ "float" init
-          let get ?(precision = 15) fa i =
-            Float.Array.get fa i |> Printf.sprintf "%.*g" precision
+          let set = Float.Array.set
+          let get_col_name col_names i = col_names.(i) [@@inline]
+          let get_row_name row_names i = row_names.(i) [@@inline]
+          let get_datum data i j = Float.Array.get data.(i) j [@@inline]
         end
       )
     )
-    let empty = { col_names = [||]; row_names = [||]; data = [||] } (* Immutable *)
+    let to_channel ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) m output =
+      to_channel ~precision ~threads ~elements_per_step ~verbose (Real m) output
     let to_file ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) m path =
       let output = open_out path in
       to_channel ~precision ~threads ~elements_per_step ~verbose m output;
@@ -250,7 +335,7 @@ include (
       let res = of_channel ~threads ~bytes_per_step ~verbose input in
       close_in input;
       res
-    let [@warning "-27"] transpose_single_threaded ?(verbose = false) m =
+    let [@warning "-27-32"] transpose_single_threaded ?(verbose = false) m =
       { col_names = m.row_names;
         row_names = m.col_names;
         data =
@@ -258,44 +343,6 @@ include (
             (fun old_col ->
               Float.Array.init (Array.length m.row_names)
                 (fun old_row -> Float.Array.get m.data.(old_row) old_col)) }
-    let transpose ?(threads = 1) ?(elements_per_step = 10000) ?(verbose = false) m =
-      let n_rows = Array.length m.col_names and n_cols = Array.length m.row_names in
-      let data = Array.init n_rows (fun _ -> Float.Array.create 0)
-      and rows_per_step = max 1 (elements_per_step / n_cols) and processed_rows = ref 0 in
-      (* Generate points to be computed by the parallel process *)
-      Processes.Parallel.process_stream_chunkwise
-        (fun () ->
-          if !processed_rows < n_rows then (* The original columns *)
-            let to_do = min rows_per_step (n_rows - !processed_rows) in
-            let new_processed_rows = !processed_rows + to_do in
-            let res = !processed_rows, new_processed_rows - 1 in
-            processed_rows := new_processed_rows;
-            res
-          else
-            raise End_of_file)
-        (fun (lo_row, hi_row) ->
-          let res = ref [] in
-          (* We iterate backwards so as to avoid to have to reverse the list in the end *)
-          for i = hi_row downto lo_row do
-            (* The new row is the original column *)
-            Float.Array.init n_cols (fun col -> Float.Array.get m.data.(col) i) |> List.accum res
-          done;
-          lo_row, !res)
-        (fun (lo_row, rows) ->
-          List.iteri
-            (fun offs_i row_i ->
-              data.(lo_row + offs_i) <- row_i;
-              if verbose && !processed_rows mod rows_per_step = 0 then
-                Printf.eprintf "%s\r(%s): Done %d/%d rows%!"
-                  String.TermIO.clear __FUNCTION__ !processed_rows n_rows;
-              incr processed_rows)
-            rows)
-        threads;
-      if verbose then
-        Printf.eprintf "%s\r(%s): Done %d/%d rows.\n%!" String.TermIO.clear __FUNCTION__ !processed_rows n_rows;
-      { col_names = m.row_names;
-        row_names = m.col_names;
-        data = data }
     module Exception =
       struct
         include Exception
@@ -499,7 +546,7 @@ include (
       (* We number rows and columns starting from 0 *)
       col_names: string array;
       row_names: string array;
-      (* Stored row-wise *)
+      (* Stored condition/sample-wise, that is, row-wise *)
       data: Float.Array.t array
     }
     val empty: t
@@ -513,15 +560,11 @@ include (
        In keeping with the convention accepted by R, the first row would be a header,
         and the first column the row names.
        Names might be quoted, but quotes are stripped out *)
-    (* The following one reads from an open channel, and stops either at End_of_file
-        or at the first empty line. It can be used to read concatenated files *)
     val of_channel: ?threads:int -> ?bytes_per_step:int -> ?verbose:bool -> in_channel -> t
-    (* The following one only reads one matrix, plus optionally an empty line at its end *)
     val of_file: ?threads:int -> ?bytes_per_step:int -> ?verbose:bool -> string -> t
     val to_channel: ?precision:int -> ?threads:int -> ?elements_per_step:int -> ?verbose:bool ->
                     t -> out_channel -> unit
     val to_file: ?precision:int -> ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> string -> unit
-    val transpose_single_threaded: ?verbose:bool -> t -> t
     val transpose: ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> t
     val merge_rowwise: ?verbose:bool -> t -> t -> t
     val multiply_matrix_vector:

@@ -286,13 +286,13 @@ module Iterator:
            The finaliser applies the iterator to the hashes accumulated so far
             and deallocates storage, pretty much as what happens when flushing *)
         val make: ?max_results_size:int -> ?verbose:bool ->
-                  Content.Flags.t -> int -> t -> (string -> int -> unit) ->
-                  (?weight:int -> int array -> unit) * (unit -> unit)
+                  Content.Flags.t -> int -> t -> (string -> float -> unit) ->
+                  (?weight:float -> int array -> unit) * (unit -> unit)
       end
-    type t = ?weight:int -> string -> unit
+    type t = ?weight:float -> string -> unit
     (* The last argument is the iterator function *)
     val make: ?max_results_size:int -> ?verbose:bool ->
-              Content.t -> Hasher.t -> (string -> int -> unit) -> t
+              Content.t -> Hasher.t -> (string -> float -> unit) -> t
   end
 = struct
     module Content =
@@ -604,10 +604,10 @@ module Iterator:
               | None ->
                 ref w |> Impl.Accumulator1.add res h
               | Some n ->
-                n := !n + w in
+                n := !n +. w in
             (*let timer_id_accumulate = Tools.Timer.of_string "KMers.Iterator.Encoder:accumulate" in*)
             (* Accumulator *)
-            (fun ?(weight = 1) ia ->
+            (fun ?(weight = 1.) ia ->
               (*Tools.Timer.start timer_id_accumulate;*)
               let l = Array.length ia in
               if l >= k then begin
@@ -651,11 +651,11 @@ module Iterator:
               | None ->
                 ref w |> Impl.Accumulator2.add res hh
               | Some n ->
-                n := !n + w in
+                n := !n +. w in
             (* Here we just have to simulate a longer k *)
             let eff_k = 2 * k + g and offs = k + g in
             (* Accumulator *)
-            (fun ?(weight = 1) ia ->
+            (fun ?(weight = 1.) ia ->
               let l = Array.length ia in
               if l >= eff_k then begin
                 let current1 = Impl.compute ia 0 |> ref
@@ -688,14 +688,14 @@ module Iterator:
             (* Finaliser *)
             finalizer
       end
-    type t = ?weight:int -> string -> unit
+    type t = ?weight:float -> string -> unit
     let make ?(max_results_size = 0) ?(verbose = false) content hasher f =
       let encoder = Encoder.of_content content
       and content, flags = Content.make content in
       let n_symbols, encoder = Encoder.make ~verbose flags encoder in
       let accumulator, finalizer =
         Hasher.make ~max_results_size ~verbose flags n_symbols hasher f in
-      (fun ?(weight = 1) s ->
+      (fun ?(weight = 1.) s ->
         content s |>
           (fun s ->
             encoder s |>
