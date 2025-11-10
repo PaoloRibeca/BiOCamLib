@@ -1,5 +1,5 @@
 (*
-    Parallel.ml -- (c) 2019-2024 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    Parallel.ml -- (c) 2019-2025 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     Parallel allows to split and process an input file chunk-wise,
     using the reader/workers/writer model implemented in
@@ -22,24 +22,34 @@
 open BiOCamLib
 open Better
 
+module Defaults =
+  struct
+    let lines_per_block = 10000
+    let input = "/dev/stdin"
+    let output = "/dev/stdout"
+    let threads = Processes.Parallel.get_nproc ()
+    let verbose = false
+    let debug = false
+  end
+
 module Parameters =
   struct
     let command = ref ""
     let args = ref [||]
-    let lines_per_block = ref 10000
-    let input = ref ""
-    let output = ref ""
-    let threads = Processes.Parallel.get_nproc () |> ref
-    let verbose = ref false
-    let debug = ref false
+    let lines_per_block = ref Defaults.lines_per_block
+    let input = ref Defaults.input
+    let output = ref Defaults.output
+    let threads = ref Defaults.threads
+    let verbose = ref Defaults.verbose
+    let debug = ref Defaults.debug
   end
 
 let info = {
   Tools.Argv.name = "Parallel";
-  version = "9";
-  date = "16-Apr-2024"
+  version = "10";
+  date = "10-Nov-2025"
 } and authors = [
-  "2019-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
+  "2019-2025", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 
 let () =
@@ -61,34 +71,34 @@ let () =
     [ "-l"; "--lines-per-block" ],
       Some "<positive_integer>",
       [ "number of lines to be processed per block" ],
-      TA.Default (fun () -> string_of_int !Parameters.lines_per_block),
+      TA.Default (string_of_int Defaults.lines_per_block |> Fun.const),
       (fun _ -> Parameters.lines_per_block := TA.get_parameter_int_pos ());
     [ "-i"; "--input" ],
       Some "<input_file>",
       [ "name of input file" ],
-      TA.Default (fun () -> "stdin"),
+      TA.Default (Fun.const Defaults.input),
       (fun _ -> Parameters.input := TA.get_parameter ());
     [ "-o"; "--output" ],
       Some "<output_file>",
       [ "name of output file" ],
-      TA.Default (fun () -> "stdout"),
+      TA.Default (Fun.const Defaults.output),
       (fun _ -> Parameters.output := TA.get_parameter ());
     TA.make_separator "Miscellaneous";
     [ "-t"; "--threads" ],
       Some "<positive_integer>",
       [ "number of concurrent computing threads to be spawned";
         " (default automatically detected from your configuration)" ],
-      TA.Default (fun () -> string_of_int !Parameters.threads),
+      TA.Default (string_of_int Defaults.threads |> Fun.const),
       (fun _ -> Parameters.threads := TA.get_parameter_int_pos ());
     [ "-v"; "--verbose" ],
       None,
       [ "set verbose execution" ],
-      TA.Default (fun () -> string_of_bool !Parameters.verbose),
+      TA.Default (Fun.const "quiet execution"),
       (fun _ -> Parameters.verbose := true);
     [ "-d"; "--debug" ],
       None,
       [ "output debugging information" ],
-      TA.Default (fun () -> string_of_bool !Parameters.debug),
+      TA.Default (string_of_bool Defaults.debug |> Fun.const),
       (fun _ -> Parameters.debug := true);
     [ "-V"; "--version" ],
       None,
@@ -107,17 +117,8 @@ let () =
   if verbose then
     TA.header ();
   try
-    let input =
-      if !Parameters.input = "" then
-        stdin
-      else
-        open_in !Parameters.input
-    and output =
-      if !Parameters.output = "" then
-        stdout
-      else
-        open_out !Parameters.output in
-    let input_line_num = ref 0 in
+    let input = open_in !Parameters.input and output = open_out !Parameters.output
+    and input_line_num = ref 0 in
     let print_num_lines what =
       if verbose then
         Printf.sprintf "%d %s %s" !input_line_num (String.pluralize_int "line" !input_line_num) what |>

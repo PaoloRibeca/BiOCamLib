@@ -130,14 +130,24 @@ module TandemRepeatExplorer =
       process_it ()
   end
 
+module Defaults =
+  struct
+    let maximum_repeat_length = max_int
+    let minimum_locus_length = 0
+    let linter = Sequences.Lint.String.of_string "DNA"
+    let linter_keep_lowercase = false
+    let linter_keep_dashes = false
+    let verbose = false
+  end
+
 module Parameters =
   struct
-    let maximum_repeat_length = ref max_int
-    let minimum_locus_length = ref 0
-    let linter = ref "DNA"
-    let linter_keep_lowercase = ref false
-    let linter_keep_dashes = ref false
-    let verbose = ref false
+    let maximum_repeat_length = ref Defaults.maximum_repeat_length
+    let minimum_locus_length = ref Defaults.minimum_locus_length
+    let linter = ref Defaults.linter
+    let linter_keep_lowercase = ref Defaults.linter_keep_lowercase
+    let linter_keep_dashes = ref Defaults.linter_keep_dashes
+    let verbose = ref Defaults.verbose
   end
 
 let info = {
@@ -159,42 +169,36 @@ let () =
       [ "sets linter for sequence.";
         "All non-base (for DNA) or non-AA (for protein) characters";
         " are converted to unknowns" ],
-      TA.Default (fun () -> "DNA"),
-      (fun _ ->
-        Parameters.linter :=
-          match TA.get_parameter () with
-          | "none" | "DNA" | "dna" | "protein" as ok -> ok
-          | w ->
-            Printf.sprintf "Unknown linter '%s'" w |> TA.parse_error;
-            assert false); (* Just to please the compiler *)
+      TA.Default (Sequences.Lint.String.to_string Defaults.linter |> Fun.const),
+      (fun _ -> Parameters.linter := TA.get_parameter () |> Sequences.Lint.String.of_string);
     [ "--linter-keep-lowercase" ],
       Some "<bool>",
       [ "sets whether the linter should keep lowercase DNA/protein characters";
         " appearing in sequences rather than capitalise them" ],
-      TA.Default (fun () -> "false"),
+      TA.Default (string_of_bool Defaults.linter_keep_lowercase |> Fun.const),
       (fun _ -> Parameters.linter_keep_lowercase := TA.get_parameter_boolean ());
     [ "--linter-keep-dashes" ],
       Some "<bool>",
       [ "sets whether the linter should keep dashes appearing in sequences";
         " rather than convert them to unknowns" ],
-      TA.Default (fun () -> "false"),
+      TA.Default (string_of_bool Defaults.linter_keep_dashes |> Fun.const),
       (fun _ -> Parameters.linter_keep_dashes := TA.get_parameter_boolean ());
     TA.make_separator "Algorithm";
     [ "-M"; "--maximum_repeat_length" ],
       Some "<non_negative_integer>",
       [ "maximum unit length for a tandem repeat to be considered" ],
-      TA.Default (fun () -> string_of_int !Parameters.maximum_repeat_length),
+      TA.Default (string_of_int Defaults.maximum_repeat_length |> Fun.const),
       (fun _ -> Parameters.maximum_repeat_length := TA.get_parameter_int_non_neg ());
     [ "-m"; "--minimum_locus_length" ],
       Some "<non_negative_integer>",
       [ "minimum locus length for a tandem repeat to be considered" ],
-      TA.Default (fun () -> string_of_int !Parameters.minimum_locus_length),
+      TA.Default (string_of_int Defaults.minimum_locus_length |> Fun.const),
       (fun _ -> Parameters.minimum_locus_length := TA.get_parameter_int_non_neg ());
     TA.make_separator "Miscellaneous";
     [ "-v"; "--verbose" ],
       None,
       [ "set verbose execution (global option)" ],
-      TA.Default (fun () -> string_of_bool !Parameters.verbose),
+      TA.Default (Fun.const "quiet execution"),
       (fun _ -> Parameters.verbose := true);
     [ "-V"; "--version" ],
       None,
@@ -212,17 +216,8 @@ let () =
   if !Parameters.verbose then
     TA.header ();
   let linter_f =
-    match !Parameters.linter with
-    | "none" ->
-      Sequences.Lint.none
-    | "DNA" | "dna" ->
-      Sequences.Lint.dnaize
-        ~keep_lowercase:!Parameters.linter_keep_lowercase ~keep_dashes:!Parameters.linter_keep_dashes
-    | "protein" ->
-      Sequences.Lint.proteinize
-        ~keep_lowercase:!Parameters.linter_keep_lowercase ~keep_dashes:!Parameters.linter_keep_dashes
-    | _ ->
-      assert false in
+    Sequences.Lint.String.lint !Parameters.linter
+      ~keep_lowercase:!Parameters.linter_keep_lowercase ~keep_dashes:!Parameters.linter_keep_dashes in
   Files.FASTA.iter ~linter:linter_f ~verbose:!Parameters.verbose
     (fun _ name sequence ->
       TandemRepeatExplorer.iter

@@ -22,9 +22,14 @@
 open BiOCamLib
 open Better
 
+module Defaults =
+  struct
+    let no_complement = false
+  end
+
 module Parameters =
   struct
-    let no_complement = ref false
+    let no_complement = ref Defaults.no_complement
   end
 
 let info = {
@@ -44,7 +49,7 @@ let () =
     [ "-C"; "--no-complement" ],
       None,
       [ "do not base-complement the sequence" ],
-      TA.Default (fun () -> "base-complement"),
+      TA.Default (Fun.const "base-complement"),
       (fun _ -> Parameters.no_complement := true);
     TA.make_separator "Miscellaneous";
     [ "-V"; "--version" ],

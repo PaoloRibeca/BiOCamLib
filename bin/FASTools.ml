@@ -1,5 +1,5 @@
 (*
-    FASTools.ml -- (c) 2022-2024 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    FASTools.ml -- (c) 2022-2025 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     FASTools allows to perform a number of essential manipulations on
     FASTA and FASTQ files.
@@ -21,11 +21,7 @@
 open BiOCamLib
 open Better
 
-type linter_t =
-  | None
-  | DNA
-  | Protein
-and working_mode_t =
+type working_mode_t =
   | Compact
   | Expand
   | Match of Str.regexp
@@ -33,27 +29,38 @@ and working_mode_t =
   | UnQuals
 and to_do_t =
   | SetWorkingMode of working_mode_t
-  | SetLinter of linter_t
+  | SetLinter of Sequences.Lint.string_t Sequences.Lint.String.t
   | SetLinterKeepLowercase of bool
   | SetLinterKeepDashes of bool
   | ProcessInput of Files.Type.t
   | SetOutput of string
   | SetOutputPE of string * string
 
+module Defaults =
+  struct
+    let working_mode = Compact
+    let linter = Sequences.Lint.String.of_string "none"
+    let linter_keep_lowercase = false
+    let linter_keep_dashes = false
+    let flush = false
+    (*let threads = Processes.Parallel.get_nproc ()*)
+    let verbose = false
+  end
+
 module Parameters =
   struct
     let program = ref []
-    let flush = ref false
-    (*let threads = Processes.Parallel.get_nproc () |> ref*)
-    let verbose = ref false
+    let flush = ref Defaults.flush
+    (*let threads = ref Defaults.threads*)
+    let verbose = ref Defaults.verbose
   end
 
 let info = {
   Tools.Argv.name = "FASTools";
-  version = "10";
-  date = "16-Apr-2024"
+  version = "11";
+  date = "10-Nov-2025"
 } and authors = [
-  "2022-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
+  "2022-2025", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 
 let () =
@@ -64,7 +71,8 @@ let () =
     TA.make_separator_multiline [ "Working mode."; "Executed delayed in order of specification, default='compact'." ];
     [ "compact"; "-c"; "--compact" ],
       None,
-      [ "put each FASTA/FASTQ record on one tab-separated line" ],
+      [ "put each FASTA/FASTQ record on one tab-separated line";
+        " (default mode)" ],
       TA.Optional,
       (fun _ -> SetWorkingMode Compact |> List.accum Parameters.program);
     [ "expand"; "-e"; "--expand" ],
@@ -140,28 +148,19 @@ let () =
       [ "sets linter for sequence.";
         "All non-base (for DNA) or non-AA (for protein) characters";
         " are converted to unknowns" ],
-      TA.Default (fun () -> "none"),
-      (fun _ ->
-        SetLinter begin
-          match TA.get_parameter () with
-          | "none" -> None
-          | "DNA" | "dna" -> DNA
-          | "protein" -> Protein
-          | w ->
-            Printf.sprintf "Unknown linter '%s'" w |> TA.parse_error;
-            assert false (* Just to please the compiler *)
-        end |> List.accum Parameters.program);
+      TA.Default (Sequences.Lint.String.to_string Defaults.linter |> Fun.const),
+      (fun _ -> SetLinter (TA.get_parameter () |> Sequences.Lint.String.of_string) |> List.accum Parameters.program);
     [ "--linter-keep-lowercase" ],
       Some "'true'|'false'",
       [ "sets whether the linter should keep lowercase DNA/protein characters";
         " appearing in sequences rather than capitalise them" ],
-      TA.Default (fun () -> "false"),
+      TA.Default (string_of_bool Defaults.linter_keep_lowercase |> Fun.const),
       (fun _ -> SetLinterKeepLowercase (TA.get_parameter_boolean ()) |> List.accum Parameters.program);
     [ "--linter-keep-dashes" ],
       Some "'true'|'false'",
       [ "sets whether the linter should keep dashes appearing in sequences";
         " rather than convert them to unknowns" ],
-      TA.Default (fun () -> "false"),
+      TA.Default (string_of_bool Defaults.linter_keep_dashes |> Fun.const),
       (fun _ -> SetLinterKeepDashes (TA.get_parameter_boolean ()) |> List.accum Parameters.program);
     [ "-o"; "--output" ],
       Some "<output_file_name>",
@@ -169,7 +168,7 @@ let () =
         "Files are kept open, and it is possible to switch between them";
         " by repeatedly using this option.";
         "Use '/dev/stdout' for standard output" ],
-      TA.Default (fun () -> "/dev/stdout"),
+      TA.Default (Fun.const "/dev/stdout"),
       (fun _ -> SetOutput (TA.get_parameter ()) |> List.accum Parameters.program);
     [ "-O"; "--paired-end-output" ],
       Some "<output_file_name_1> <output_file_name_2>",
@@ -177,7 +176,7 @@ let () =
         "Files are kept open, and it is possible to switch between them";
         " by repeatedly using this option.";
         "Use '/dev/stdout' for standard output" ],
-      TA.Default (fun () -> "/dev/stdout"),
+      TA.Default (Fun.const "/dev/stdout"),
       (fun _ ->
         let output_1 = TA.get_parameter () in
         let output_2 = TA.get_parameter () in
@@ -185,7 +184,7 @@ let () =
     [ "--flush"; "--flush-output" ],
       None,
       [ "flush output after each record (global option)" ],
-      TA.Default (fun () -> "do not flush"),
+      TA.Default (Fun.const "do not flush"),
       (fun _ -> Parameters.flush := true);
     TA.make_separator "Miscellaneous";
 (*
@@ -193,13 +192,13 @@ let () =
       Some "<computing_threads>",
       [ "number of concurrent computing threads to be spawned";
         " (default automatically detected from your configuration)" ],
-      TA.Default (fun () -> string_of_int !Parameters.threads),
+      TA.Default (string_of_int !Parameters.threads |> Fun.const),
       (fun _ -> Parameters.threads := TA.get_parameter_int_pos ());
 *)
     [ "-v"; "--verbose" ],
       None,
       [ "set verbose execution (global option)" ],
-      TA.Default (fun () -> string_of_bool !Parameters.verbose),
+      TA.Default (Fun.const "quiet execution"),
       (fun _ -> Parameters.verbose := true);
     [ "-V"; "--version" ],
       None,
@@ -216,19 +215,14 @@ let () =
   ];
   if !Parameters.verbose then
     TA.header ();
-  let working_mode = ref Compact
-  and linter_keep_lowercase = ref false and linter_keep_dashes = ref false
-  and linter = ref None and linter_f = ref Sequences.Lint.none
+  let working_mode = ref Defaults.working_mode
+  and linter_keep_lowercase = ref Defaults.linter_keep_lowercase
+  and linter_keep_dashes = ref Defaults.linter_keep_dashes
+  and linter = ref Defaults.linter in
+  let get_linter () =
+    Sequences.Lint.String.lint !linter ~keep_lowercase:!linter_keep_lowercase ~keep_dashes:!linter_keep_dashes
   and outputs = StringMap.singleton "/dev/stdout" stdout |> ref in
-  let [@warning "-5"] set_linter_f () =
-    match !linter with
-    | None ->
-      linter_f := Sequences.Lint.none
-    | DNA ->
-      linter_f := Sequences.Lint.dnaize ~keep_lowercase:!linter_keep_lowercase ~keep_dashes:!linter_keep_dashes
-    | Protein ->
-      linter_f := Sequences.Lint.proteinize ~keep_lowercase:!linter_keep_lowercase ~keep_dashes:!linter_keep_dashes
-  and get_output_stream fname output =
+  let get_output_stream fname output =
     match StringMap.find_opt fname !outputs with
     | Some o ->
       output := o
@@ -305,34 +299,32 @@ let () =
       | SetWorkingMode mode ->
         working_mode := mode
       | SetLinter l ->
-        linter := l;
-        set_linter_f ()
+        linter := l
       | SetLinterKeepLowercase b ->
-        linter_keep_lowercase := b;
-        set_linter_f ()
+        linter_keep_lowercase := b
       | SetLinterKeepDashes b ->
-        linter_keep_dashes := b;
-        set_linter_f ()
+        linter_keep_dashes := b
       | ProcessInput input ->
         begin match !working_mode, input with
         | Compact, PairedEndFASTQ _ | Compact, InterleavedFASTQ _ | Compact, Tabular _ ->
           Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
-            Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose (output_tabular_record ~pe:true)
+            Files.ReadsIterate.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose
+              (output_tabular_record ~pe:true)
         | Compact, _ ->
           Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
-            Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose output_tabular_record
+            Files.ReadsIterate.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose output_tabular_record
         | Expand, _ ->
           Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
-            Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose output_fast_record
+            Files.ReadsIterate.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose output_fast_record
         | Match regexp, FASTA _
         | Match regexp, SingleEndFASTQ _ ->
           Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
-            Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose
+            Files.ReadsIterate.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose
               (fun i segm ({ tag; _ } as record) ->
                 if Str.matches regexp tag then
                   output_fast_record i segm record)
         | Match regexp, PairedEndFASTQ (file_1, file_2) ->
-          Files.FASTQ.iter_pe ~linter:!linter_f ~verbose:!Parameters.verbose
+          Files.FASTQ.iter_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
             (fun i tag_1 seq_1 qua_1 tag_2 seq_2 qua_2 ->
               if Str.matches regexp tag_1 || Str.matches regexp tag_2 then begin
                 output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = qua_1 };
@@ -340,7 +332,7 @@ let () =
               end)
             file_1 file_2
         | Match regexp, InterleavedFASTQ file ->
-          Files.FASTQ.iter_il ~linter:!linter_f ~verbose:!Parameters.verbose
+          Files.FASTQ.iter_il ~linter:(get_linter ()) ~verbose:!Parameters.verbose
             (fun i tag_1 seq_1 qua_1 tag_2 seq_2 qua_2 ->
               if Str.matches regexp tag_1 || Str.matches regexp tag_2 then begin
                 output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = qua_1 };
@@ -348,7 +340,7 @@ let () =
               end)
             file
         | Match regexp, Tabular file ->
-          Files.Tabular.iter ~linter:!linter_f ~verbose:!Parameters.verbose
+          Files.Tabular.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose
             (fun i tag seq qua ->
               if Str.matches regexp tag then
                 output_fast_record i 0 { tag; seq; qua })
@@ -363,30 +355,31 @@ let () =
         | RevCom, PairedEndFASTQ _
         | RevCom, InterleavedFASTQ _ ->
           Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
-            Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose (output_fast_record ~rc:true)
+            Files.ReadsIterate.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose (output_fast_record ~rc:true)
         | RevCom, Tabular _ ->
           Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
-            Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose (output_tabular_record ~rc:true)
+            Files.ReadsIterate.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose
+              (output_tabular_record ~rc:true)
         | UnQuals, FASTA _
         | UnQuals, SingleEndFASTQ _ ->
           Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
-            Files.ReadsIterate.iter ~linter:!linter_f ~verbose:!Parameters.verbose
+            Files.ReadsIterate.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose
               (fun i segm record ->
                 output_fast_record i segm { record with qua = "" })
         | UnQuals, PairedEndFASTQ (file_1, file_2) ->
-          Files.FASTQ.iter_pe ~linter:!linter_f ~verbose:!Parameters.verbose
+          Files.FASTQ.iter_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
             (fun i tag_1 seq_1 _ tag_2 seq_2 _ ->
               output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = "" };
               output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = "" })
             file_1 file_2
         | UnQuals, InterleavedFASTQ file ->
-          Files.FASTQ.iter_il ~linter:!linter_f ~verbose:!Parameters.verbose
+          Files.FASTQ.iter_il ~linter:(get_linter ()) ~verbose:!Parameters.verbose
             (fun i tag_1 seq_1 _ tag_2 seq_2 _ ->
               output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = "" };
               output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = "" })
             file
         | UnQuals, Tabular file ->
-          Files.Tabular.iter ~linter:!linter_f ~verbose:!Parameters.verbose
+          Files.Tabular.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose
             (fun i tag seq _ ->
               output_fast_record i 0 { tag; seq; qua = "" })
             (fun i tag_1 seq_1 _ tag_2 seq_2 _ ->

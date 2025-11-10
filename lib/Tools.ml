@@ -701,7 +701,7 @@ module Argv:
         if g res then
           res
         else
-          raise Not_found) (* It is OK to raise this as it will always be caught *)
+          raise_notrace Not_found) (* This one is OK as it will be caught *)
     let get_parameter =
       template_get __FUNCTION__ " " (fun () -> incr _i; _argv.(!_i))
     let get_parameter_boolean =
@@ -734,9 +734,9 @@ module Argv:
       _i := len;
       res
     let make_separator s =
-      [], None, [ s ], Optional, (fun _ -> ())
+      [], None, [ s ], Optional, Fun.const ()
     let make_separator_multiline a =
-      [], None, a, Optional, (fun _ -> ())
+      [], None, a, Optional, Fun.const ()
     let parse specs =
       let open String.TermIO in
       let basename = Filename.basename _argv.(0) in

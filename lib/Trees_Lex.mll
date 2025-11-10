@@ -24,7 +24,6 @@
       val create: ?rich_format:bool -> unit -> t
       val is_rich_format: t -> bool
       val incr_line: t -> unit
-      exception ParseError of string
       val parse_error: t -> string -> 'a
     end
   = struct
@@ -39,9 +38,9 @@
       let is_rich_format state = state.rich_format
       let incr_line state =
         state.line <- state.line + 1
-      exception ParseError of string
       let parse_error state s =
-        ParseError (Printf.sprintf "On line %d: %s" state.line s) |> raise
+        Exception.raise __FUNCTION__ IO_Format
+          (Printf.sprintf "On line %d: Error while parsing Newick format: %s" state.line s)
     end
 
   module Splits:
@@ -49,7 +48,6 @@
       type t
       val create: unit -> t
       val incr_line: t -> unit
-      exception ParseError of string
       val parse_error: t -> string -> 'a
     end
   = struct
@@ -61,9 +59,9 @@
       }
       let incr_line state =
         state.line <- state.line + 1
-      exception ParseError of string
       let parse_error state s =
-        ParseError (Printf.sprintf "On line %d: %s" state.line s) |> raise
+        Exception.raise __FUNCTION__ IO_Format
+          (Printf.sprintf "On line %d: Error while parsing splits format: %s" state.line s)
     end
 
 }

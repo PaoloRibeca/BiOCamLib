@@ -370,14 +370,13 @@ module Splits:
     val get_names: t -> string array
     val cardinal: t -> int
     val iter: (Split.t -> float -> unit) -> t -> unit
-    (* The argument are element names *)
-    exception DuplicateNames
+    (* The argument are element names. It fails if some are repeated *)
     val create: string array -> t
     (* Discards splits while keeping names *)
     val clear: t -> unit
-    exception IncompatibleSplit of string * int * int
+    (* Add a split to a split set. It fails if the split is incompatible *)
     val add_split: t -> Split.t -> float -> unit
-    exception IncompatibleSplits
+    (* It fails if the element names of the split sets are different *)
     val add_splits: t -> t -> unit
     (* Converts to a tree the largest subset of compatible splits,
         obtained by considering the splits in order of decreasing weight.
@@ -406,32 +405,32 @@ module Splits:
     let get_names ss = ss.names [@@inline]
     let cardinal ss = IntZHashtbl.length ss.splits [@@inline]
     let iter f ss = IntZHashtbl.iter f ss.splits [@@inline]
-    exception DuplicateNames
     let create names =
       let num_elts = Array.length names in
       if Array.to_seq names |> StringSet.of_seq |> StringSet.cardinal <> num_elts then
-        raise DuplicateNames;
+        Exception.raise __FUNCTION__ IO_Format "Duplicate element names in initializer";
       { names = names;
         mask_complement = IntZ.(one lsl num_elts - one);
         splits = IntZHashtbl.create 1024 }
     let clear ss =
       IntZHashtbl.clear ss.splits
-    exception IncompatibleSplit of string * int * int
     let add_split splits split weight =
       let num_elts = Array.length splits.names and num_bits = IntZ.numbits split in
       (* Here we make sure that the representation of the split is canonical *)
       if num_bits > num_elts then
-        IncompatibleSplit (IntZ.to_string split, num_bits, num_elts) |> raise;
+        Exception.raise __FUNCTION__ IO_Format
+          (Printf.sprintf "Split is incompatible (%d %s found, split set has %d %s)"
+            num_bits (String.pluralize_int "bit" num_bits) num_elts (String.pluralize_int "element" num_elts));
       let canonical = IntZ.(min split (splits.mask_complement - split)) in
       IntZHashtbl.replace splits.splits canonical begin
         match IntZHashtbl.find_opt splits.splits canonical with
         | None -> weight
         | Some w -> w +. weight
       end
-    exception IncompatibleSplits
     let add_splits dst src =
       if src.names <> dst.names then
-        raise IncompatibleSplits;
+        Exception.raise_incompatible_arrays __FUNCTION__ "split sets" "element names" Array.iter Fun.id
+          src.names dst.names;
       IntZHashtbl.iter
         (fun split weight ->
           IntZHashtbl.replace dst.splits split begin
@@ -480,7 +479,7 @@ module Splits:
                     if colors.(i) <> c then begin
                       if !state_zero = TwoOrMoreColors then
                         (* Incompatible split *)
-                        raise_notrace Exit
+                        raise_notrace Exit (* This one is OK as it will be caught *)
                       else
                         state_one := TwoOrMoreColors
                     end
@@ -495,7 +494,7 @@ module Splits:
                     if colors.(i) <> c then begin
                       if !state_one = TwoOrMoreColors then
                         (* Incompatible split *)
-                        raise_notrace Exit
+                        raise_notrace Exit (* This one is OK as it will be caught *)
                       else
                         state_zero := TwoOrMoreColors
                     end

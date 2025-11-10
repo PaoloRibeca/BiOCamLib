@@ -435,7 +435,7 @@ module Iterator:
             String.lowercase_ascii,
             { unknown_char_action; rc_symmetric_hash = false }
           | Text (CaseSensitivity.Sensitive, unknown_char_action, _) ->
-            (fun s -> s),
+            Fun.id,
             { unknown_char_action; rc_symmetric_hash = false }
         end
     module Encoder =
@@ -470,7 +470,7 @@ module Iterator:
                 | Content.CaseSensitivity.Insensitive ->
                   String.lowercase_ascii
                 | Sensitive ->
-                  (fun s -> s)
+                  Fun.id
               and file = open_in path and progr = ref 0 and dict = ref [] in
               if verbose then
                 Printf.eprintf "(%s): Reading dictionary file '%s'...%!" __FUNCTION__ path;

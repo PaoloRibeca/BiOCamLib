@@ -475,8 +475,7 @@ module LinearFit (V: Vector_t):
     val get_intercept: t -> N.t
     val get_slope: t -> N.t
     (* We return model, predictions and differences/residuals *)
-    exception SingularInput
-    val make: V.t -> V.t -> t * V.t * V.t (* Can fail *)
+    val make: V.t -> V.t -> t * V.t * V.t (* Can fail if the linear system is singular *)
     val predict: t -> V.t -> V.t
   end
 = struct
@@ -488,7 +487,6 @@ module LinearFit (V: Vector_t):
     let get_intercept m = m.intercept [@@inline]
     let get_slope m = m.slope [@@inline]
     let predict m = V.map (fun x -> N.(x * m.slope + m.intercept))
-    exception SingularInput
     let make x y =
       let sum_x = ref N.zero and sum_y = ref N.zero and sum_xx = ref N.zero and sum_xy = ref N.zero in
       V.iter2
@@ -501,7 +499,7 @@ module LinearFit (V: Vector_t):
       let sum_x = !sum_x and sum_y = !sum_y and sum_xx = !sum_xx and sum_xy = !sum_xy and n = V.length x |> N.of_int in
       let denominator = N.(n * sum_xx - sum_x * sum_x) in
       if denominator = N.zero then
-        Exception.raise __FUNCTION__ IO_Format "Input is singular";
+        Exception.raise __FUNCTION__ IO_Format "The linear system is singular";
       let m = {
         intercept = N.((sum_y * sum_xx - sum_x * sum_xy) / denominator);
         slope = N.((n * sum_xy - sum_x * sum_y) / denominator)
@@ -579,7 +577,7 @@ module FrequenciesVector (N: ComparableScalar_t):
     (* Examine values in order, and null frequencies when accumulated absolute values are > threshold * sum_abs.
        Threshold must be between 0. and 1. *)
     val threshold_accum_abs: float -> t -> t
-    val of_floatarray: Better.Float.Array.t -> t
+    val of_floatarray: ?non_negative:bool -> Better.Float.Array.t -> t
     val to_floatarray: t -> Better.Float.Array.t
   end
 = struct
@@ -809,15 +807,13 @@ module FrequenciesVector (N: ComparableScalar_t):
           fv.data;
         res
       end
-    let of_floatarray fa =
-      let res = make ~non_negative:true () and non_negative = ref true in
+    let of_floatarray ?(non_negative = false) fa =
+      let res = make ~non_negative () in
       Better.Float.Array.iter
         (fun el ->
-          if el < 0. then
-            non_negative := false;
           N.of_float el |> add res)
         fa;
-      { res with non_negative = !non_negative }
+      res
     (* The exported floatarray will have sorted elements *)
     let to_floatarray { length; data; _ } =
       let res = Better.Float.Array.create length and idx = ref 0 in

@@ -26,18 +26,37 @@ open Better
 
 module Lint:
   sig
-    val none: 'a -> 'a
-    (* The _bytes functions modify content in place *)
-    val dnaize_bytes: ?keep_lowercase:bool -> ?keep_dashes:bool -> bytes -> unit
+    (* The *_bytes functions modify content in place *)
+    type bytes_t = ?keep_lowercase:bool -> ?keep_dashes:bool -> bytes -> unit
+    val none_bytes: bytes_t
+    val dnaize_bytes: bytes_t
+    val proteinize_bytes: bytes_t
     val rc_bytes: bytes -> unit
-    val proteinize_bytes: ?keep_lowercase:bool -> ?keep_dashes:bool -> bytes -> unit
-    (* *)
-    val dnaize: ?keep_lowercase:bool -> ?keep_dashes:bool -> string -> string
+    (* These functions return fresh modified results *)
+    type string_t = ?keep_lowercase:bool -> ?keep_dashes:bool -> string -> string
+    val none: string_t
+    val dnaize: string_t
+    val proteinize: string_t
     val rc: string -> string
-    val proteinize: ?keep_lowercase:bool -> ?keep_dashes:bool -> string -> string
+    module type Type_t =
+      sig
+        type fun_t
+        type _ t =
+          | None: fun_t t
+          | DNA: fun_t t
+          | Protein: fun_t t
+        val lint: fun_t t -> fun_t
+        val of_string: string -> fun_t t
+        val to_string: fun_t t -> string
+      end
+    module Bytes: Type_t with type fun_t = bytes_t
+    module String: Type_t with type fun_t = string_t
   end
 = struct
-    let none w = w
+    type bytes_t = ?keep_lowercase:bool -> ?keep_dashes:bool -> bytes -> unit
+    type string_t = ?keep_lowercase:bool -> ?keep_dashes:bool -> string -> string
+    let [@warning "-27"] none_bytes ?(keep_lowercase = false) ?(keep_dashes = false) _ = ()
+    let [@warning "-27"] none ?(keep_lowercase = false) ?(keep_dashes = false) = Fun.id
     let dnaize_bytes ?(keep_lowercase = false) ?(keep_dashes = false) b =
       let dnaize =
         if keep_lowercase then
@@ -149,6 +168,61 @@ module Lint:
       let b = Bytes.of_string s in
       proteinize_bytes ~keep_lowercase ~keep_dashes b;
       Bytes.unsafe_to_string b
+    module type Type_t =
+      sig
+        type fun_t
+        type _ t =
+          | None: fun_t t
+          | DNA: fun_t t
+          | Protein: fun_t t
+        val lint: fun_t t -> fun_t
+        val of_string: string -> fun_t t
+        val to_string: fun_t t -> string
+      end
+    module type Implementation =
+      sig
+        type fun_t
+        val f_none: fun_t
+        val f_dna: fun_t
+        val f_protein: fun_t
+      end
+    module Make (I: Implementation): Type_t with type fun_t = I.fun_t =
+      struct
+        type fun_t = I.fun_t
+        type _ t =
+          | None: fun_t t
+          | DNA: fun_t t
+          | Protein: fun_t t
+        let lint = function
+          | None -> I.f_none
+          | DNA -> I.f_dna
+          | Protein -> I.f_protein
+        let of_string = function
+          | "none" -> None
+          | "dna" | "DNA" -> DNA
+          | "protein" -> Protein
+          | s -> Exception.raise_unrecognized_initializer __FUNCTION__ "linter" s
+        let to_string = function
+          | None -> "none"
+          | DNA -> "dna"
+          | Protein -> "protein"
+      end
+    module Bytes = Make (
+      struct
+        type fun_t = bytes_t
+        let f_none = none_bytes
+        let f_dna = dnaize_bytes
+        let f_protein = proteinize_bytes
+      end
+    )
+    module String = Make (
+      struct
+        type fun_t = string_t
+        let f_none = none
+        let f_dna = dnaize
+        let f_protein = proteinize
+      end
+    )
   end
 
 module Types =
@@ -198,11 +272,11 @@ module Types =
       try
         let fields = String.Split.on_char_as_array ':' s in
         if Array.length fields <> 3 then
-          raise Exit; (* This one is OK as it will be caught *)
+          raise_notrace Exit; (* This one is OK as it will be caught *)
         let str = strand_of_string fields.(1)
         and pos = coord_of_string fields.(2) in
         if pos < 0 then
-          raise Exit; (* This one is OK as it will be caught *)
+          raise_notrace Exit; (* This one is OK as it will be caught *)
         { name = stranded_of_split str fields.(0); position = pos }
       with _ ->
         Exception.raise_unrecognized_initializer __FUNCTION__ "stranded pointer" s
@@ -280,7 +354,7 @@ module Junctions:
                   else
                     default_coverage in
                 if line.(0) <> line.(3) || dir_don <> dir_acc then
-                  raise Exit; (* This one is OK as it will be caught *)
+                  raise_notrace Exit; (* This one is OK as it will be caught *)
                 (Types.stranded_of_split dir_don line.(0)), pos_don, pos_acc, cov
               with _ ->
                 error "Incorrect syntax"
@@ -555,7 +629,7 @@ Printf.eprintf "<<<Start=%d\n%!" start;
 Printf.eprintf "%d>>>%s\n%!" pos (Buffer.contents buf);
 *)
                 if IntSet.mem (start + pos) stops then
-                  raise Exit)  (* This one is OK as it will be caught *)
+                  raise_notrace Exit)  (* This one is OK as it will be caught *)
               (String.sub s start (String.length s - start))
           with Exit ->
 (*
@@ -604,7 +678,7 @@ module Reference:
                 try
                   let len = Array.length line in
                   if len <> 2 then
-                    raise Exit; (* This one is OK as it will be caught *)
+                    raise_notrace Exit; (* This one is OK as it will be caught *)
                   let table = Translation.of_string line.(1) in
                   line.(0), table
                 with _ ->

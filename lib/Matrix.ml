@@ -346,16 +346,8 @@ include (
     module Exception =
       struct
         include Exception
-        let raise_incompatible_geometries __FUNCTION__ sa1 sa2 =
-          Exception.raise __FUNCTION__ IO_Format begin
-            let res = Buffer.create 1024 in
-            Buffer.add_string res "Matrices have incompatible column names\n [";
-            Array.iter (fun s -> Printf.sprintf " '%s'" s |> Buffer.add_string res) sa1;
-            Buffer.add_string res " ]\n [";
-            Array.iter (fun s -> Printf.sprintf " '%s'" s |> Buffer.add_string res) sa2;
-            Buffer.add_string res " ]\n";
-            Buffer.contents res
-          end
+        let raise_incompatible_geometries __FUNCTION__ =
+          Exception.raise_incompatible_arrays __FUNCTION__ "matrices" "column names" Array.iter Fun.id
       end
     let merge_rowwise ?(verbose = false) m1 m2 =
       let merged_col_names =
@@ -510,7 +502,7 @@ include (
                 incr i;
                 if !i = row_num then begin
                   end_reached := true;
-                  raise Exit
+                  raise_notrace Exit (* This one is OK as it will be caught *)
                 end;
                 j := 0
               end;

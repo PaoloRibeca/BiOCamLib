@@ -35,13 +35,15 @@ type to_do_t =
 module Defaults =
   struct
     let precision = 10
+    (*let threads = Processes.Parallel.get_nproc ()*)
+    let verbose = false
   end
 
 module Parameters =
   struct
     let program = ref []
-    (*let threads = Processes.Parallel.get_nproc () |> ref*)
-    let verbose = ref false
+    (*let threads = ref Defaults.threads*)
+    let verbose = ref Defaults.verbose
   end
 
 let info = {
@@ -106,7 +108,7 @@ let () =
     [ "--precision" ],
       Some "<positive_integer>",
       [ "set the number of precision digits to be used when outputting numbers" ],
-      TA.Default (fun () -> string_of_int Defaults.precision),
+      TA.Default (string_of_int Defaults.precision |> Fun.const),
       (fun _ -> Set_precision (TA.get_parameter_int_pos ()) |> List.accum Parameters.program);
     [ "-O"; "--Output" ],
       Some "<splits_file_prefix>",
@@ -120,13 +122,13 @@ let () =
       Some "<computing_threads>",
       [ "number of concurrent computing threads to be spawned";
         " (default automatically detected from your configuration)" ],
-      TA.Default (fun () -> string_of_int !Parameters.threads),
+      TA.Default (string_of_int Defaults.threads |> Fun.const),
       (fun _ -> Parameters.threads := TA.get_parameter_int_pos ());
 *)
     [ "-v"; "--verbose" ],
       None,
       [ "set verbose execution (global option)" ],
-      TA.Default (fun () -> string_of_bool !Parameters.verbose),
+      TA.Default (Fun.const "quiet execution"),
       (fun _ -> Parameters.verbose := true);
     [ "-V"; "--version" ],
       None,

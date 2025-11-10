@@ -22,9 +22,16 @@
 open BiOCamLib
 open Better
 
-module Parameters =
+module Defaults =
   struct
-    let [@warning "-32"] verbose = ref false
+    let threads = Processes.Parallel.get_nproc ()
+    let verbose = false
+  end
+
+module [@warning "-32"] Parameters =
+  struct
+    let threads = ref Defaults.threads
+    let verbose = ref Defaults.verbose
   end
 
 let info = {
@@ -45,12 +52,12 @@ let () =
     [ "-t"; "--threads" ],
       Some "<positive_integer>",
       [ "number of concurrent computing threads to be spawned" ],
-      TA.Default (fun () -> string_of_int !Parameters.threads),
+      TA.Default (string_of_int Defaults.threads |> Fun.const),
       (fun _ -> Parameters.threads := TA.get_parameter_int_pos ());
     [ "-v"; "--verbose" ],
       None,
       [ "set verbose execution" ],
-      TA.Default (fun () -> string_of_bool !Parameters.verbose),
+      TA.Default (Fun.const "quiet execution"),
       (fun _ -> Parameters.verbose := true);
     *)
     [ "-V"; "--version" ],

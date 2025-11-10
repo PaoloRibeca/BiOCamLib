@@ -22,11 +22,18 @@
 open BiOCamLib
 open Better
 
+module Defaults =
+  struct
+    let max_distances = false (* One usually wants to compute minimum distances *)
+    let threads = Processes.Parallel.get_nproc ()
+    let verbose = false
+  end
+
 module Parameters =
   struct
-    let max_distances = ref false (* One usually wants to compute minimum distances *)
-    let threads = Processes.Parallel.get_nproc () |> ref
-    let verbose = ref false
+    let max_distances = ref Defaults.max_distances
+    let threads = ref Defaults.threads
+    let verbose = ref Defaults.verbose
   end
 
 let info = {
@@ -46,19 +53,19 @@ let () =
     [ "-M"; "--max-distances"; "--maximum-distances"; "--longest-path-distances" ],
       None,
       [ "compute longest- rather than shortest-path distances" ],
-      TA.Default (fun () -> "compute shortest-path distances"),
+      TA.Default (Fun.const "compute shortest-path distances"),
       (fun _ -> Parameters.max_distances := true);
     TA.make_separator "Miscellaneous";
     [ "-t"; "-T"; "--threads" ],
       Some "<computing_threads>",
       [ "number of concurrent computing threads to be spawned";
         " (default automatically detected from your configuration)" ],
-      TA.Default (fun () -> string_of_int !Parameters.threads),
+      TA.Default (string_of_int Defaults.threads |> Fun.const),
       (fun _ -> Parameters.threads := TA.get_parameter_int_pos ());
     [ "-v"; "--verbose" ],
       None,
       [ "set verbose execution (global option)" ],
-      TA.Default (fun () -> string_of_bool !Parameters.verbose),
+      TA.Default (string_of_bool Defaults.verbose |> Fun.const),
       (fun _ -> Parameters.verbose := true);
     [ "-V"; "--version" ],
       None,
