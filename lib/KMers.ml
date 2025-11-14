@@ -1,5 +1,5 @@
 (*
-    KMers.ml -- (c) 2020-2024 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    KMers.ml -- (c) 2020-2025 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     This file is part of BiOCamLib, the OCaml foundations upon which
     a number of the bioinformatics tools I developed are built.
@@ -416,6 +416,7 @@ module Iterator:
             }
           end
         let make c =
+          (*let timer_id_content = Tools.Timer.of_string "KMers.Iterator.Content" in*)
           let case_sensitivity_to_keep_lowercase = function
             | CaseSensitivity.Insensitive -> false
             | CaseSensitivity.Sensitive -> true in
@@ -426,6 +427,11 @@ module Iterator:
             { Flags.unknown_char_action; rc_symmetric_hash = false }
           | DNA (Double, case_sensitivity, unknown_char_action) ->
             let keep_lowercase = case_sensitivity_to_keep_lowercase case_sensitivity in
+            (*(fun s ->
+              Tools.Timer.start timer_id_content;
+              let res = Sequences.Lint.dnaize ~keep_lowercase ~keep_dashes:false s in
+              Tools.Timer.stop timer_id_content;
+              res),*)
             Sequences.Lint.dnaize ~keep_lowercase ~keep_dashes:false,
             { unknown_char_action; rc_symmetric_hash = true }
           | Protein unknown_char_action ->
@@ -493,7 +499,7 @@ module Iterator:
               trie := Tools.Trie.add !trie s)
             dict;
           let trie = !trie in
-          (*let timer_id_encoder = Tools.Timer.of_string "KMers.Iterator.Encoder:encode"
+          (*let timer_id_encoder = Tools.Timer.of_string "KMers.Iterator.Encoder"
           and timer_id_trie = Tools.Timer.of_string "KMers.Iterator.Encoder:trie"
           and timer_id_array = Tools.Timer.of_string "KMers.Iterator.Encoder:array" in*)
           Tools.Trie.length trie,
@@ -584,7 +590,9 @@ module Iterator:
           match h with
           | K_mers k ->
             let res = Impl.Accumulator1.create 1024 and cntr = ref 0 in
+            (*let timer_id_finalizer = Tools.Timer.of_string "KMers.Iterator.Finalizer" in*)
             let finalizer () =
+              (*Tools.Timer.start timer_id_finalizer;*)
               let full = Impl.Accumulator1.length res > max_results_size in
               if verbose && full then
                 Printf.eprintf "%s\r(%s): Maximum size (%d) reached. Outputting and removing hashes...%!"
@@ -595,7 +603,8 @@ module Iterator:
                 res;
               Impl.Accumulator1.reset res;
               if verbose && full then
-                Printf.eprintf " done.\n%!" in
+                Printf.eprintf " done.\n%!"(*;
+              Tools.Timer.stop timer_id_finalizer*) in
             let add h w =
               incr cntr;
               if max_results_size > 0 && !cntr mod 1000 = 0 && Impl.Accumulator1.length res > max_results_size then
@@ -605,8 +614,8 @@ module Iterator:
                 ref w |> Impl.Accumulator1.add res h
               | Some n ->
                 n := !n +. w in
-            (*let timer_id_accumulate = Tools.Timer.of_string "KMers.Iterator.Encoder:accumulate" in*)
             (* Accumulator *)
+            (*let timer_id_accumulate = Tools.Timer.of_string "KMers.Iterator.Accumulator" in*)
             (fun ?(weight = 1.) ia ->
               (*Tools.Timer.start timer_id_accumulate;*)
               let l = Array.length ia in
@@ -695,12 +704,15 @@ module Iterator:
       let n_symbols, encoder = Encoder.make ~verbose flags encoder in
       let accumulator, finalizer =
         Hasher.make ~max_results_size ~verbose flags n_symbols hasher f in
+      (*let timer_id_all = Tools.Timer.of_string "KMers.Iterator" in*)
       (fun ?(weight = 1.) s ->
+        (*Tools.Timer.start timer_id_all;*)
         content s |>
           (fun s ->
             encoder s |>
               List.iter (accumulator ~weight));
-        finalizer ())
+        finalizer ()(*;
+        Tools.Timer.stop timer_id_all*))
   end
 
 (* TODO: THIS ONE SHOULD PROBABLY BE REWRITTEN *)
