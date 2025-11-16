@@ -108,9 +108,9 @@ module type Hash_t =
     (* Return the hash as a string, for instance in hex form *)
     val to_string: t -> string
   end
-module IntHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = int =
+module IntHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = Int.t =
   struct
-    type t = int
+    type t = Int.t
     let bits =
       (* We need one additional bit to be able to compute the mask *)
       if Bits.n < 1 || Bits.n >= Sys.int_size then
@@ -125,7 +125,7 @@ module IntHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = 
       K.n
     let mask = 1 lsl (bits * k) - 1
     let max_symbol = 1 lsl bits - 1
-    let symbol_complement s = max_symbol - s
+    let symbol_complement s = max_symbol - s [@@inline]
     let compute a idx =
       let l = Array.length a in
       if idx + k > l then
@@ -139,9 +139,9 @@ module IntHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = 
         res := (!res lsl bits) + s
       done;
       !res
-    let add_symbol_right h s = ((h lsl bits) lor s) land mask
+    let add_symbol_right h s = ((h lsl bits) lor s) land mask [@@inline]
     let left_shift = bits * (k - 1)
-    let add_symbol_left h s = (s lsl left_shift) lor (h lsr bits)
+    let add_symbol_left h s = (s lsl left_shift) lor (h lsr bits) [@@inline]
     let rc h =
       let h = ref h and res = ref 0 in
       for _ = 1 to k do
@@ -152,8 +152,33 @@ module IntHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = 
     module Accumulator1 = IntHashtbl
     type tt = t * t
     module Accumulator2 = Hashtbl.Make (MakeHashable (struct type t = tt end))
-    let hex_format = Scanf.format_from_string (Printf.sprintf "%%0%dx" ((bits * k + 3) / 4)) "%d"
-    let to_string = Printf.sprintf hex_format
+    let ceil_log16 = (bits * k + 3) / 4
+    let to_string h =
+      let res = Bytes.create ceil_log16 and rem = ref h in
+      for i = 0 to ceil_log16 - 1 do
+        Bytes.(res.@(i) <- begin
+          match !rem land 15 with
+          | 0 -> '0'
+          | 1 -> '1'
+          | 2 -> '2'
+          | 3 -> '3'
+          | 4 -> '4'
+          | 5 -> '5'
+          | 6 -> '6'
+          | 7 -> '7'
+          | 8 -> '8'
+          | 9 -> '9'
+          | 10 -> 'a'
+          | 11 -> 'b'
+          | 12 -> 'c'
+          | 13 -> 'd'
+          | 14 -> 'e'
+          | 15 -> 'f'          
+          | _ -> assert false
+        end);
+        rem := !rem lsr 4
+      done;
+      Bytes.to_string res
   end
 module IntZHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = IntZ.t =
   struct
@@ -285,14 +310,14 @@ module Iterator:
              to weigh k-mers based on coverage.
            The finaliser applies the iterator to the hashes accumulated so far
             and deallocates storage, pretty much as what happens when flushing *)
-        val make: ?max_results_size:int -> ?verbose:bool ->
+        val make: ?verbose:bool ->
                   Content.Flags.t -> int -> t -> (string -> float -> unit) ->
                   (?weight:float -> int array -> unit) * (unit -> unit)
       end
-    type t = ?weight:float -> string -> unit
+    (* The two functions are accumulator and finaliser *)
+    type t = (?weight:float -> string -> unit) * (unit -> unit)
     (* The last argument is the iterator function *)
-    val make: ?max_results_size:int -> ?verbose:bool ->
-              Content.t -> Hasher.t -> (string -> float -> unit) -> t
+    val make: ?verbose:bool -> Content.t -> Hasher.t -> (string -> float -> unit) -> t
   end
 = struct
     module Content =
@@ -416,7 +441,6 @@ module Iterator:
             }
           end
         let make c =
-          (*let timer_id_content = Tools.Timer.of_string "KMers.Iterator.Content" in*)
           let case_sensitivity_to_keep_lowercase = function
             | CaseSensitivity.Insensitive -> false
             | CaseSensitivity.Sensitive -> true in
@@ -427,11 +451,6 @@ module Iterator:
             { Flags.unknown_char_action; rc_symmetric_hash = false }
           | DNA (Double, case_sensitivity, unknown_char_action) ->
             let keep_lowercase = case_sensitivity_to_keep_lowercase case_sensitivity in
-            (*(fun s ->
-              Tools.Timer.start timer_id_content;
-              let res = Sequences.Lint.dnaize ~keep_lowercase ~keep_dashes:false s in
-              Tools.Timer.stop timer_id_content;
-              res),*)
             Sequences.Lint.dnaize ~keep_lowercase ~keep_dashes:false,
             { unknown_char_action; rc_symmetric_hash = true }
           | Protein unknown_char_action ->
@@ -443,7 +462,17 @@ module Iterator:
           | Text (CaseSensitivity.Sensitive, unknown_char_action, _) ->
             Fun.id,
             { unknown_char_action; rc_symmetric_hash = false }
-        end
+        (* We wrap the function to provide instrumentation *)
+        let make c =
+          let timer_id_content = Tools.Timer.of_string "KMers.Iterator.Linter" in
+          let linter, flags = make c in
+          (fun s ->
+            Tools.Timer.start timer_id_content;
+            let res = linter s in
+            Tools.Timer.stop timer_id_content;
+            res),
+          flags
+      end
     module Encoder =
       struct
         type t =
@@ -499,12 +528,10 @@ module Iterator:
               trie := Tools.Trie.add !trie s)
             dict;
           let trie = !trie in
-          (*let timer_id_encoder = Tools.Timer.of_string "KMers.Iterator.Encoder"
-          and timer_id_trie = Tools.Timer.of_string "KMers.Iterator.Encoder:trie"
-          and timer_id_array = Tools.Timer.of_string "KMers.Iterator.Encoder:array" in*)
+          let timer_id_encoder = Tools.Timer.of_string "KMers.Iterator.Encoder" in
           Tools.Trie.length trie,
           (fun s ->
-            (*Tools.Timer.start timer_id_encoder;*)
+            Tools.Timer.start timer_id_encoder;
             let l_src = String.length s in
             let current = Array.make l_src 0
             and i_src = ref 0 and l_dst = ref 0 and res = ref [] in
@@ -514,9 +541,7 @@ module Iterator:
                 l_dst := 0
               end in
             while !i_src < l_src do
-              (*Tools.Timer.start timer_id_trie;*)
               let n, id = Tools.Trie.longest_match trie s !i_src in
-              (*Tools.Timer.stop timer_id_trie;*)
               if n = 0 then begin
                 (* Case of no dictionary word found - what we do depends on the flags *)
                 match flags.Content.Flags.unknown_char_action with
@@ -530,9 +555,7 @@ module Iterator:
                 | Error ->
                   Exception.raise_unrecognized_initializer __FUNCTION__ "char" (string_of_char s.[!i_src])
               end else begin
-                (*Tools.Timer.start timer_id_array;*)
                 current.(!l_dst) <- id;
-                (*Tools.Timer.stop timer_id_array;*)
                 i_src := !i_src + n;
                 incr l_dst
               end
@@ -545,7 +568,7 @@ module Iterator:
               !res;
             Printf.printf " )\n%!";
             *)
-            (*Tools.Timer.stop timer_id_encoder;*)
+            Tools.Timer.stop timer_id_encoder;
             !res)
       end
     module Hasher =
@@ -567,7 +590,7 @@ module Iterator:
             Printf.sprintf "k-mers(%d)" k
           | Gapped (k, g) ->
             Printf.sprintf "gapped(%d,%d)" k g
-        let make ?(max_results_size = 0) ?(verbose = false) flags n_symbols h f =
+        let make ?(verbose = false) flags n_symbols h f =
           let impl =
             let n_bits =
               assert (n_symbols > 0);
@@ -589,35 +612,18 @@ module Iterator:
           let module Impl = (val impl: Hash_t) in
           match h with
           | K_mers k ->
-            let res = Impl.Accumulator1.create 1024 and cntr = ref 0 in
-            (*let timer_id_finalizer = Tools.Timer.of_string "KMers.Iterator.Finalizer" in*)
-            let finalizer () =
-              (*Tools.Timer.start timer_id_finalizer;*)
-              let full = Impl.Accumulator1.length res > max_results_size in
-              if verbose && full then
-                Printf.eprintf "%s\r(%s): Maximum size (%d) reached. Outputting and removing hashes...%!"
-                  String.TermIO.clear __FUNCTION__ max_results_size;
-              Impl.Accumulator1.iter
-                (fun h n ->
-                  f (Impl.to_string h) !n)
-                res;
-              Impl.Accumulator1.reset res;
-              if verbose && full then
-                Printf.eprintf " done.\n%!"(*;
-              Tools.Timer.stop timer_id_finalizer*) in
+            let res = Impl.Accumulator1.create 128 in
             let add h w =
-              incr cntr;
-              if max_results_size > 0 && !cntr mod 1000 = 0 && Impl.Accumulator1.length res > max_results_size then
-                finalizer ();
               match Impl.Accumulator1.find_opt res h with
               | None ->
                 ref w |> Impl.Accumulator1.add res h
               | Some n ->
-                n := !n +. w in
+                n := !n +. w
+              [@@inline] in
             (* Accumulator *)
-            (*let timer_id_accumulate = Tools.Timer.of_string "KMers.Iterator.Accumulator" in*)
+            let timer_id_accumulate = Tools.Timer.of_string "KMers.Iterator.Accumulator" in
             (fun ?(weight = 1.) ia ->
-              (*Tools.Timer.start timer_id_accumulate;*)
+              Tools.Timer.start timer_id_accumulate;
               let l = Array.length ia in
               if l >= k then begin
                 let current = Impl.compute ia 0 |> ref in
@@ -635,36 +641,35 @@ module Iterator:
                     add !current weight;
                 done
               end;
-              (*Tools.Timer.stop timer_id_accumulate*)),
+              Tools.Timer.stop timer_id_accumulate),
             (* Finaliser *)
-            finalizer
-          | Gapped (k, g) ->
-            let res = Impl.Accumulator2.create 1024 and cntr = ref 0 in
-            let finalizer () =
-              let full = Impl.Accumulator2.length res > max_results_size in
-              if verbose && full then
-                Printf.eprintf "%s\r(%s): Maximum size (%d) reached. Outputting and removing hashes...%!"
-                  String.TermIO.clear __FUNCTION__ max_results_size;
-              Impl.Accumulator2.iter
-                (fun (h1, h2) n ->
-                  f (Impl.to_string h1 ^ "_" ^ Impl.to_string h2) !n)
+            let timer_id_finalizer = Tools.Timer.of_string "KMers.Iterator.Finalizer" in
+            (fun () ->
+              Tools.Timer.start timer_id_finalizer;
+              Impl.Accumulator1.iter
+                (fun h n ->
+                  if !n > 0. then begin
+                    f (Impl.to_string h) !n;
+                    n := 0.
+                  end)
                 res;
-              Impl.Accumulator2.reset res;
-              if verbose && full then
-                Printf.eprintf " done.\n%!" in
+              (*Impl.Accumulator1.clear res;*)
+              Tools.Timer.stop timer_id_finalizer)
+          | Gapped (k, g) ->
+            let res = Impl.Accumulator2.create 128 in
             let add hh w =
-              incr cntr;
-              if max_results_size > 0 && !cntr mod 1000 = 0 && Impl.Accumulator2.length res > max_results_size then
-                finalizer ();
               match Impl.Accumulator2.find_opt res hh with
               | None ->
                 ref w |> Impl.Accumulator2.add res hh
               | Some n ->
-                n := !n +. w in
+                n := !n +. w
+              [@@inline] in
             (* Here we just have to simulate a longer k *)
             let eff_k = 2 * k + g and offs = k + g in
             (* Accumulator *)
+            let timer_id_accumulate = Tools.Timer.of_string "KMers.Iterator.Accumulator" in
             (fun ?(weight = 1.) ia ->
+              Tools.Timer.start timer_id_accumulate;
               let l = Array.length ia in
               if l >= eff_k then begin
                 let current1 = Impl.compute ia 0 |> ref
@@ -693,26 +698,37 @@ module Iterator:
                   end else
                     add (!current1, !current2) weight
                 done
-              end),
+              end;
+              Tools.Timer.stop timer_id_accumulate),
             (* Finaliser *)
-            finalizer
+            let timer_id_finalizer = Tools.Timer.of_string "KMers.Iterator.Finalizer" in
+            (fun () ->
+              Tools.Timer.start timer_id_finalizer;
+              Impl.Accumulator2.iter
+                (fun (h1, h2) n ->
+                  if !n > 0. then begin
+                    f (Impl.to_string h1 ^ "_" ^ Impl.to_string h2) !n;
+                    n := 0.
+                  end)
+                res;
+              (*Impl.Accumulator2.clear res;*)
+              Tools.Timer.stop timer_id_finalizer)
       end
-    type t = ?weight:float -> string -> unit
-    let make ?(max_results_size = 0) ?(verbose = false) content hasher f =
+    type t = (?weight:float -> string -> unit) * (unit -> unit)
+    let make ?(verbose = false) content hasher f =
       let encoder = Encoder.of_content content
-      and content, flags = Content.make content in
+      and linter, flags = Content.make content in
       let n_symbols, encoder = Encoder.make ~verbose flags encoder in
-      let accumulator, finalizer =
-        Hasher.make ~max_results_size ~verbose flags n_symbols hasher f in
-      (*let timer_id_all = Tools.Timer.of_string "KMers.Iterator" in*)
+      let accumulator, finalizer = Hasher.make ~verbose flags n_symbols hasher f in
+      let timer_id_iterator = Tools.Timer.of_string "KMers.Iterator.Iterator" in
       (fun ?(weight = 1.) s ->
-        (*Tools.Timer.start timer_id_all;*)
-        content s |>
+        Tools.Timer.start timer_id_iterator;
+        linter s |>
           (fun s ->
             encoder s |>
               List.iter (accumulator ~weight));
-        finalizer ()(*;
-        Tools.Timer.stop timer_id_all*))
+        Tools.Timer.stop timer_id_iterator),
+      finalizer
   end
 
 (* TODO: THIS ONE SHOULD PROBABLY BE REWRITTEN *)
