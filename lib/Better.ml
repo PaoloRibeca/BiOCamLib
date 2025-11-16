@@ -32,63 +32,6 @@ let min_max a b =
 
 let string_of_char = String.make 1
 
-module Exception =
-  struct
-    module Kind =
-      struct
-        type t =
-          | Initialize
-          | IO_Format
-          | Algorithm
-      end
-    (* Kind, __FUNCTION__, message *)
-    type t = Kind.t * string * string
-    exception E of t
-    let print = function
-    | E (_, __FUNCTION__, message) ->
-      Printf.eprintf "(%s): %s\n%!" __FUNCTION__ message
-    | _ ->
-      assert false
-    let to_string = function
-    | E (_, __FUNCTION__, message) ->
-      Printf.sprintf "(%s): %s" __FUNCTION__ message
-    | _ ->
-      assert false
-    (* Install Printexc printer for this exception type *)
-    let () =
-      Printexc.register_printer
-        (function
-          | E _ as e -> Some (to_string e)
-          | _ -> None)
-    let fail e =
-      to_string e |> failwith
-    let raise __FUNCTION__ kind message =
-      E (kind, __FUNCTION__, message) |> raise
-    let raise_index_out_of_range __FUNCTION__ i what l =
-      raise __FUNCTION__ Algorithm (Printf.sprintf "Index %d is out of range (%s length=%d)" i what l)
-    let raise_object_is_empty __FUNCTION__ what =
-      raise __FUNCTION__ Algorithm (Printf.sprintf "The %s is empty" what)
-    let raise_incompatible_lengths __FUNCTION__ what l1 l2 =
-      raise __FUNCTION__ IO_Format (Printf.sprintf "The two %s have incompatible lengths (%d, %d)" what l1 l2)
-    let raise_unrecognized_initializer __FUNCTION__ what init =
-      raise __FUNCTION__ Initialize (Printf.sprintf "Unrecognized %s '%s'" what init)
-    let raise_incompatible_arrays __FUNCTION__ who what iter to_string a1 a2 =
-      raise __FUNCTION__ IO_Format begin
-        let res = Buffer.create 1024 in
-        Printf.sprintf "The two %s have incompatible %s\n [" who what |> Buffer.add_string res;
-        iter (fun s -> to_string s |> Printf.sprintf " '%s'" |> Buffer.add_string res) a1;
-        Buffer.add_string res " ]\n [";
-        iter (fun s -> to_string s |> Printf.sprintf " '%s'" |> Buffer.add_string res) a2;
-        Buffer.add_string res " ]\n";
-        Buffer.contents res
-      end
-    let raise_incompatible_archive_version __FUNCTION__ found expected =
-      raise __FUNCTION__ IO_Format
-        (Printf.sprintf "Incompatible archive version (found '%s', expected '%s')" found expected)
-    let raise_unexpected_end_of_output __FUNCTION__ =
-      raise __FUNCTION__ IO_Format (Printf.sprintf "Unexpected end of output file")
-  end
-
 module Option:
   sig
     val unbox: 'a option -> 'a
@@ -310,6 +253,172 @@ module String:
       end
   end
 
+module Printf:
+  sig
+    include module type of Printf
+    type mode_t =
+      | Time
+      | Space
+      | Empty
+    val tfprintf: ?mode:mode_t -> out_channel -> ('a, out_channel, unit) format -> 'a
+    val tprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
+    val teprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
+    val pfprintf: out_channel -> ('a, out_channel, unit) format -> 'a
+    val pprintf: ('a, out_channel, unit) format -> 'a
+    val peprintf: ('a, out_channel, unit) format -> 'a
+    val ptfprintf: ?mode:mode_t -> out_channel -> ('a, out_channel, unit) format -> 'a
+    val ptprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
+    val pteprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
+    (* Channel printers for String.TermIO *)
+    module TermIO:
+      sig
+        val bold: out_channel -> string -> unit
+        val italic: out_channel -> string -> unit
+        val under: out_channel -> string -> unit
+        val grey: out_channel -> string -> unit
+        val red: out_channel -> string -> unit
+        val green: out_channel -> string -> unit
+        val blue: out_channel -> string -> unit
+        val clear: out_channel -> unit
+        val column: int -> out_channel -> unit
+        val return: out_channel -> unit
+      end
+  end
+= struct
+    include Printf
+    type mode_t =
+      | Time
+      | Space
+      | Empty
+    let tfprintf ?(mode = Time) ch =
+      let t = Unix.localtime (Unix.time ()) in
+      begin match mode with
+      | Time ->
+        Printf.sprintf "%s %s %2d %02d:%02d:%02d %4d" begin
+          match t.Unix.tm_wday with
+          | 0 -> "Sun" | 1 -> "Mon" | 2 -> "Tue" | 3 -> "Wed"
+          | 4 -> "Thu" | 5 -> "Fri" | 6 -> "Sat"
+          | _ -> assert false
+        end begin
+          match t.Unix.tm_mon with
+          | 0 -> "Jan" | 1 -> "Feb" | 2 -> "Mar" | 3 -> "Apr"
+          | 4 -> "May" | 5 -> "Jun" | 6 -> "Jul" | 7 -> "Aug"
+          | 8 -> "Sep" | 9 -> "Oct" | 10 -> "Nov" | 11 -> "Dec"
+          | _ -> assert false
+        end t.Unix.tm_mday t.Unix.tm_hour t.Unix.tm_min t.Unix.tm_sec (1900 + t.Unix.tm_year)
+          |> String.TermIO.blue |> Printf.fprintf ch "%s -- "
+      | Space -> Printf.fprintf ch "                         -- "
+      | Empty -> ()
+      end;
+      Printf.fprintf ch
+    let tprintf ?(mode = Time) = tfprintf ~mode stdout
+    let teprintf ?(mode = Time) = tfprintf ~mode stderr
+    let proto_pfprintf ?(mode = Time) f ch =
+      begin match mode with
+      | Time -> Unix.getpid () |> Printf.sprintf "%07d" |> String.TermIO.blue |> Printf.fprintf ch "[#%s]: "
+      | Space -> Printf.fprintf ch "            "
+      | Empty -> ()
+      end;
+      f ch
+    let pfprintf ch = proto_pfprintf ~mode:Time Printf.fprintf ch
+    let pprintf w = pfprintf stdout w
+    let peprintf w = pfprintf stderr w
+    let ptfprintf ?(mode = Time) = proto_pfprintf ~mode (tfprintf ~mode)
+    let ptprintf ?(mode = Time) = ptfprintf ~mode stdout
+    let pteprintf ?(mode = Time) = ptfprintf ~mode stderr
+    module TermIO =
+      struct
+        let _printer f = fun ch s -> f s |> Printf.fprintf ch "%s"
+        let bold = _printer String.TermIO.bold
+        let italic = _printer String.TermIO.italic
+        let under = _printer String.TermIO.under
+        let grey = _printer String.TermIO.grey
+        let red = _printer String.TermIO.red
+        let green = _printer String.TermIO.green
+        let blue = _printer String.TermIO.blue
+        let clear ch = Printf.fprintf ch "%s" String.TermIO.clear
+        let column n ch = String.TermIO.column n |> Printf.fprintf ch "%s"
+        let return ch = Printf.fprintf ch "%s" String.TermIO.return
+      end
+  end
+
+module Exception =
+  struct
+    module Kind =
+      struct
+        type t =
+          | Initialize
+          | IO_Format
+          | Algorithm
+          | End_of_output
+      end
+    (* Kind, __FUNCTION__, message *)
+    type t = Kind.t * string * string
+    exception E of t
+    let print = function
+    | E (_, __FUNCTION__, message) ->
+      Printf.eprintf "(%s): %s\n%!" __FUNCTION__ message
+    | _ ->
+      assert false
+    let to_string = function
+    | E (_, __FUNCTION__, message) ->
+      Printf.sprintf "(%s): %s" __FUNCTION__ message
+    | _ ->
+      assert false
+    (* Install Printexc printer for this exception type *)
+    let () =
+      Printexc.register_printer
+        (function
+          | E _ as e -> Some (to_string e)
+          | _ -> None)
+    let fail e =
+      to_string e |> failwith
+    let raise __FUNCTION__ kind message =
+      E (kind, __FUNCTION__, message) |> raise
+    let raise_index_out_of_range __FUNCTION__ i what l =
+      raise __FUNCTION__ Algorithm (Printf.sprintf "Index %d is out of range (%s length=%d)" i what l)
+    let raise_object_is_empty __FUNCTION__ what =
+      raise __FUNCTION__ Algorithm (Printf.sprintf "The %s is empty" what)
+    let raise_incompatible_lengths __FUNCTION__ what l1 l2 =
+      raise __FUNCTION__ IO_Format (Printf.sprintf "The two %s have incompatible lengths (%d, %d)" what l1 l2)
+    let raise_unrecognized_initializer __FUNCTION__ what init =
+      raise __FUNCTION__ Initialize (Printf.sprintf "Unrecognized %s '%s'" what init)
+    let raise_incompatible_arrays __FUNCTION__ who what iter to_string a1 a2 =
+      raise __FUNCTION__ IO_Format begin
+        let res = Buffer.create 1024 in
+        Printf.sprintf "The two %s have incompatible %s\n [" who what |> Buffer.add_string res;
+        iter (fun s -> to_string s |> Printf.sprintf " '%s'" |> Buffer.add_string res) a1;
+        Buffer.add_string res " ]\n [";
+        iter (fun s -> to_string s |> Printf.sprintf " '%s'" |> Buffer.add_string res) a2;
+        Buffer.add_string res " ]\n";
+        Buffer.contents res
+      end
+    let raise_incompatible_archive_version __FUNCTION__ found expected =
+      raise __FUNCTION__ IO_Format
+        (Printf.sprintf "Incompatible archive version (found '%s', expected '%s')" found expected)
+    let raise_unexpected_end_of_output __FUNCTION__ =
+      raise __FUNCTION__ End_of_output (Printf.sprintf "Unexpected end of output file")
+    let catch_unexpected_end_of_output __FUNCTION__ f =
+      try
+        f ()
+      with End_of_file ->
+        raise_unexpected_end_of_output __FUNCTION__
+    let handle __FUNCTION__ usage unexpected = function
+    | E (Kind.End_of_output, _, _) as e ->
+      if Unix.getppid () = 1 then
+        to_string e |> String.TermIO.red |> Printf.eprintf "(%s): FATAL: %s\n%!" __FUNCTION__
+    | E (Kind.Initialize, _, _) | E (Kind.IO_Format, _, _) as e ->
+      if Unix.getpid () = 1 then begin
+        usage ();
+        to_string e |> String.TermIO.red |> Printf.eprintf "(%s): FATAL: %s\n%!" __FUNCTION__
+      end
+    | exc ->
+      Printf.peprintf "(%s): %s\n%!" __FUNCTION__
+        ("FATAL: Uncaught exception: " ^ Printexc.to_string exc |> String.TermIO.red);
+      unexpected ();
+      Printexc.print_backtrace stderr
+  end
+
 module List:
   sig
     include module type of List
@@ -476,95 +585,6 @@ module Float:
             type 'a elt_tt = float
           end
         )
-      end
-  end
-
-module Printf:
-  sig
-    include module type of Printf
-    type mode_t =
-      | Time
-      | Space
-      | Empty
-    val tfprintf: ?mode:mode_t -> out_channel -> ('a, out_channel, unit) format -> 'a
-    val tprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
-    val teprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
-    val pfprintf: out_channel -> ('a, out_channel, unit) format -> 'a
-    val pprintf: ('a, out_channel, unit) format -> 'a
-    val peprintf: ('a, out_channel, unit) format -> 'a
-    val ptfprintf: ?mode:mode_t -> out_channel -> ('a, out_channel, unit) format -> 'a
-    val ptprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
-    val pteprintf: ?mode:mode_t -> ('a, out_channel, unit) format -> 'a
-    (* Channel printers for String.TermIO *)
-    module TermIO:
-      sig
-        val bold: out_channel -> string -> unit
-        val italic: out_channel -> string -> unit
-        val under: out_channel -> string -> unit
-        val grey: out_channel -> string -> unit
-        val red: out_channel -> string -> unit
-        val green: out_channel -> string -> unit
-        val blue: out_channel -> string -> unit
-        val clear: out_channel -> unit
-        val column: int -> out_channel -> unit
-        val return: out_channel -> unit
-      end
-  end
-= struct
-    include Printf
-    type mode_t =
-      | Time
-      | Space
-      | Empty
-    let tfprintf ?(mode = Time) ch =
-      let t = Unix.localtime (Unix.time ()) in
-      begin match mode with
-      | Time ->
-        Printf.sprintf "%s %s %2d %02d:%02d:%02d %4d" begin
-          match t.Unix.tm_wday with
-          | 0 -> "Sun" | 1 -> "Mon" | 2 -> "Tue" | 3 -> "Wed"
-          | 4 -> "Thu" | 5 -> "Fri" | 6 -> "Sat"
-          | _ -> assert false
-        end begin
-          match t.Unix.tm_mon with
-          | 0 -> "Jan" | 1 -> "Feb" | 2 -> "Mar" | 3 -> "Apr"
-          | 4 -> "May" | 5 -> "Jun" | 6 -> "Jul" | 7 -> "Aug"
-          | 8 -> "Sep" | 9 -> "Oct" | 10 -> "Nov" | 11 -> "Dec"
-          | _ -> assert false
-        end t.Unix.tm_mday t.Unix.tm_hour t.Unix.tm_min t.Unix.tm_sec (1900 + t.Unix.tm_year)
-          |> String.TermIO.blue |> Printf.fprintf ch "%s -- "
-      | Space -> Printf.fprintf ch "                         -- "
-      | Empty -> ()
-      end;
-      Printf.fprintf ch
-    let tprintf ?(mode = Time) = tfprintf ~mode stdout
-    let teprintf ?(mode = Time) = tfprintf ~mode stderr
-    let proto_pfprintf ?(mode = Time) f ch =
-      begin match mode with
-      | Time -> Unix.getpid () |> Printf.sprintf "%07d" |> String.TermIO.blue |> Printf.fprintf ch "[#%s]: "
-      | Space -> Printf.fprintf ch "            "
-      | Empty -> ()
-      end;
-      f ch
-    let pfprintf ch = proto_pfprintf ~mode:Time Printf.fprintf ch
-    let pprintf w = pfprintf stdout w
-    let peprintf w = pfprintf stderr w
-    let ptfprintf ?(mode = Time) = proto_pfprintf ~mode (tfprintf ~mode)
-    let ptprintf ?(mode = Time) = ptfprintf ~mode stdout
-    let pteprintf ?(mode = Time) = ptfprintf ~mode stderr
-    module TermIO =
-      struct
-        let _printer f = fun ch s -> f s |> Printf.fprintf ch "%s"
-        let bold = _printer String.TermIO.bold
-        let italic = _printer String.TermIO.italic
-        let under = _printer String.TermIO.under
-        let grey = _printer String.TermIO.grey
-        let red = _printer String.TermIO.red
-        let green = _printer String.TermIO.green
-        let blue = _printer String.TermIO.blue
-        let clear ch = Printf.fprintf ch "%s" String.TermIO.clear
-        let column n ch = String.TermIO.column n |> Printf.fprintf ch "%s"
-        let return ch = Printf.fprintf ch "%s" String.TermIO.return
       end
   end
 
@@ -756,8 +776,8 @@ module type HashableType_t =
 module IntHash: HashableType_t with type t = Int.t =
   struct
     type t = Int.t (* Our Int! *)
-    let equal (i:int) (j:int) = (i - j = 0) [@@inline] (*(i = j)*)
-    let hash (i:int) = i [@@inline] (* land max_int *)
+    let equal = Int.equal
+    let hash = Fun.id
   end
 
 module MakeHashable (T: TypeContainer_t): HashableType_t with type t = T.t =
