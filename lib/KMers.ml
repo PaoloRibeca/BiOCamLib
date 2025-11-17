@@ -102,9 +102,12 @@ module type Hash_t =
     (* Same but on the other end *)
     val add_symbol_left: t -> int -> t
     (* Suitable accumulators for values
-        (Accumulator1 for regular k-mers, Accumulator2 for gapped k-mers) *)
+        (Accumulator1 for regular k-mers, Accumulator2 for gapped k-mers).
+       For each of them we also need fast functions to compute the minimum value *)
     module Accumulator1: Hashtbl.S with type key = t
+    val min1: t -> t -> t
     module Accumulator2: Hashtbl.S with type key = t * t
+    val min2: (t * t) -> (t * t) -> (t * t)
     (* Return the hash as a string, for instance in hex form *)
     val to_string: t -> string
   end
@@ -150,8 +153,16 @@ module IntHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = 
       done;
       !res
     module Accumulator1 = IntHashtbl
+    let min1 = Int.min (* This is the same as (fun a b -> if a < b then a else b) *)
     type tt = t * t
     module Accumulator2 = Hashtbl.Make (MakeHashable (struct type t = tt end))
+    let min2 ((a1, a2) as a) ((b1, b2) as b) =
+      (* Unclear how to optimise this *)
+      if a1 < b1 || (a1 = b1 && a2 < b2) then
+        a
+      else
+        b
+      [@@inline]
     let ceil_log16 = (bits * k + 3) / 4
     let to_string h =
       let res = Bytes.create ceil_log16 and rem = ref h in
@@ -223,8 +234,16 @@ module IntZHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t =
       done;
       !res
     module Accumulator1 = IntZHashtbl
+    let min1 = IntZ.min
     type tt = t * t
     module Accumulator2 = Hashtbl.Make (MakeHashable (struct type t = tt end))
+    let min2 ((a1, a2) as a) ((b1, b2) as b) =
+      (* The condition would be a1 < b1 || (a1 = b1 && a2 < b2) *)
+      if IntZ.(lt a1 b1 || (equal a1 b1 && lt a2 b2)) then
+        a
+      else
+        b
+      [@@inline]
     let hex_format = Printf.sprintf "%%0%dx" ((bits * k + 3) / 4)
     let to_string = IntZ.format hex_format
   end
@@ -629,14 +648,14 @@ module Iterator:
                 let current = Impl.compute ia 0 |> ref in
                 let rc = Impl.rc !current |> ref in
                 if flags.Content.Flags.rc_symmetric_hash then
-                  add (min !current !rc) weight
+                  add (Impl.min1 !current !rc) weight
                 else
                   add !current weight;
                 for i = k to l - 1 do
                   current := Impl.add_symbol_right !current ia.(i);
                   if flags.rc_symmetric_hash then begin
                     rc := Impl.symbol_complement ia.(i) |> Impl.add_symbol_left !rc;
-                    add (min !current !rc) weight
+                    add (Impl.min1 !current !rc) weight
                   end else
                     add !current weight;
                 done
@@ -676,15 +695,9 @@ module Iterator:
                 and current2 = Impl.compute ia offs |> ref in
                 let rc1 = Impl.rc !current1 |> ref
                 and rc2 = Impl.rc !current2 |> ref in
-                let get_min () =
-                  let h1 = !current1 and h2 = !current2 and rc1 = !rc1 and rc2 = !rc2 in
-                  (* Here the equation is (h1|h2) <= rc(h1|h2) = rc(h2)|rc(h1) *)
-                  if h1 < rc2 || (h1 = rc2 && h2 <= rc1) then
-                    h1, h2
-                  else
-                    rc2, rc1 in
                 if flags.rc_symmetric_hash then
-                  add (get_min ()) weight
+                  (* Remember that rc(h1|h2) = rc(h2)|rc(h1) *)
+                  add (Impl.min2 (!current1, !current2) (!rc2, !rc1)) weight
                 else
                   add (!current1, !current2) weight;
                 for i = eff_k to l - 1 do
@@ -694,7 +707,8 @@ module Iterator:
                   if flags.rc_symmetric_hash then begin
                     rc1 := Impl.symbol_complement c1 |> Impl.add_symbol_left !rc1;
                     rc2 := Impl.symbol_complement c2 |> Impl.add_symbol_left !rc2;
-                    add (get_min ()) weight
+                    (* Remember that rc(h1|h2) = rc(h2)|rc(h1) *)
+                    add (Impl.min2 (!current1, !current2) (!rc2, !rc1)) weight
                   end else
                     add (!current1, !current2) weight
                 done
