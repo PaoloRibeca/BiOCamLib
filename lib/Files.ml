@@ -24,6 +24,24 @@
 
 open Better
 
+module Exception =
+  struct
+    include Exception
+    let raise_malformed ?(comment = "") ?(path2 = "") __FUNCTION__ line kind path =
+      let files =
+        if path2 = "" then
+          "file '" ^ path ^ "'"
+        else
+          "file(s) '" ^ path ^ "' and/or '" ^ path2 ^ "'"
+      and comment =
+        if comment <> "" then
+          " (" ^ comment ^ ")"
+        else
+          comment in
+      Exception.raise __FUNCTION__ IO_Format
+        (Printf.sprintf "On line %d: Malformed %s %s%s" line kind files comment)
+  end
+
 (* Abstraction for paths to be used in scripts *)
 module QuotedPath:
   sig
@@ -86,54 +104,149 @@ module QuotedPath:
     let get_in_directory directory basename extension = append_to (concat_to directory basename) extension
   end
 
-let raise_malformed ?(comment = "") ?(path2 = "") __FUNCTION__ line kind path =
-  let files =
-    if path2 = "" then
-      "file '" ^ path ^ "'"
-    else
-      "file(s) '" ^ path ^ "' and/or '" ^ path2 ^ "'"
-  and comment =
-    if comment <> "" then
-      " (" ^ comment ^ ")"
-    else
-      comment in
-  Exception.raise __FUNCTION__ IO_Format
-    (Printf.sprintf "On line %d: Malformed %s %s%s" line kind files comment)
+module Base =
+  struct
+    module Read =
+      struct
+        type t = {
+          tag: string;
+          seq: string;
+          qua: string (* Reads from FASTA files have empty qualities *)
+        }
+        let empty = { tag = ""; seq = ""; qua = "" } (* Immutable *)
+      end
+    type linter_t = string -> string
+    (* C++-style iterators *)
+    module Iterator =
+      struct
+        (* Initialiser type is linter and path *)
+        type init_t = linter_t * string
+        (* Return type is read ID, segment ID, and (tag, sequence, qualities) *)
+        type ret_t = int * int * Read.t
+        module type Type_t =
+          sig
+            include Iterator_t with type init_t := init_t and type ret_t := ret_t
+            (* Returns file path and number of parsed lines *)
+            val info: t -> string * int
+            (* Same as get(), but applies different functions to SE and PE records.
+               Helpful when processing files with unknown or variable format *)
+            val get_se_pe: t -> (ret_t -> unit) -> (ret_t -> ret_t -> unit) -> unit
+            val get_se_pe_and_incr: t -> (ret_t -> unit) -> (ret_t -> ret_t -> unit) -> unit
+          end
+        (* Here type 'a could be a string (path) or a format abstraction *)
+        type 'a t = ?linter:linter_t -> ?verbose:bool -> (ret_t -> unit) -> 'a -> unit
+        type 'a se_pe_t = ?linter:linter_t -> ?verbose:bool ->
+                          (ret_t -> unit) -> (ret_t -> ret_t -> unit) -> 'a -> unit
+      end
+  end
 
 module FASTA:
   sig
-    val iter: ?linter:(string -> string) -> ?verbose:bool -> (int -> string -> string -> unit) -> string -> unit
-    val parallel_iter: ?linter:(string -> string) -> ?buffered_chunks_per_thread:int ->
+    (* C++-style iterators *)
+    module Iterator: Base.Iterator.Type_t (* Iterator.t is opaque *)
+    (* OCaml-style iterators *)
+    val iter: string Base.Iterator.t
+    (* This file format also has a specialised parallelised high-throughput implementation *)
+    val parallel_iter: ?linter:Base.linter_t -> ?buffered_chunks_per_thread:int ->
                        ?max_memory:int -> ?verbose:bool ->
-      string -> (int -> (string * string) list -> 'a) -> ('a -> unit) -> int -> unit
+                       string -> (int -> (string * string) list -> 'a) -> ('a -> unit) -> int -> unit
   end
 = struct
+    module Iterator: Base.Iterator.Type_t =
+      struct
+        type t = {
+          linter: string -> string;
+          path: string;
+          input: in_channel;
+          mutable lines: int; (* Number of lines read so far *)
+          mutable eof_reached: bool;
+          (* *)
+          mutable progr: int; (* Sequence progressive (from 0) *)
+          mutable tag: string; (* Tag of sequence currently in buffer *)
+          mutable next: string; (* Tag of the next sequence *)
+          buf: Buffer.t;
+          mutable seq: string
+        }
+        let empty () = {
+          linter = Fun.id;
+          path = "";
+          input = stdin;
+          lines = 0;
+          eof_reached = true;
+          progr = -1;
+          tag = "";
+          next = "";
+          buf = Buffer.create 128;
+          seq = ""
+        }
+        let info it = it.path, it.lines
+        let is_empty it = it.eof_reached
+        let delete it =
+          close_in it.input;
+          it.eof_reached <- true;
+          Buffer.reset it.buf
+          [@@inline]
+        let incr it =
+          if it.eof_reached then
+            ()
+          else begin            
+            try
+              (* The invariant is to have the label of the new sequence loaded in it.next
+                  and an empty buffer *)
+              it.tag <- it.next;
+              it.progr <- it.progr + 1;
+              let line = ref "" in
+              while line := input_line it.input; it.lines <- it.lines + 1; !line.[0] <> '>' do
+                it.linter !line |> Buffer.add_string it.buf
+              done;
+              it.next <- String.sub !line 1 (String.length !line - 1);
+              it.seq <- Buffer.contents it.buf;
+              Buffer.clear it.buf              
+            with End_of_file ->
+              it.seq <- Buffer.contents it.buf;
+              delete it
+          end
+          [@@inline]
+        let create (linter, path) =
+          let res = { (empty ()) with linter; path; input = open_in path; eof_reached = false } in
+          begin try
+            (* The invariant is to have the label of the new sequence loaded in it.next
+                and an empty buffer *)
+            let line = ref "" in
+            while line := input_line res.input; res.lines <- res.lines + 1; !line.[0] <> '>' do
+              if !line <> "" then
+                Exception.raise_malformed __FUNCTION__ res.lines "FASTA" path ~comment:"header expected"
+            done;
+            res.next <- String.sub !line 1 (String.length !line - 1);
+            (* Now that we've got the header, we parse the sequence and the next header *)
+            incr res
+          with End_of_file ->
+            delete res
+          end;
+          res
+        let get it f =
+          if it.tag = "" then
+            () (* This can also happen at the beginning *)
+          else
+            f (it.progr, 0, { Base.Read.tag = it.tag; seq = it.seq; qua = "" })
+          [@@inline]
+        let get_se_pe it f _ = get it f [@@inline]
+        let get_and_incr it f =
+          let res = get it f in
+          incr it;
+          res
+          [@@inline]
+        let get_se_pe_and_incr it f _ = get_and_incr it f [@@inline]
+      end
     let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false) f path =
-      let input = open_in path and progr = ref 0 and current = ref "" and seq = Buffer.create 1048576 in
       if verbose then
         Printf.eprintf "(%s): Reading FASTA file '%s': Begin\n%!" __FUNCTION__ path;
-      let process_current () =
-        if !current <> "" then begin
-          f !progr !current (Buffer.contents seq);
-          incr progr
-        end;
-        Buffer.clear seq in
-      try
-        while true do
-          let line = input_line input in
-          if line <> "" then begin
-            if line.[0] = '>' then begin
-              process_current ();
-              current := String.sub line 1 (String.length line - 1)
-            end else
-              linter line |> Buffer.add_string seq
-          end
-        done
-      with End_of_file ->
-        process_current ();
-        close_in input;
-        if verbose then
-          Printf.eprintf "(%s): Reading FASTA file '%s': End\n%!" __FUNCTION__ path
+      let it = Iterator.create (linter, path) in
+      while Iterator.is_empty it |> not do
+        Iterator.get_and_incr it f (* This also calls Iterator.delete() *)
+      done;
+      if verbose then
+        Printf.eprintf "(%s): Reading FASTA file '%s': End\n%!" __FUNCTION__ path
     let parallel_iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
                       ?(buffered_chunks_per_thread = 10) ?(max_memory = 1000000000) ?(verbose = false)
                       path (f:int -> (string * string) list -> 'a) (g:'a -> unit) threads =
@@ -163,7 +276,7 @@ module FASTA:
         Printf.teprintf "0 lines read%!\n";
       read_up_to_next_sequence_name ();
       if Buffer.contents seq <> "" then
-        raise_malformed __FUNCTION__ !read "FASTA" path
+        Exception.raise_malformed __FUNCTION__ !read "FASTA" path
           ~comment:(Buffer.contents seq |> Printf.sprintf "found contents '%s' before sequence name");
       if not !eof_reached then
         Processes.Parallel.process_stream_chunkwise ~buffered_chunks_per_thread:buffered_chunks_per_thread
@@ -177,7 +290,7 @@ module FASTA:
                 read_up_to_next_sequence_name ();
                 let seq = Buffer.contents seq in
                 if seq = "" then
-                  raise_malformed __FUNCTION__ !read "FASTA" path
+                  Exception.raise_malformed __FUNCTION__ !read "FASTA" path
                     ~comment:(Printf.sprintf "sequence '%s' is empty" current);
                 incr seqs;
                 List.accum chunk (current, seq);
@@ -198,366 +311,471 @@ module FASTA:
           g threads
   end
 
+(* At this level we do not care whether the FASTQ is SE, PE or interleaved *)
 module FASTQ:
   sig
-    val iter_se: ?linter:(string -> string) -> ?verbose:bool -> (int -> string -> string -> string -> unit) -> string -> unit
-    val iter_pe: ?linter:(string -> string) -> ?verbose:bool ->
-      (int -> string -> string -> string -> string -> string -> string -> unit) -> string -> string -> unit
-    (* Interleaved file *)
-    val iter_il: ?linter:(string -> string) -> ?verbose:bool ->
-      (int -> string -> string -> string -> string -> string -> string -> unit) -> string -> unit
+    (* C++-style iterators *)
+    module Iterator: Base.Iterator.Type_t (* Iterator.t is opaque *)
+    (* OCaml-style iterators *)
+    val iter: string Base.Iterator.t
   end
 = struct
-    let iter_se ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
-                f path =
-      let read = ref 0 and input = open_in path in
+    (* We don't constrain the signature here so that the rest of the module can see the type *)
+    module Iterator =
+      (* Iterator over a single-end non-interleaved FASTQ file *)
+      struct
+        type t = {
+          linter: string -> string;
+          path: string;
+          input: in_channel;
+          mutable lines: int; (* Number of lines read so far *)
+          mutable eof_reached: bool;
+          (* *)
+          mutable progr: int; (* Sequence progressive (from 0) *)
+          mutable read: Base.Read.t
+        }
+        let empty () = {
+          linter = Fun.id;
+          path = "";
+          input = stdin;
+          lines = 0;
+          eof_reached = true;
+          progr = -1;
+          read = Base.Read.empty
+        }
+        let info it = it.path, it.lines
+        let is_empty it = it.eof_reached
+        let delete it =
+          close_in it.input;
+          it.eof_reached <- true
+          [@@inline]
+        let create (linter, path) =
+          { (empty ()) with linter; path; input = open_in path; eof_reached = false }
+        let incr it =
+          if it.eof_reached then
+            ()
+          else begin
+            try
+              let tag = input_line it.input in
+              it.progr <- it.progr + 1;
+              let seq = input_line it.input |> it.linter in
+              let tmp = input_line it.input in
+              let qua = input_line it.input in
+              it.lines <- it.lines + 4;
+              if tag.[0] <> '@' || tmp.[0] <> '+' then
+                Exception.raise_malformed __FUNCTION__ it.lines "FASTQ" it.path;
+              it.read <- { tag = String.sub tag 1 (String.length tag - 1); seq; qua }
+            with End_of_file ->
+              if it.lines <> (4 * (it.progr + 1)) then
+                (* Last line is truncated *)
+                Exception.raise_malformed __FUNCTION__ it.lines "FASTQ" it.path
+                  ~comment:"file is truncated";
+              delete it
+          end
+          [@@inline]
+        let get it f =
+          if it.read.tag = "" then
+            () (* This can also happen at the beginning *)
+          else
+            (* By default, segment ID is zero.
+               In case of PE reads we'll manually change this with an adaptor function *)
+            f (it.progr, 0, it.read)
+          [@@inline]
+        let get_se_pe it f _ = get it f [@@inline]
+        let get_and_incr it f =
+          let res = get it f in
+          incr it;
+          res
+          [@@inline]
+        let get_se_pe_and_incr it f _ = get_and_incr it f [@@inline]
+      end
+    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false) f path =
       if verbose then
-        Printf.eprintf "(%s): Reading SE FASTQ file '%s': Begin\n%!" __FUNCTION__ path;
-      begin try
-        while true do
-          let tag = input_line input in
-          let seq = input_line input in
-          let tmp = input_line input in
-          let qua = input_line input in
-          read := !read + 4;
-          if tag.[0] <> '@' || tmp.[0] <> '+' then
-            raise_malformed __FUNCTION__ !read "FASTQ" path;
-          f (!read / 4) (String.sub tag 1 (String.length tag - 1)) (linter seq) qua
-        done
-      with End_of_file -> ()
-      end;
-      close_in input;
+        Printf.eprintf "(%s): Reading FASTQ file '%s': Begin\n%!" __FUNCTION__ path;
+      let it = Iterator.create (linter, path) in
+      while Iterator.is_empty it |> not do (* This also calls Iterator.delete() *)
+        Iterator.get_and_incr it f
+      done;
       if verbose then
-        Printf.eprintf "(%s): Reading SE FASTQ file '%s': End\n%!" __FUNCTION__ path
-    let iter_pe ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
-                f path1 path2 =
-      let read = ref 0 and input1 = open_in path1 and input2 = open_in path2 in
-      if verbose then
-        Printf.eprintf "(%s): Reading PE FASTQ files '%s' and '%s': Begin\n%!" __FUNCTION__ path1 path2;
-      begin try
-        while true do
-          let tag1 = input_line input1 in
-          let seq1 = input_line input1 in
-          let tmp1 = input_line input1 in
-          let qua1 = input_line input1 in
-          let tag2 = input_line input2 in
-          let seq2 = input_line input2 in
-          let tmp2 = input_line input2 in
-          let qua2 = input_line input2 in
-          read := !read + 8;
-          if tag1.[0] <> '@' || tmp1.[0] <> '+' || tag2.[0] <> '@' || tmp2.[0] <> '+' then
-            raise_malformed __FUNCTION__ !read "FASTQ" path1 ~path2;
-          f (!read / 8)
-            (String.sub tag1 1 (String.length tag1 - 1)) (linter seq1) qua1
-            (String.sub tag2 1 (String.length tag2 - 1)) (linter seq2) qua2
-        done
-      with End_of_file -> ()
-      end;
-      close_in input1;
-      close_in input2;
-      if verbose then
-        Printf.eprintf "(%s): Reading PE FASTQ files '%s' and '%s': End\n%!" __FUNCTION__ path1 path2
-    let iter_il ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
-                f path =
-      let read = ref 0 and input = open_in path in
-      if verbose then
-        Printf.eprintf "(%s): Reading interleaved PE FASTQ file '%s': Begin\n%!" __FUNCTION__ path;
-      begin try
-        while true do
-          let tag1 = input_line input in
-          let seq1 = input_line input in
-          let tmp1 = input_line input in
-          let qua1 = input_line input in
-          let tag2 = input_line input in
-          let seq2 = input_line input in
-          let tmp2 = input_line input in
-          let qua2 = input_line input in
-          read := !read + 8;
-          if tag1.[0] <> '@' || tmp1.[0] <> '+' || tag2.[0] <> '@' || tmp2.[0] <> '+' then
-            raise_malformed __FUNCTION__ !read "FASTQ" path;
-          f (!read / 8)
-            (String.sub tag1 1 (String.length tag1 - 1)) (linter seq1) qua1
-            (String.sub tag2 1 (String.length tag2 - 1)) (linter seq2) qua2
-        done
-      with End_of_file -> ()
-      end;
-      close_in input;
-      if verbose then
-        Printf.eprintf "(%s): Reading interleaved PE FASTQ file '%s': End\n%!" __FUNCTION__ path
+        Printf.eprintf "(%s): Reading FASTQ file '%s': End\n%!" __FUNCTION__ path
   end
 
 module Tabular:
   sig
-    val iter:
-      ?linter:(string -> string) -> ?verbose:bool ->
-      (int -> string -> string -> string -> unit) ->
-      (int -> string -> string -> string -> string -> string -> string -> unit) -> string -> unit
+    (* C++-style iterators *)
+    module Iterator: Base.Iterator.Type_t (* Iterator.t is opaque *)
+    (* OCaml-style iterators *)
+    val iter: string Base.Iterator.t
+    val iter_se_pe: string Base.Iterator.se_pe_t
   end
 = struct
-    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false) f g path =
-      let input = open_in path and progr = ref 0 in
+    (* We don't constrain the signature here so that the rest of the module can see the type *)
+    module Iterator =
+      struct
+        type t = {
+          linter: string -> string;
+          path: string;
+          input: in_channel;
+          mutable eof_reached: bool;
+          (* *)
+          mutable progr: int; (* Sequence progressive (from 0) *)
+          mutable line: string array
+        }
+        let empty () = {
+          linter = Fun.id;
+          path = "";
+          input = stdin;
+          eof_reached = true;
+          progr = -1;
+          line = [||]
+        }
+        let info it = it.path, it.progr + 1
+        let is_empty it = it.eof_reached
+        let delete it =
+          close_in it.input;
+          it.eof_reached <- true
+          [@@inline]
+        let create (linter, path) =
+          { (empty ()) with linter; path; input = open_in path; eof_reached = false }
+        let incr it =
+          if it.eof_reached then
+            ()
+          else begin
+            try
+              it.line <- input_line it.input |> String.Split.on_char_as_array '\t';
+              it.progr <- it.progr + 1;
+              begin match Array.length it.line with
+              | 2 | 3 -> (* FASTA or SE FASTQ *)
+                it.line.(1) <- it.linter it.line.(1)
+              | 6 -> (* PE FASTQ *)
+                it.line.(1) <- it.linter it.line.(1);
+                it.line.(4) <- it.linter it.line.(4)
+              | n ->
+                Exception.raise_malformed __FUNCTION__ it.progr "tabular" it.path
+                  ~comment:(Printf.sprintf "found %d fields, expected 2, 3, or 6" n)
+              end
+            with End_of_file ->
+              delete it
+          end
+          [@@inline]
+        let get_se_pe it f g =
+          if it.line = [||] then
+            () (* This can also happen at the beginning *)
+          else match Array.length it.line with
+          | 2 -> (* FASTA *)
+            f (it.progr, 0, { Base.Read.tag = it.line.(0); seq = it.line.(1); qua = "" })
+          | 3 -> (* SE FASTQ *)
+            f (it.progr, 0, { tag = it.line.(0); seq = it.line.(1); qua = it.line.(2) })
+          | 6 -> (* PE FASTQ *)
+            g (it.progr, 0, { Base.Read.tag = it.line.(0); seq = it.line.(1); qua = it.line.(2) })
+              (it.progr, 1, { Base.Read.tag = it.line.(3); seq = it.line.(4); qua = it.line.(5) })
+          | _ -> assert false
+          [@@inline]
+        let get it f = get_se_pe it f (fun one two -> f one; f two) [@@inline]
+        let get_se_pe_and_incr it f g =
+          let res = get_se_pe it f g in
+          incr it;
+          res
+          [@@inline]
+        let get_and_incr it f = get_se_pe_and_incr it f (fun one two -> f one; f two) [@@inline]
+      end
+    let iter_se_pe ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
+                   f g path =
       if verbose then
         Printf.eprintf "(%s): Reading tabular file '%s': Begin\n%!" __FUNCTION__ path;
-      try
-        while true do
-          let line = input_line input |> String.Split.on_char_as_array '\t' in
-          incr progr;
-          match Array.length line with
-          | 2 -> (* FASTA *)
-            f !progr line.(0) (linter line.(1)) ""
-          | 3 -> (* SE FASTQ *)
-            f !progr line.(0) (linter line.(1)) line.(2)
-          | 6 -> (* PE FASTQ *)
-            g !progr line.(0) (linter line.(1)) line.(2) line.(3) (linter line.(4)) line.(5)
-          | n ->
-            raise_malformed __FUNCTION__ !progr "tabular" path
-              ~comment:(Printf.sprintf "found %d fields, expected 2, 3, or 6" n)
-        done
-      with End_of_file ->
-        close_in input;
-        if verbose then
-          Printf.eprintf "(%s): Reading tabular file '%s': End\n%!" __FUNCTION__ path
+      let it = Iterator.create (linter, path) in
+      while Iterator.is_empty it |> not do (* This also calls Iterator.delete() *)
+        Iterator.get_se_pe_and_incr it f g
+      done;
+      if verbose then
+        Printf.eprintf "(%s): Reading tabular file '%s': End\n%!" __FUNCTION__ path
+    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false) f =
+      iter_se_pe ~linter ~verbose f (fun one two -> f one; f two) [@@inline]
   end
 
-module Type =
-  struct
+(* An abstraction of FAST* and tabular files.
+   Note that not only do we provide regular OCaml-like iterators, but also C++-like ones
+    allowing to read from the file(s) and process one record at the time *)
+module Reads:
+  sig
+    include module type of Base
     type t =
       | FASTA of string
       | SingleEndFASTQ of string
       | PairedEndFASTQ of string * string
       | InterleavedFASTQ of string
       | Tabular of string
-  end
-
-module ReadsIterate:
-  sig
-    type t
-    type read_t = {
-      tag: string;
-      seq: string;
-      qua: string (* Reads from FASTA files have empty qualities *)
-    }
-    val empty: t
-    val length: t -> int
-    val add_from_files: t -> Type.t array -> t
-    (* Arguments to the function are read id, segment id, payload *)
-    val iter: ?linter:(string -> string) -> ?verbose:bool -> (int -> int -> read_t -> unit) -> t -> unit
-  end
+    module Iterator: (* C++-style iterators *)
+      sig
+        (* Initialiser type is linter and type *)
+        type init_t = linter_t * t
+        (* Return type is read ID, segment ID, and (tag, sequence, qualities) *)
+        type ret_t = int * int * Read.t
+        include Iterator_t with type init_t := init_t and type ret_t := ret_t
+      end
+    (* OCaml-style iterators *)
+    val iter: t Base.Iterator.t
+    val iter_se_pe: t Base.Iterator.se_pe_t
+end
 = struct
-    type read_t = {
-      tag: string;
-      seq: string;
-      qua: string (* Reads from FASTA files have empty qualities *)
-    }
-    type t = Type.t array
-    let empty = [||]
-    let length = Array.length
-    let add_from_files old_files new_files =
-      Array.append old_files new_files
-    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false) f =
-      Array.iter
-        (function
-          | Type.FASTA path ->
-            FASTA.iter ~linter ~verbose
-              (fun i tag seq ->
-                f i 0 { tag; seq; qua = "" })
-              path
+    include Base
+    type t =
+      | FASTA of string
+      | SingleEndFASTQ of string
+      | PairedEndFASTQ of string * string
+      | InterleavedFASTQ of string
+      | Tabular of string
+    module Iterator =
+      struct
+        type init_t = linter_t * t
+        type ret_t = int * int * Read.t
+        type t =
+          | ItEmpty
+          | ItFASTA of FASTA.Iterator.t
+          | ItSingleEndFASTQ of FASTQ.Iterator.t
+          | ItPairedEndFASTQ of FASTQ.Iterator.t * FASTQ.Iterator.t
+          (* Only the second of the two ends is stored in the iterator *)
+          | ItInterleavedFASTQ of Read.t ref * FASTQ.Iterator.t
+          | ItTabular of Tabular.Iterator.t
+        let empty () = ItEmpty
+        let is_empty = function
+          | ItEmpty -> true
+          | ItFASTA it ->
+            FASTA.Iterator.is_empty it
+          | ItSingleEndFASTQ it ->
+            FASTQ.Iterator.is_empty it
+          | ItPairedEndFASTQ (it1, it2) ->
+            let is_empty1 = FASTQ.Iterator.is_empty it1 and is_empty2 = FASTQ.Iterator.is_empty it2 in
+            assert (is_empty1 = is_empty2);
+            is_empty1
+          | ItInterleavedFASTQ (read, _) ->
+            !read.tag = ""
+          | ItTabular it ->
+            Tabular.Iterator.is_empty it
+        let delete = function
+          | ItEmpty -> ()
+          | ItFASTA it ->
+            FASTA.Iterator.delete it
+          | ItSingleEndFASTQ it | ItInterleavedFASTQ (_, it) ->
+            FASTQ.Iterator.delete it
+          | ItPairedEndFASTQ (it1, it2) ->
+            FASTQ.Iterator.delete it1;
+            FASTQ.Iterator.delete it2
+          | ItTabular it ->
+            Tabular.Iterator.delete it
+        let create (linter, t) =
+          match t with
+          | FASTA path ->
+            ItFASTA (FASTA.Iterator.create (linter, path))
           | SingleEndFASTQ path ->
-            FASTQ.iter_se ~linter ~verbose
-              (fun i tag seq qua ->
-                f i 0 { tag; seq; qua })
-              path
+            ItSingleEndFASTQ (FASTQ.Iterator.create (linter, path))
           | PairedEndFASTQ (path1, path2) ->
-            FASTQ.iter_pe ~linter ~verbose
-              (fun i tag1 seq1 qua1 tag2 seq2 qua2 ->
-                f i 0 { tag = tag1; seq = seq1; qua = qua1 };
-                f i 1 { tag = tag2; seq = seq2; qua = qua2 })
-              path1 path2
+            ItPairedEndFASTQ (FASTQ.Iterator.create (linter, path1),
+                              FASTQ.Iterator.create (linter, path2))
           | InterleavedFASTQ path ->
-            FASTQ.iter_il ~linter ~verbose
-              (fun i tag1 seq1 qua1 tag2 seq2 qua2 ->
-                f i 0 { tag = tag1; seq = seq1; qua = qua1 };
-                f i 1 { tag = tag2; seq = seq2; qua = qua2 })
-              path
+            ItInterleavedFASTQ (ref Base.Read.empty, FASTQ.Iterator.create (linter, path))
           | Tabular path ->
-            Tabular.iter ~linter ~verbose
-              (fun i tag seq qua ->
-                f i 0 { tag; seq; qua })
-              (fun i tag1 seq1 qua1 tag2 seq2 qua2 ->
-                f i 0 { tag = tag1; seq = seq1; qua = qua1 };
-                f i 1 { tag = tag2; seq = seq2; qua = qua2 })
-              path)
-  end
-
-module ReadsStore:
-  sig
-    type t
-    type read_t = {
-      tag: string;
-      seq: string;
-      qua: string (* Reads from FASTA files have empty qualities *)
-    }
-    (* A filter is something that separates reads into (singletons, selected, leftovers) *)
-    val singleton: int
-    val selected: int
-    val unmarked: int
-    type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-    val empty: t
-    val length: t -> int
-    val add_from_files: ?linter:(string -> string) -> ?verbose:bool -> t -> Type.t -> t
-    (* Arguments to the function are store, optional filter (can be empty), name of output prefix
-        (output reads can be FASTA and/or FASTQ SE and/or FASTQ PE) *)
-    val to_fast: ?verbose:bool -> t -> filter_t -> string -> unit
-    val to_tabular: ?verbose:bool -> t -> filter_t -> string -> unit
-    val seq_length: t -> int
-    (* Arguments to the function are read id, segment id, payload *)
-    val iter: (int -> int -> read_t -> unit) -> t -> unit
-  end
-= struct
-    type read_t = {
-      tag: string;
-      seq: string;
-      qua: string
-    }
-    type template_t =
-      | SingleEndRead of read_t
-      | PairedEndRead of read_t * read_t
-    type t = template_t array
-    let singleton = 0
-    let selected = 1
-    let unmarked = 2
-    type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-    let empty = [||]
-    let iter f =
-      Array.iteri
-        (fun templ_i -> function
-          | SingleEndRead segm ->
-            f templ_i 0 segm
-          | PairedEndRead (segm1, segm2) ->
-            f templ_i 0 segm1;
-            f templ_i 1 segm2)
-    let length = Array.length
-    let seq_length store =
-      let res = ref 0 in
-      iter (fun _ _ segm -> res := !res + String.length segm.seq) store;
-      !res
-    let add_from_files ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
-                       orig file =
-      let res = ref [] in
-      begin match file with
-      | Type.FASTA path ->
-        FASTA.iter ~linter ~verbose
-          (fun _ tag seq ->
-            SingleEndRead { tag; seq; qua = "" } |> List.accum res)
-          path
-      | SingleEndFASTQ path ->
-        FASTQ.iter_se ~linter ~verbose
-          (fun _ tag seq qua ->
-            SingleEndRead { tag; seq; qua } |> List.accum res)
-          path
-      | PairedEndFASTQ (path1, path2) ->
-        FASTQ.iter_pe ~linter ~verbose
-          (fun _ tag1 seq1 qua1 tag2 seq2 qua2 ->
-            PairedEndRead ({ tag = tag1; seq = seq1; qua = qua1 }, { tag = tag2; seq = seq2; qua = qua2 })
-              |> List.accum res)
-          path1 path2
-      | InterleavedFASTQ path ->
-        FASTQ.iter_il ~linter ~verbose
-          (fun _ tag1 seq1 qua1 tag2 seq2 qua2 ->
-            PairedEndRead ({ tag = tag1; seq = seq1; qua = qua1 }, { tag = tag2; seq = seq2; qua = qua2 })
-              |> List.accum res)
-          path
-      | Tabular path ->
-        Tabular.iter ~linter ~verbose
-          (fun _ tag seq qua ->
-            SingleEndRead { tag; seq; qua } |> List.accum res)
-          (fun _ tag1 seq1 qua1 tag2 seq2 qua2 ->
-            PairedEndRead ({ tag = tag1; seq = seq1; qua = qua1 }, { tag = tag2; seq = seq2; qua = qua2 })
-              |> List.accum res)
-          path
-      end;
-      let res = Array.append orig (Array.of_list !res) in
+            ItTabular (Tabular.Iterator.create (linter, path))
+        let incr = function
+          | ItEmpty -> ()
+          | ItFASTA it -> FASTA.Iterator.incr it
+          | ItSingleEndFASTQ it -> FASTQ.Iterator.incr it
+          | ItPairedEndFASTQ (it1, it2) ->
+            FASTQ.Iterator.incr it1;
+            FASTQ.Iterator.incr it2;
+            if FASTQ.Iterator.is_empty it1 <> FASTQ.Iterator.is_empty it2 then
+              let path, lines = FASTQ.Iterator.info it2 in
+              Exception.raise_malformed __FUNCTION__ lines "FASTQ" path
+                ~comment:"files have a different length"
+          | ItInterleavedFASTQ (read, it) ->
+            FASTQ.Iterator.get_and_incr it (fun (_, _, r) -> read := r);
+            FASTQ.Iterator.incr it
+          | ItTabular it ->
+            Tabular.Iterator.incr it
+          [@@inline]
+        let get_se_pe it f g =
+          match it with
+          | ItEmpty -> ()
+          | ItFASTA it ->
+            FASTA.Iterator.get it f
+          | ItSingleEndFASTQ it ->
+            FASTQ.Iterator.get it f
+          | ItPairedEndFASTQ (it1, it2) ->
+            let read1 = ref Read.empty in
+            FASTQ.Iterator.get it1 (fun (_, _, read) -> read1 := read);
+            FASTQ.Iterator.get it2 (fun (progr, _, read2) -> g (progr, 0, !read1) (progr, 1, read2))
+          | ItInterleavedFASTQ (read1, it) ->
+            let _, lines = FASTQ.Iterator.info it in
+            let progr = lines / 8 - 1 in
+            FASTQ.Iterator.get it (fun (_, _, read2) -> g (progr, 0, !read1) (progr, 1, read2))
+          | ItTabular it ->
+            Tabular.Iterator.get_se_pe it f g
+          [@@inline]
+        let get it f = get_se_pe it f (fun one two -> f one; f two)
+        let get_se_pe_and_incr it f g =
+          let res = get_se_pe it f g in
+          incr it;
+          res
+          [@@inline]
+        let get_and_incr it f = get_se_pe_and_incr it f (fun one two -> f one; f two) [@@inline]
+      end
+    let iter_se_pe ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
+                   f g file =
+      let what =
+        match file with
+        | FASTA path ->
+          Printf.sprintf "FASTA file '%s'" path
+        | SingleEndFASTQ path ->
+          Printf.sprintf "single-end FASTQ file '%s'" path
+        | PairedEndFASTQ (path1, path2) ->
+          Printf.sprintf "paired-end FASTQ files '%s' and '%s'" path1 path2
+        | InterleavedFASTQ path ->
+          Printf.sprintf "interleaved FASTQ file '%s'" path
+        | Tabular path ->
+          Printf.sprintf "tabular file '%s'" path in
       if verbose then
-        Printf.eprintf "(%s): %d reads in store so far (total length %d)\n%!"
-          __FUNCTION__ (Array.length res) (seq_length res);
-      res
-    let raise_invalid_filter_length __FUNCTION__ num_reads len =
-      Exception.raise __FUNCTION__ Algorithm
-        (Printf.sprintf "Filter length must be zero or the same as the number of reads, %d (found %d)" num_reads len)
-    let to_fast ?(verbose = false) store filter prefix =
-      let len = Array.length store and f_len = Bigarray.Array1.dim filter in
-      (* The filter can be empty *)
-      if f_len <> len && f_len <> 0 then
-        raise_invalid_filter_length __FUNCTION__ len f_len;
-      let print_fastq_record_filtered classification output read =
-        Printf.fprintf output "@%d__%s\n%s\n+\n%s\n" classification read.tag read.seq read.qua
-      and print_fastq_record output read =
-        Printf.fprintf output "@%s\n%s\n+\n%s\n" read.tag read.seq read.qua
-      and output0 = open_out (prefix ^ ".fasta")
-      and output1 = open_out (prefix ^ "_SE.fastq")
-      and output2 = [| open_out (prefix ^ "_PE_1.fastq"); open_out (prefix ^ "_PE_2.fastq") |] in
+        Printf.eprintf "(%s): Reading %s: Begin\n%!" __FUNCTION__ what;
+      let it = Iterator.create (linter, file) in
+      while Iterator.is_empty it |> not do
+        Iterator.get_se_pe_and_incr it f g (* This also calls Iterator.delete() *)
+      done;
       if verbose then
-        Printf.eprintf "(%s): Writing %d reads...%!" __FUNCTION__ len;
-      Array.iteri begin
-        if f_len <> 0 then
-          (fun i -> function
-            | SingleEndRead segm ->
-              if segm.qua = "" then
-                Printf.fprintf output0 ">%d__%s\n%s\n" filter.{i} segm.tag segm.seq
-              else
-                print_fastq_record_filtered filter.{i} output1 segm
-            | PairedEndRead (segm1, segm2) ->
-              print_fastq_record_filtered filter.{i} output2.(0) segm1;
-              print_fastq_record_filtered filter.{i} output2.(1) segm2)
-        else
-          (fun _ -> function
-            | SingleEndRead segm ->
-              if segm.qua = "" then
-                Printf.fprintf output0 ">%s\n%s\n" segm.tag segm.seq
-              else
-                print_fastq_record output1 segm
-            | PairedEndRead (segm1, segm2) ->
-              print_fastq_record output2.(0) segm1;
-              print_fastq_record output2.(1) segm2)
-        end store;
-      close_out output0;
-      close_out output1;
-      close_out output2.(0);
-      close_out output2.(1);
-      if verbose then
-        Printf.eprintf " done.\n%!"
-    let to_tabular ?(verbose = false) store filter path =
-      let len = Array.length store and f_len = Bigarray.Array1.dim filter in
-      (* The filter can be empty *)
-      if f_len <> len && f_len <> 0 then
-        raise_invalid_filter_length __FUNCTION__ len f_len;
-      let output = open_out path in
-      if verbose then
-        Printf.eprintf "(%s): Writing %d reads...%!" __FUNCTION__ len;
-      Array.iteri begin
-        if f_len <> 0 then
-          (fun i -> function
-            | SingleEndRead segm ->
-              if segm.qua = "" then
-                Printf.fprintf output "%d__%s\t%s\n" filter.{i} segm.tag segm.seq
-              else
-                Printf.fprintf output "%d__%s\t%s\t%s\n" filter.{i} segm.tag segm.seq segm.qua
-            | PairedEndRead (segm1, segm2) ->
-              Printf.fprintf output "%d__%s\t%s\t%s\t%d__%s\t%s\t%s\n"
-                filter.{i} segm1.tag segm1.seq segm1.qua filter.{i} segm2.tag segm2.seq segm2.qua)
-        else
-          (fun _ -> function
-            | SingleEndRead segm ->
-              if segm.qua = "" then
-                Printf.fprintf output "%s\t%s\n" segm.tag segm.seq
-              else
-                Printf.fprintf output "%s\t%s\t%s\n" segm.tag segm.seq segm.qua
-            | PairedEndRead (segm1, segm2) ->
-              Printf.fprintf output "%s\t%s\t%s\t%s\t%s\t%s\n"
-                segm1.tag segm1.seq segm1.qua segm2.tag segm2.seq segm2.qua)
-        end store;
-      close_out output;
-      if verbose then
-        Printf.eprintf " done.\n%!"
+        Printf.eprintf "(%s): Reading %s: End\n%!" __FUNCTION__ what
+    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false) f =
+      iter_se_pe ~linter ~verbose f (fun one two -> f one; f two) [@@inline]
+    module [@warning "-32"] Store:
+      sig
+        type reads_t := t
+        type t
+        (* A filter is something that separates reads into (singletons, selected, leftovers) *)
+        val singleton: int
+        val selected: int
+        val unmarked: int
+        type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+        val empty: t
+        val length: t -> int
+        val add_from_file: ?linter:Base.linter_t -> ?verbose:bool -> t -> reads_t -> unit
+        (* Arguments to the function are store, optional filter (can be empty), name of output prefix
+            (output reads can be FASTA and/or FASTQ SE and/or FASTQ PE) *)
+        val to_fast: ?verbose:bool -> t -> filter_t -> string -> unit
+        val to_tabular: ?verbose:bool -> t -> filter_t -> string -> unit
+        val seq_length: t -> int
+        (* Arguments to the function are read id, segment id, payload *)
+        val iter: (Iterator.ret_t -> unit) -> t -> unit
+      end
+    = struct
+        type template_t =
+          | SingleEndRead of Read.t
+          | PairedEndRead of Read.t * Read.t
+        type t = template_t Tools.StackArray.t
+        let singleton = 0
+        let selected = 1
+        let unmarked = 2
+        type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+        let empty = Tools.StackArray.create ()
+        let iter f =
+          Tools.StackArray.riteri
+            (fun templ_i -> function
+              | SingleEndRead segm ->
+                f (templ_i, 0, segm)
+              | PairedEndRead (segm1, segm2) ->
+                f (templ_i, 0, segm1);
+                f (templ_i, 1, segm2))
+        let length = Tools.StackArray.length
+        let seq_length store =
+          let res = ref 0 in
+          iter (fun (_, _, segm) -> res := !res + String.length segm.seq) store;
+          !res
+        let add_from_file ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
+                          store file =
+          iter_se_pe ~linter ~verbose
+            (fun (_, _, read) ->
+              SingleEndRead read |> Tools.StackArray.push store)
+            (fun (_, _, read1) (_, _, read2) ->
+              PairedEndRead (read1, read2) |> Tools.StackArray.push store)
+            file;
+          if verbose then
+            Printf.eprintf "(%s): %d reads in store so far (total length %d)\n%!"
+              __FUNCTION__ (Tools.StackArray.length store) (seq_length store)
+        let raise_invalid_filter_length __FUNCTION__ num_reads len =
+          Exception.raise __FUNCTION__ Algorithm
+            (Printf.sprintf
+              "Filter length must be zero or the same as the number of reads, %d (found %d)" num_reads len)
+        let to_fast ?(verbose = false) store filter prefix =
+          let len = Tools.StackArray.length store and f_len = Bigarray.Array1.dim filter in
+          (* The filter can be empty *)
+          if f_len <> len && f_len <> 0 then
+            raise_invalid_filter_length __FUNCTION__ len f_len;
+          let print_fastq_record_filtered classification output read =
+            Printf.fprintf output "@%d__%s\n%s\n+\n%s\n" classification read.Read.tag read.seq read.qua
+          and print_fastq_record output read =
+            Printf.fprintf output "@%s\n%s\n+\n%s\n" read.Read.tag read.seq read.qua
+          and output0 = open_out (prefix ^ ".fasta")
+          and output1 = open_out (prefix ^ "_SE.fastq")
+          and output2 = [| open_out (prefix ^ "_PE_1.fastq"); open_out (prefix ^ "_PE_2.fastq") |] in
+          if verbose then
+            Printf.eprintf "(%s): Writing %d reads...%!" __FUNCTION__ len;
+          Tools.StackArray.riteri begin
+            if f_len <> 0 then
+              (fun i -> function
+                | SingleEndRead segm ->
+                  if segm.qua = "" then
+                    Printf.fprintf output0 ">%d__%s\n%s\n" filter.{i} segm.tag segm.seq
+                  else
+                    print_fastq_record_filtered filter.{i} output1 segm
+                | PairedEndRead (segm1, segm2) ->
+                  print_fastq_record_filtered filter.{i} output2.(0) segm1;
+                  print_fastq_record_filtered filter.{i} output2.(1) segm2)
+            else
+              (fun _ -> function
+                | SingleEndRead segm ->
+                  if segm.qua = "" then
+                    Printf.fprintf output0 ">%s\n%s\n" segm.tag segm.seq
+                  else
+                    print_fastq_record output1 segm
+                | PairedEndRead (segm1, segm2) ->
+                  print_fastq_record output2.(0) segm1;
+                  print_fastq_record output2.(1) segm2)
+            end store;
+          close_out output0;
+          close_out output1;
+          close_out output2.(0);
+          close_out output2.(1);
+          if verbose then
+            Printf.eprintf " done.\n%!"
+        let to_tabular ?(verbose = false) store filter path =
+          let len = Tools.StackArray.length store and f_len = Bigarray.Array1.dim filter in
+          (* The filter can be empty *)
+          if f_len <> len && f_len <> 0 then
+            raise_invalid_filter_length __FUNCTION__ len f_len;
+          let output = open_out path in
+          if verbose then
+            Printf.eprintf "(%s): Writing %d reads...%!" __FUNCTION__ len;
+          Tools.StackArray.riteri begin
+            if f_len <> 0 then
+              (fun i -> function
+                | SingleEndRead segm ->
+                  if segm.qua = "" then
+                    Printf.fprintf output "%d__%s\t%s\n" filter.{i} segm.tag segm.seq
+                  else
+                    Printf.fprintf output "%d__%s\t%s\t%s\n" filter.{i} segm.tag segm.seq segm.qua
+                | PairedEndRead (segm1, segm2) ->
+                  Printf.fprintf output "%d__%s\t%s\t%s\t%d__%s\t%s\t%s\n"
+                    filter.{i} segm1.tag segm1.seq segm1.qua filter.{i} segm2.tag segm2.seq segm2.qua)
+            else
+              (fun _ -> function
+                | SingleEndRead segm ->
+                  if segm.qua = "" then
+                    Printf.fprintf output "%s\t%s\n" segm.tag segm.seq
+                  else
+                    Printf.fprintf output "%s\t%s\t%s\n" segm.tag segm.seq segm.qua
+                | PairedEndRead (segm1, segm2) ->
+                  Printf.fprintf output "%s\t%s\t%s\t%s\t%s\t%s\n"
+                    segm1.tag segm1.seq segm1.qua segm2.tag segm2.seq segm2.qua)
+            end store;
+          close_out output;
+          if verbose then
+            Printf.eprintf " done.\n%!"
+      end
   end
 
