@@ -588,48 +588,52 @@ module Float:
       end
   end
 
+(* Frequently used module idioms *)
+module type IntParameter_t = sig val n: int end
+module type TypeContainer_t = sig type t end
+
 (* General C++-style iterator *)
 module type Iterator_t =
   sig
-    type 'a init_t
-    type 'a t
-    type 'a ret_t
-    val empty: unit -> 'a t
-    val is_empty: 'a t -> bool
-    val make: 'a init_t -> 'a t
-    val assign: 'a t -> 'a t -> unit
-    (* None means there are no elements left *)
-    val get: 'a t -> 'a ret_t option
-    val get_and_incr: 'a t -> 'a ret_t option
-    val incr: 'a t -> unit
+    type init_t
+    type t
+    type ret_t
+    val empty: unit -> t
+    val is_empty: t -> bool
+    val create: init_t -> t
+    (* The get() functions apply the function argument to one or more elements *)
+    val get: t -> (ret_t -> unit) -> unit
+    val get_and_incr: t -> (ret_t -> unit) -> unit
+    val incr: t -> unit
+    val delete: t -> unit (* I am Ozymandias *)
   end
 (* Implementation for Stdlib modules built upon Seq *)
-module Iterator:
-  Iterator_t with type 'a init_t := 'a Seq.t and type 'a ret_t := 'a
-= struct
-    type 'a t = 'a Seq.t ref
-    let empty () = ref Seq.empty
-    let is_empty it = !it () = Seq.Nil
-    let make seq = ref seq
-    let assign it seq = it := !seq
-    let get it =
-      match !it () with
-      | Seq.Nil -> None
-      | Cons (deref, _) -> Some deref
-    let get_and_incr it =
-      match !it () with
-      | Seq.Nil -> None
-      | Cons (deref, next) -> it := next; Some deref
-    let incr it =
-      match !it () with
-      | Seq.Nil -> ()
-      | Cons (_, next) -> it := next
-  end
-
-(* Frequently used module idioms *)
-
-module type IntParameter_t = sig val n: int end
-module type TypeContainer_t = sig type t end
+module Seq =
+  struct
+    include Seq
+    module Iterator (T: TypeContainer_t):
+      Iterator_t with type init_t := T.t Seq.t and type ret_t := T.t
+    = struct
+        type t = T.t Seq.t ref
+        let empty () = ref Seq.empty
+        let is_empty it = !it () = Seq.Nil
+        let create seq = ref seq
+        (*let assign it seq = it := !seq*)
+        let get it f =
+          match !it () with
+          | Seq.Nil -> ()
+          | Cons (deref, _) -> f deref
+        let get_and_incr it f =
+          match !it () with
+          | Seq.Nil -> ()
+          | Cons (deref, next) -> it := next; f deref
+        let incr it =
+          match !it () with
+          | Seq.Nil -> ()
+          | Cons (_, next) -> it := next
+        let delete _ = ()
+      end
+    end
 
 (* Same as Set.OrderedType or Map.OrderedType *)
 module type ComparableType_t =
