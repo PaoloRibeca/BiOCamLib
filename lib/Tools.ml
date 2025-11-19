@@ -162,8 +162,13 @@ sig
   val length: 'a t -> int
   val iter: ('a -> unit) -> 'a t -> unit
   val iter_top: ('a -> unit) -> 'a t -> unit
+  val iteri: (int -> 'a -> unit) -> 'a t -> unit
+  val iteri_top: (int -> 'a -> unit) -> 'a t -> unit
+  (* Note that here the "reverse" iterators actually coincide with the regular ones for arrays *)
   val riter: ('a -> unit) -> 'a t -> unit
   val iter_bottom: ('a -> unit) -> 'a t -> unit
+  val riteri: (int -> 'a -> unit) -> 'a t -> unit
+  val iteri_bottom: (int -> 'a -> unit) -> 'a t -> unit
   val fold: ('b -> 'a -> 'b) -> 'b -> 'a t -> 'b
   val fold_top: ('b -> 'a -> 'b) -> 'b -> 'a t -> 'b
   val rfold: ('b -> 'a -> 'b) -> 'b -> 'a t -> 'b
@@ -255,12 +260,22 @@ end
     for i = s.size - 1 downto 0 do
       f s.data.(i)
     done
+  let iteri f s =
+    for i = s.size - 1 downto 0 do
+      f i s.data.(i)
+    done
   let riter f s =
     for i = 0 to s.size - 1 do
       f s.data.(i)
     done
+  let riteri f s =
+    for i = 0 to s.size - 1 do
+      f i s.data.(i)
+    done
   let iter_top = iter
+  let iteri_top = iteri
   let iter_bottom = riter
+  let iteri_bottom = riteri
   let fold f start s =
     let rec _fold last rem =
       if rem = 0 then
