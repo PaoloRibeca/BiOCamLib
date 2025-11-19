@@ -180,7 +180,10 @@ module FASTA:
           seq = ""
         }
         let info it = it.path, it.lines
-        let is_empty it = it.eof_reached
+        let is_empty it =
+          (* Here we have to be careful as the last sequence will be consumed
+              _after_ the stream has ended *)
+          it.eof_reached && it.tag = ""
         let delete it =
           close_in it.input;
           it.eof_reached <- true;
@@ -188,7 +191,13 @@ module FASTA:
           [@@inline]
         let incr it =
           if it.eof_reached then
-            ()
+            (* Here we have to be careful as the last sequence will be consumed
+                _after_ the stream has ended *)
+            if it.tag <> "" then begin
+              it.tag <- "";
+              it.seq <- ""
+            end else
+              ()
           else begin            
             try
               (* The invariant is to have the label of the new sequence loaded in it.next
@@ -196,13 +205,14 @@ module FASTA:
               it.tag <- it.next;
               it.progr <- it.progr + 1;
               let line = ref "" in
-              while line := input_line it.input; it.lines <- it.lines + 1; !line.[0] <> '>' do
+              while line := input_line it.input; it.lines <- it.lines + 1; !line = "" || !line.[0] <> '>' do
                 it.linter !line |> Buffer.add_string it.buf
               done;
               it.next <- String.sub !line 1 (String.length !line - 1);
               it.seq <- Buffer.contents it.buf;
               Buffer.clear it.buf              
             with End_of_file ->
+              it.next <- "";
               it.seq <- Buffer.contents it.buf;
               delete it
           end
@@ -213,7 +223,7 @@ module FASTA:
             (* The invariant is to have the label of the new sequence loaded in it.next
                 and an empty buffer *)
             let line = ref "" in
-            while line := input_line res.input; res.lines <- res.lines + 1; !line.[0] <> '>' do
+            while line := input_line res.input; res.lines <- res.lines + 1; !line = "" || !line.[0] <> '>' do
               if !line <> "" then
                 Exception.raise_malformed __FUNCTION__ res.lines "FASTA" path ~comment:"header expected"
             done;
@@ -362,7 +372,7 @@ module FASTQ:
               let tmp = input_line it.input in
               let qua = input_line it.input in
               it.lines <- it.lines + 4;
-              if tag.[0] <> '@' || tmp.[0] <> '+' then
+              if tag = "" || tag.[0] <> '@' || tmp = "" || tmp.[0] <> '+' then
                 Exception.raise_malformed __FUNCTION__ it.lines "FASTQ" it.path;
               it.read <- { tag = String.sub tag 1 (String.length tag - 1); seq; qua }
             with End_of_file ->
