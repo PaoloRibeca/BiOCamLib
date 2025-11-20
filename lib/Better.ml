@@ -177,6 +177,9 @@ module String:
     include module type of String
     val ( ^ ): string -> string -> string
     val ( .@() ): string -> int -> char
+    (* The string comparison function you would have always liked to have
+        and never really dared to ask for *)
+    val compare_lexicolength: string -> string -> int
     val rev: string -> string
     val accum: string ref -> string -> unit
     val pluralize: ?plural:string -> one:'a -> string -> 'a -> string
@@ -211,6 +214,13 @@ module String:
     include String
     let ( ^ ) = Stdlib.( ^ )
     let ( .@() ) = String.get
+    let compare_lexicolength s1 s2 =
+      let l_s1 = String.length s1 and l_s2 = String.length s2 in
+      if l_s1 = l_s2 then
+        compare s1 s2
+      else
+        l_s1 - l_s2
+      [@@inline]
     let rev s =
       (* This function allocates memory *)
       let b = Bytes.of_string s in
@@ -768,6 +778,13 @@ module StringMap: module type of Map.Make (ComparableString) = Map.Make (Compara
 module RComparableString = MakeRComparable (struct type t = String.t end) (* Our String! *)
 module StringRSet: module type of Set.Make (RComparableString) = Set.Make (RComparableString)
 module StringRMap: module type of Map.Make (RComparableString) = Map.Make (RComparableString)
+module LLComparableString = (struct type t = string let compare = String.compare_lexicolength end)
+module StringLLSet: module type of Set.Make (LLComparableString) = Set.Make (LLComparableString)
+module StringLLMap: module type of Map.Make (LLComparableString) = Map.Make (LLComparableString)
+module LLRComparableString =
+  (struct type t = string let compare s1 s2 = String.compare_lexicolength s2 s1 [@@inline] end)
+module StringLLRSet: module type of Set.Make (LLRComparableString) = Set.Make (LLRComparableString)
+module StringLLRMap: module type of Map.Make (LLRComparableString) = Map.Make (LLRComparableString)
 
 (* Same as Hashtbl.HashedType *)
 module type HashableType_t =
