@@ -144,7 +144,7 @@ module FASTA:
   sig
     (* C++-style iterators *)
     module Iterator: Base.Iterator.Type_t (* Iterator.t is opaque *)
-    (* OCaml-style iterators *)
+    (* OCaml-style iterator *)
     val iter: string Base.Iterator.t
     (* This file format also has a specialised parallelised high-throughput implementation *)
     val parallel_iter: ?linter:Base.linter_t -> ?buffered_chunks_per_thread:int ->
@@ -326,7 +326,7 @@ module FASTQ:
   sig
     (* C++-style iterators *)
     module Iterator: Base.Iterator.Type_t (* Iterator.t is opaque *)
-    (* OCaml-style iterators *)
+    (* OCaml-style iterator *)
     val iter: string Base.Iterator.t
   end
 = struct
@@ -508,7 +508,6 @@ module Tabular:
     allowing to read from the file(s) and process one record at the time *)
 module Reads:
   sig
-    include module type of Base
     type t =
       | FASTA of string
       | SingleEndFASTQ of string
@@ -518,9 +517,9 @@ module Reads:
     module Iterator: (* C++-style iterators *)
       sig
         (* Initialiser type is linter and type *)
-        type init_t = linter_t * t
+        type init_t = Base.linter_t * t
         (* Return type is read ID, segment ID, and (tag, sequence, qualities) *)
-        type ret_t = int * int * Read.t
+        type ret_t = int * int * Base.Read.t
         include Iterator_t with type init_t := init_t and type ret_t := ret_t
       end
     (* OCaml-style iterators *)
@@ -528,7 +527,6 @@ module Reads:
     val iter_se_pe: t Base.Iterator.se_pe_t
 end
 = struct
-    include Base
     type t =
       | FASTA of string
       | SingleEndFASTQ of string
@@ -537,15 +535,15 @@ end
       | Tabular of string
     module Iterator =
       struct
-        type init_t = linter_t * t
-        type ret_t = int * int * Read.t
+        type init_t = Base.linter_t * t
+        type ret_t = int * int * Base.Read.t
         type t =
           | ItEmpty
           | ItFASTA of FASTA.Iterator.t
           | ItSingleEndFASTQ of FASTQ.Iterator.t
           | ItPairedEndFASTQ of FASTQ.Iterator.t * FASTQ.Iterator.t
           (* Only the second of the two ends is stored in the iterator *)
-          | ItInterleavedFASTQ of Read.t ref * FASTQ.Iterator.t
+          | ItInterleavedFASTQ of Base.Read.t ref * FASTQ.Iterator.t
           | ItTabular of Tabular.Iterator.t
         let empty () = ItEmpty
         let is_empty = function
@@ -611,7 +609,7 @@ end
           | ItSingleEndFASTQ it ->
             FASTQ.Iterator.get it f
           | ItPairedEndFASTQ (it1, it2) ->
-            let read1 = ref Read.empty in
+            let read1 = ref Base.Read.empty in
             FASTQ.Iterator.get it1 (fun (_, _, read) -> read1 := read);
             FASTQ.Iterator.get it2 (fun (progr, _, read2) -> g (progr, 0, !read1) (progr, 1, read2))
           | ItInterleavedFASTQ (read1, it) ->
@@ -675,8 +673,8 @@ end
       end
     = struct
         type template_t =
-          | SingleEndRead of Read.t
-          | PairedEndRead of Read.t * Read.t
+          | SingleEndRead of Base.Read.t
+          | PairedEndRead of Base.Read.t * Base.Read.t
         type t = template_t Tools.StackArray.t
         let singleton = 0
         let selected = 1
@@ -717,9 +715,9 @@ end
           if f_len <> len && f_len <> 0 then
             raise_invalid_filter_length __FUNCTION__ len f_len;
           let print_fastq_record_filtered classification output read =
-            Printf.fprintf output "@%d__%s\n%s\n+\n%s\n" classification read.Read.tag read.seq read.qua
+            Printf.fprintf output "@%d__%s\n%s\n+\n%s\n" classification read.Base.Read.tag read.seq read.qua
           and print_fastq_record output read =
-            Printf.fprintf output "@%s\n%s\n+\n%s\n" read.Read.tag read.seq read.qua
+            Printf.fprintf output "@%s\n%s\n+\n%s\n" read.Base.Read.tag read.seq read.qua
           and output0 = open_out (prefix ^ ".fasta")
           and output1 = open_out (prefix ^ "_SE.fastq")
           and output2 = [| open_out (prefix ^ "_PE_1.fastq"); open_out (prefix ^ "_PE_2.fastq") |] in

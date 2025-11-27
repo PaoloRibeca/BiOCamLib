@@ -1,5 +1,5 @@
 (*
-    Tools.ml -- (c) 2015-2024 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    Tools.ml -- (c) 2015-2025 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     This file is part of BiOCamLib, the OCaml foundations upon which
     a number of the bioinformatics tools I developed are built.
@@ -143,172 +143,211 @@ module Multimap (CmpKey: ComparableType_t) (CmpVal: ComparableType_t) =
 
 (* An indexed stack, or extensible array, with additional get() and reverse (bottom-to-top) iterators.
    The interface is compatible with that of Stdlib.Stack *)
-module StackArray:
-sig
-  type !'a t
-  val create: unit -> 'a t
-  val push: 'a t -> 'a -> unit (* We depart from Stdlib conventions here and swap arguments *)
-  val push_array: 'a t -> 'a array -> unit
-  val push_stackarray: 'a t -> 'a t -> unit
-  val pop: 'a t -> 'a (* Can fail *)
-  val pop_opt: 'a t -> 'a option
-  val pop_n: 'a t -> int -> 'a (* Can fail *)
-  val top: 'a t -> 'a (* Can fail *)
-  val top_opt: 'a t -> 'a option
-  val clear: 'a t -> unit
-  val reset: 'a t -> unit
-  val copy: 'a t -> 'a t
-  val is_empty: 'a t -> bool
-  val length: 'a t -> int
-  val iter: ('a -> unit) -> 'a t -> unit
-  val iter_top: ('a -> unit) -> 'a t -> unit
-  val iteri: (int -> 'a -> unit) -> 'a t -> unit
-  val iteri_top: (int -> 'a -> unit) -> 'a t -> unit
-  (* Note that here the "reverse" iterators actually coincide with the regular ones for arrays *)
-  val riter: ('a -> unit) -> 'a t -> unit
-  val iter_bottom: ('a -> unit) -> 'a t -> unit
-  val riteri: (int -> 'a -> unit) -> 'a t -> unit
-  val iteri_bottom: (int -> 'a -> unit) -> 'a t -> unit
-  val fold: ('b -> 'a -> 'b) -> 'b -> 'a t -> 'b
-  val fold_top: ('b -> 'a -> 'b) -> 'b -> 'a t -> 'b
-  val rfold: ('b -> 'a -> 'b) -> 'b -> 'a t -> 'b
-  val fold_bottom: ('b -> 'a -> 'b) -> 'b -> 'a t -> 'b
-  val get: 'a t -> int -> 'a (* Can fail *)
-  val ( .@() ): 'a t -> int -> 'a (* Can fail *)
-  val set: 'a t -> int -> 'a -> unit (* Can fail *)
-  val ( .@() <- ): 'a t -> int -> 'a -> unit (* Can fail *)
-  val contents: 'a t -> 'a array
-end
+module Stack (Array: sig
+  include Array_t
+  include ExtendedArrayFunctionality_t with type 'a tt := 'a t and type 'a elt_tt := 'a elt_t
+end):
+  sig
+    type 'a t
+    val create: unit -> 'a t
+    val push: 'a t -> 'a Array.elt_t -> unit (* We depart from Stdlib conventions here and swap arguments *)
+    val push_array: 'a t -> 'a Array.t -> unit
+    val push_stackarray: 'a t -> 'a t -> unit
+    val pop: 'a t -> 'a Array.elt_t (* Can fail *)
+    val pop_opt: 'a t -> 'a Array.elt_t option
+    val pop_n: 'a t -> int -> 'a Array.elt_t (* Can fail *)
+    val top: 'a t -> 'a Array.elt_t (* Can fail *)
+    val top_opt: 'a t -> 'a Array.elt_t option
+    val clear: 'a t -> unit
+    val reset: 'a t -> unit
+    val copy: 'a t -> 'a t
+    val is_empty: 'a t -> bool
+    val length: 'a t -> int
+    val iter: ('a Array.elt_t -> unit) -> 'a t -> unit
+    val iter_top: ('a Array.elt_t -> unit) -> 'a t -> unit
+    val iteri: (int -> 'a Array.elt_t -> unit) -> 'a t -> unit
+    val iteri_top: (int -> 'a Array.elt_t -> unit) -> 'a t -> unit
+    (* Note that here the "reverse" iterators actually coincide with the regular ones for arrays *)
+    val riter: ('a Array.elt_t -> unit) -> 'a t -> unit
+    val iter_bottom: ('a Array.elt_t -> unit) -> 'a t -> unit
+    val riteri: (int -> 'a Array.elt_t -> unit) -> 'a t -> unit
+    val iteri_bottom: (int -> 'a Array.elt_t -> unit) -> 'a t -> unit
+    val fold: ('b Array.elt_t -> 'a Array.elt_t -> 'b Array.elt_t) -> 'b Array.elt_t -> 'a t -> 'b Array.elt_t
+    val fold_top: ('b Array.elt_t -> 'a Array.elt_t -> 'b Array.elt_t) -> 'b Array.elt_t -> 'a t -> 'b Array.elt_t
+    val rfold: ('b Array.elt_t -> 'a Array.elt_t -> 'b Array.elt_t) -> 'b Array.elt_t -> 'a t -> 'b Array.elt_t
+    val fold_bottom: ('b Array.elt_t -> 'a Array.elt_t -> 'b Array.elt_t) -> 'b Array.elt_t -> 'a t -> 'b Array.elt_t
+    val get: 'a t -> int -> 'a Array.elt_t (* Can fail *)
+    val ( .@() ): 'a t -> int -> 'a Array.elt_t (* Can fail *)
+    val set: 'a t -> int -> 'a Array.elt_t -> unit (* Can fail *)
+    val ( .@() <- ): 'a t -> int -> 'a Array.elt_t -> unit (* Can fail *)
+    val contents: 'a t -> 'a Array.t
+    val rcontents: 'a t -> 'a Array.t
+  end
 = struct
-  type 'a t = {
-    mutable data: 'a array;
-    mutable size: int
-  }
-  let create () = { data = [||]; size = 0 }
-  let push s el =
-    let aug_length = s.size + 1 in
-    if Array.length s.data >= aug_length then begin
-      s.data.(s.size) <- el;
-      s.size <- aug_length
-    end else begin
-      s.data <- Array.resize ~is_buffer:true aug_length el s.data;
-      s.size <- aug_length
-    end
-  let push_array s a =
-    let arr_lenght = Array.length a in
-    if arr_lenght > 0 then begin
-      let aug_length = s.size + arr_lenght in
-      if Array.length s.data < aug_length then
-        (* There is at least one element in the array *)
-        s.data <- Array.resize ~is_buffer:true aug_length a.(0) s.data;
-      Array.blit a 0 s.data s.size arr_lenght;
-      s.size <- aug_length
-    end
-  let push_stackarray dst src =
-    if src.size > 0 then begin
-      let aug_length = dst.size + src.size in
-      if Array.length dst.data < aug_length then
-        (* There is at least one element in the source *)
-        dst.data <- Array.resize ~is_buffer:true aug_length src.data.(0) dst.data;
-      Array.blit src.data 0 dst.data dst.size src.size;
-      dst.size <- aug_length
-    end
-  let raise_stackarray_is_empty __FUNCTION__ =
-    Exception.raise __FUNCTION__ Algorithm "Stackarray is empty"
-  let pop s =
-    if s.size > 0 then begin
-      s.size <- s.size - 1;
-      s.data.(s.size)
-    end else
-      raise_stackarray_is_empty __FUNCTION__
-  let pop_opt s =
-    if s.size > 0 then begin
-      s.size <- s.size - 1;
-      Some s.data.(s.size)
-    end else
-      None
-  let pop_n s n =
-    if s.size >= n then begin
-      s.size <- s.size - n;
-      s.data.(s.size)
-    end else
-      Exception.raise __FUNCTION__ Algorithm
-        (Printf.sprintf "Only %d elements in stackarray (requested %d)" s.size n)
-  let top s =
-    if s.size > 0 then
-      s.data.(s.size - 1)
-    else
-      raise_stackarray_is_empty __FUNCTION__
-  let top_opt s =
-    if s.size > 0 then
-      Some s.data.(s.size - 1)
-    else
-      None
-  let clear s =
-    s.size <- 0
-  let reset s =
-    s.data <- [||];
-    s.size <- 0
-  let copy s = {
-    data = Array.copy s.data;
-    size = s.size
-  }
-  let is_empty { size; _ } =
-    size = 0
-  let length { size; _ } = size
-  let iter f s =
-    for i = s.size - 1 downto 0 do
-      f s.data.(i)
-    done
-  let iteri f s =
-    for i = s.size - 1 downto 0 do
-      f i s.data.(i)
-    done
-  let riter f s =
-    for i = 0 to s.size - 1 do
-      f s.data.(i)
-    done
-  let riteri f s =
-    for i = 0 to s.size - 1 do
-      f i s.data.(i)
-    done
-  let iter_top = iter
-  let iteri_top = iteri
-  let iter_bottom = riter
-  let iteri_bottom = riteri
-  let fold f start s =
-    let rec _fold last rem =
-      if rem = 0 then
-        last
-      else begin
-        let red_rem = rem - 1 in
-        _fold (f last s.data.(red_rem)) red_rem
-      end in
-    _fold start s.size
-  let rfold f start s =
-    let rec _fold last idx =
-      if idx = s.size then
-        last
+    type 'a t = {
+      mutable data: 'a Array.t;
+      mutable size: int
+    }
+    let create () = { data = Array.empty; size = 0 }
+    let ( .@() ) = Array.get
+    let ( .@()<- ) = Array.set
+    let push s el =
+      let aug_length = s.size + 1 in
+      if Array.length s.data >= aug_length then begin
+        s.data.@(s.size) <- el;
+        s.size <- aug_length
+      end else begin
+        s.data <- Array.resize ~is_buffer:true aug_length el s.data;
+        s.size <- aug_length
+      end
+    let push_array s a =
+      let arr_length = Array.length a in
+      if arr_length > 0 then begin
+        let aug_length = s.size + arr_length in
+        if Array.length s.data < aug_length then
+          (* There is at least one element in the array *)
+          s.data <- Array.resize ~is_buffer:true aug_length a.@(0) s.data;
+        Array.blit a 0 s.data s.size arr_length;
+        s.size <- aug_length
+      end
+    let push_stackarray dst src =
+      if src.size > 0 then begin
+        let aug_length = dst.size + src.size in
+        if Array.length dst.data < aug_length then
+          (* There is at least one element in the source *)
+          dst.data <- Array.resize ~is_buffer:true aug_length src.data.@(0) dst.data;
+        Array.blit src.data 0 dst.data dst.size src.size;
+        dst.size <- aug_length
+      end
+    let raise_stackarray_is_empty __FUNCTION__ =
+      Exception.raise __FUNCTION__ Algorithm "Stackarray is empty"
+    let pop s =
+      if s.size > 0 then begin
+        s.size <- s.size - 1;
+        s.data.@(s.size)
+      end else
+        raise_stackarray_is_empty __FUNCTION__
+    let pop_opt s =
+      if s.size > 0 then begin
+        s.size <- s.size - 1;
+        Some s.data.@(s.size)
+      end else
+        None
+    let pop_n s n =
+      if s.size >= n then begin
+        s.size <- s.size - n;
+        s.data.@(s.size)
+      end else
+        Exception.raise __FUNCTION__ Algorithm
+          (Printf.sprintf "Only %d elements in stackarray (requested %d)" s.size n)
+    let top s =
+      if s.size > 0 then
+        s.data.@(s.size - 1)
       else
-        _fold (f last s.data.(idx)) (idx + 1) in
-    _fold start 0
-  let fold_top = fold
-  let fold_bottom = rfold
-  let get s idx =
-    if idx < s.size then
-      s.data.(idx)
-    else
-      Exception.raise_index_out_of_range __FUNCTION__ idx "stackarray" s.size
-  let ( .@() ) = get
-  let set s idx el =
-    if idx < s.size then
-      s.data.(idx) <- el
-    else
-      Exception.raise_index_out_of_range __FUNCTION__ idx "stackarray" s.size
-  let ( .@() <- ) = set
-  let contents s =
-    Array.sub s.data 0 s.size
-end
+        raise_stackarray_is_empty __FUNCTION__
+    let top_opt s =
+      if s.size > 0 then
+        Some s.data.@(s.size - 1)
+      else
+        None
+    let clear s =
+      s.size <- 0
+    let reset s =
+      s.data <- Array.empty;
+      s.size <- 0
+    let copy s = {
+      data = Array.copy s.data;
+      size = s.size
+    }
+    let is_empty { size; _ } =
+      size = 0
+    let length { size; _ } = size
+    let iter f s =
+      for i = s.size - 1 downto 0 do
+        f s.data.@(i)
+      done
+    let iteri f s =
+      for i = s.size - 1 downto 0 do
+        f i s.data.@(i)
+      done
+    let riter f s =
+      for i = 0 to s.size - 1 do
+        f s.data.@(i)
+      done
+    let riteri f s =
+      for i = 0 to s.size - 1 do
+        f i s.data.@(i)
+      done
+    let iter_top = iter
+    let iteri_top = iteri
+    let iter_bottom = riter
+    let iteri_bottom = riteri
+    let fold f start s =
+      let rec _fold last rem =
+        if rem = 0 then
+          last
+        else begin
+          let red_rem = rem - 1 in
+          _fold (f last s.data.@(red_rem)) red_rem
+        end in
+      _fold start s.size
+    let rfold f start s =
+      let rec _fold last idx =
+        if idx = s.size then
+          last
+        else
+          _fold (f last s.data.@(idx)) (idx + 1) in
+      _fold start 0
+    let fold_top = fold
+    let fold_bottom = rfold
+    let get s idx =
+      if idx < s.size then
+        s.data.@(idx)
+      else
+        Exception.raise_index_out_of_range __FUNCTION__ idx "stackarray" s.size
+    let set s idx el =
+      if idx < s.size then
+        s.data.@(idx) <- el
+      else
+        Exception.raise_index_out_of_range __FUNCTION__ idx "stackarray" s.size
+    let contents s =
+      Array.sub s.data 0 s.size
+    let rcontents s =
+      let red_size = s.size - 1 in
+      Array.init s.size (fun i -> s.data.@(red_size - i))
+    let ( .@() ) = get
+    let ( .@() <- ) = set
+  end
+module Array =
+  struct
+    include Array
+    module Stack = Stack (
+      struct
+        include Array
+        let empty = [||]
+        type 'a elt_t = 'a
+      end
+    )
+  end
+module ArrayStack = Array.Stack
+module StackArray = Array.Stack
+module Float =
+  struct
+    module Array =
+      struct
+        include Float.Array
+        module Stack = Stack (
+          struct
+            include Float.Array
+            let empty = Float.Array.make 0 0. (* Immutable *)
+            type 'a t = Float.Array.t
+            type 'a elt_t = float
+          end
+        )
+      end
+  end
+module FloatArrayStack = Float.Array.Stack
+module StackFloatArray = Float.Array.Stack
 
 (* Note that this is _not_ thread-safe *)
 module Timer:

@@ -32,7 +32,7 @@ and to_do_t =
   | SetLinter of Sequences.Lint.string_t Sequences.Lint.String.t
   | SetLinterKeepLowercase of bool
   | SetLinterKeepDashes of bool
-  | ProcessInput of Files.Type.t
+  | ProcessInput of Files.Reads.t
   | SetOutput of string
   | SetOutputPE of string * string
 
@@ -57,8 +57,8 @@ module Parameters =
 
 let info = {
   Tools.Argv.name = "FASTools";
-  version = "11";
-  date = "10-Nov-2025"
+  version = "12";
+  date = "27-Nov-2025"
 } and authors = [
   "2022-2025", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
@@ -231,7 +231,7 @@ let () =
       outputs := StringMap.add fname o !outputs;
       output := o
   and output_1 = ref stdout and output_2 = ref stdout in
-  let output_fast_record ?(rc = false) _ segm { Files.ReadsIterate.tag; seq; qua } =
+  let output_fast_record ?(rc = false) (_, segm, { Files.Base.Read.tag; seq; qua }) =
     let seq, qua =
       if rc then
         Sequences.Lint.rc seq, String.rev qua
@@ -259,7 +259,7 @@ let () =
     end;
     if !Parameters.flush then
       flush output
-  and output_tabular_record ?(pe = false) ?(rc = false) _ segm { Files.ReadsIterate.tag; seq; qua } =
+  and output_tabular_record ?(pe = false) ?(rc = false) (_, segm, { Files.Base.Read.tag; seq; qua }) =
     let seq, qua =
       if rc then
         Sequences.Lint.rc seq, String.rev qua
@@ -284,7 +284,12 @@ let () =
       if !Parameters.flush then
         flush output
     end in
-  let has_at_least_one_input = ref false in
+  let output_record ?(pe = false) ?(rc = false) = function
+    | Files.Reads.FASTA _ | SingleEndFASTQ _ | PairedEndFASTQ _ | InterleavedFASTQ _ ->
+      output_fast_record ~rc (* There is no PE switch for FAST output *)
+    | Tabular _ ->
+      output_tabular_record ~pe ~rc
+  and has_at_least_one_input = ref false in
   List.iter
     (function
       | ProcessInput _ ->
@@ -305,87 +310,51 @@ let () =
       | SetLinterKeepDashes b ->
         linter_keep_dashes := b
       | ProcessInput input ->
-        begin match !working_mode, input with
-        | Compact, PairedEndFASTQ _ | Compact, InterleavedFASTQ _ | Compact, Tabular _ ->
-          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
-            Files.ReadsIterate.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose
-              (output_tabular_record ~pe:true)
-        | Compact, _ ->
-          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
-            Files.ReadsIterate.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose output_tabular_record
-        | Expand, _ ->
-          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
-            Files.ReadsIterate.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose output_fast_record
-        | Match regexp, FASTA _
-        | Match regexp, SingleEndFASTQ _ ->
-          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
-            Files.ReadsIterate.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose
-              (fun i segm ({ tag; _ } as record) ->
-                if Str.matches regexp tag then
-                  output_fast_record i segm record)
-        | Match regexp, PairedEndFASTQ (file_1, file_2) ->
-          Files.FASTQ.iter_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
-            (fun i tag_1 seq_1 qua_1 tag_2 seq_2 qua_2 ->
-              if Str.matches regexp tag_1 || Str.matches regexp tag_2 then begin
-                output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = qua_1 };
-                output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = qua_2 }
-              end)
-            file_1 file_2
-        | Match regexp, InterleavedFASTQ file ->
-          Files.FASTQ.iter_il ~linter:(get_linter ()) ~verbose:!Parameters.verbose
-            (fun i tag_1 seq_1 qua_1 tag_2 seq_2 qua_2 ->
-              if Str.matches regexp tag_1 || Str.matches regexp tag_2 then begin
-                output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = qua_1 };
-                output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = qua_2 }
-              end)
-            file
-        | Match regexp, Tabular file ->
-          Files.Tabular.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose
-            (fun i tag seq qua ->
+        begin match !working_mode with
+        | Compact -> (* We convert records to tabular form *)
+          Files.Reads.iter_se_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
+            output_tabular_record
+            (fun record_1 record_2 ->
+              let output_record = output_tabular_record ~pe:true in
+              output_record record_1;
+              output_record record_2)
+            input
+        | Expand -> (* We convert records to FAST* form *)
+          Files.Reads.iter_se_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
+            output_fast_record
+            (fun record_1 record_2 ->
+              output_fast_record record_1; (* There is no PE switch for FAST output *)
+              output_fast_record record_2)
+            input
+        | Match regexp ->
+          Files.Reads.iter_se_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
+            (fun ((_, _, { tag; _ }) as record) ->
               if Str.matches regexp tag then
-                output_fast_record i 0 { tag; seq; qua })
-            (fun i tag_1 seq_1 qua_1 tag_2 seq_2 qua_2 ->
+                output_record input record)
+            (fun (_, _, { tag = tag_1; _ } as record_1) (_, _, { tag = tag_2; _ } as record_2) ->
               if Str.matches regexp tag_1 || Str.matches regexp tag_2 then begin
-                output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = qua_1 };
-                output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = qua_2 }
+                let output_record = output_record ~pe:true input in
+                output_record record_1;
+                output_record record_2
               end)
-            file
-        | RevCom, FASTA _
-        | RevCom, SingleEndFASTQ _
-        | RevCom, PairedEndFASTQ _
-        | RevCom, InterleavedFASTQ _ ->
-          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
-            Files.ReadsIterate.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose (output_fast_record ~rc:true)
-        | RevCom, Tabular _ ->
-          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
-            Files.ReadsIterate.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose
-              (output_tabular_record ~rc:true)
-        | UnQuals, FASTA _
-        | UnQuals, SingleEndFASTQ _ ->
-          Files.ReadsIterate.add_from_files Files.ReadsIterate.empty [| input |] |>
-            Files.ReadsIterate.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose
-              (fun i segm record ->
-                output_fast_record i segm { record with qua = "" })
-        | UnQuals, PairedEndFASTQ (file_1, file_2) ->
-          Files.FASTQ.iter_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
-            (fun i tag_1 seq_1 _ tag_2 seq_2 _ ->
-              output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = "" };
-              output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = "" })
-            file_1 file_2
-        | UnQuals, InterleavedFASTQ file ->
-          Files.FASTQ.iter_il ~linter:(get_linter ()) ~verbose:!Parameters.verbose
-            (fun i tag_1 seq_1 _ tag_2 seq_2 _ ->
-              output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = "" };
-              output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = "" })
-            file
-        | UnQuals, Tabular file ->
-          Files.Tabular.iter ~linter:(get_linter ()) ~verbose:!Parameters.verbose
-            (fun i tag seq _ ->
-              output_fast_record i 0 { tag; seq; qua = "" })
-            (fun i tag_1 seq_1 _ tag_2 seq_2 _ ->
-              output_fast_record i 0 { tag = tag_1; seq = seq_1; qua = "" };
-              output_fast_record i 1 { tag = tag_2; seq = seq_2; qua = "" })
-            file
+            input
+        | RevCom ->
+          Files.Reads.iter_se_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
+            (output_record ~rc:true input)
+            (fun record_1 record_2 ->
+              let output_record = output_record ~rc:true ~pe:true input in
+              output_record record_1;
+              output_record record_2)
+            input
+        | UnQuals ->
+          Files.Reads.iter_se_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
+            (fun (id, segm, read) ->
+              (output_record input) (id, segm, { read with qua = "" }))
+            (fun (id_1, segm_1, read_1) (id_2, segm_2, read_2) ->
+              let output_record = output_record ~pe:true input in
+              output_record (id_1, segm_1, { read_1 with qua = "" });
+              output_record (id_2, segm_2, { read_2 with qua = "" }))
+            input
         end
       | SetOutput fname ->
         get_output_stream fname output_1

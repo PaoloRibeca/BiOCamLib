@@ -219,14 +219,14 @@ let () =
     Sequences.Lint.String.lint !Parameters.linter
       ~keep_lowercase:!Parameters.linter_keep_lowercase ~keep_dashes:!Parameters.linter_keep_dashes in
   Files.FASTA.iter ~linter:linter_f ~verbose:!Parameters.verbose
-    (fun _ name sequence ->
+    (fun (_, _, { tag; seq; _ }) ->
       TandemRepeatExplorer.iter
         ~maximum_repeat_length:!Parameters.maximum_repeat_length
         ~minimum_locus_length:!Parameters.minimum_locus_length ~verbose:!Parameters.verbose
         (fun k_mer lo hi ->
           let len_locus = hi - lo + 1 and len_repeat = String.length k_mer in
           let periods = float_of_int len_locus /. float_of_int len_repeat in
-          Printf.printf "%s\t%d\t%d\t%d\t%d\t%.6g\t%s\n%!" name lo hi len_locus len_repeat periods k_mer)
-        sequence)
+          Printf.printf "%s\t%d\t%d\t%d\t%d\t%.6g\t%s\n%!" tag lo hi len_locus len_repeat periods k_mer)
+        seq)
     "/dev/stdin"
 

@@ -273,7 +273,7 @@ module type Vector_t =
     val map: (N.t -> N.t) -> t -> t
     val mapi: (int -> N.t -> N.t) -> t -> t
     (* More iterators *)
-    include ExtendedArrayFunctionality_t with type 'a tt = t and type 'a elt_tt = N.t
+    include ExtendedArrayFunctionality_t with type 'a tt := t and type 'a elt_tt := N.t
     (* We override the definition in ExtendedArrayFunctionality *)
     val resize: ?is_buffer:bool -> ?fill_with:N.t -> int -> t -> t
     val of_list: N.t list -> t
@@ -398,14 +398,16 @@ module Bigarray:
           !res
         include MakeExtendedArrayFunctionality (
           struct
-            type 'a tt = (N.t, T.elt_t, Bigarray.c_layout) BA1.t
-            type 'a elt_tt = N.t
+            type 'a t = (N.t, T.elt_t, Bigarray.c_layout) BA1.t
+            type 'a elt_t = N.t
+            let empty = make 0 N.zero
             let length = length
             let get = get
             let unsafe_get = unsafe_get
             let set = set
             let unsafe_set = unsafe_set
             let make = make
+            let init = init
             let sub = sub
             let blit = blit
             let iter = iter
@@ -419,6 +421,7 @@ module Bigarray:
         )
         let resize ?(is_buffer = false) ?(fill_with = N.zero) n fa =
           resize ~is_buffer n fill_with fa
+          [@@inline]
         let to_floatarray v =
           let l = length v in
           let res = Better.Float.Array.make l 0. in
@@ -431,9 +434,12 @@ module Bigarray:
       end
   end
 
-module FAVector = FloatarrayVector
+module BigArray = Bigarray
 module BigarrayVector = Bigarray.Vector
-module BAVector = BigarrayVector
+module BigArrayVector = Bigarray.Vector
+module BAVector = Bigarray.Vector
+module FloatArrayVector = FloatarrayVector
+module FAVector = FloatarrayVector
 (* The following are common instances *)
 module Int32BAVector = BAVector (
   struct
@@ -467,6 +473,26 @@ module FloatBAVector = BAVector (
   end
 )
 module FBAVector = FloatBAVector
+
+module StackBAVector (BAVector: Vector_t) = Tools.Stack (
+  struct
+    include BAVector
+    type 'a t = BAVector.t
+    type 'a elt_t = BAVector.N.t
+    (* Admittedly this one is not very elegant *)
+    let resize ?(is_buffer = false) n fill_with fa =
+      resize ~is_buffer ~fill_with n fa
+      [@@inline]
+  end
+)
+module StackInt32BAVector = StackBAVector(Int32BAVector)
+module StackI32BAVector = StackInt32BAVector
+module StackIntBAVector = StackBAVector(IntBAVector)
+module StackIBAVector = StackIntBAVector
+module StackFloat32BAVector = StackBAVector(Float32BAVector)
+module StackF32BAVector = StackFloat32BAVector
+module StackFloatBAVector = StackBAVector(FloatBAVector)
+module StackFBAVector = StackFloatBAVector
 
 module LinearFit (V: Vector_t):
   sig

@@ -330,13 +330,13 @@ module Iterator:
            The finaliser applies the iterator to the hashes accumulated so far
             and deallocates storage, pretty much as what happens when flushing *)
         val make: ?verbose:bool ->
-                  Content.Flags.t -> int -> t -> (string -> float -> unit) ->
+                  Content.Flags.t -> int -> t -> (string array -> int -> float -> unit) ->
                   (?weight:float -> int array -> unit) * (unit -> unit)
       end
     (* The two functions are accumulator and finaliser *)
     type t = (?weight:float -> string -> unit) * (unit -> unit)
     (* The last argument is the iterator function *)
-    val make: ?verbose:bool -> Content.t -> Hasher.t -> (string -> float -> unit) -> t
+    val make: ?verbose:bool -> Content.t -> Hasher.t -> (string array -> int -> float -> unit) -> t
   end
 = struct
     module Content =
@@ -631,12 +631,13 @@ module Iterator:
           let module Impl = (val impl: Hash_t) in
           match h with
           | K_mers k ->
-            let res = Impl.Accumulator1.create 128 in
+            let hs = Tools.StackArray.create () and res = Impl.Accumulator1.create 128 in
             let add h w =
               match Impl.Accumulator1.find_opt res h with
               | None ->
-                ref w |> Impl.Accumulator1.add res h
-              | Some n ->
+                (Tools.StackArray.length hs, ref w) |> Impl.Accumulator1.add res h;
+                Tools.StackArray.push hs (Impl.to_string h)
+              | Some (_, n) ->
                 n := !n +. w
               [@@inline] in
             (* Accumulator *)
@@ -665,22 +666,24 @@ module Iterator:
             let timer_id_finalizer = Tools.Timer.of_string "KMers.Iterator.Finalizer" in
             (fun () ->
               Tools.Timer.start timer_id_finalizer;
+              let hs = Tools.StackArray.contents hs in
               Impl.Accumulator1.iter
-                (fun h n ->
+                (fun _ (id, n) ->
                   if !n > 0. then begin
-                    f (Impl.to_string h) !n;
+                    f hs id !n;
                     n := 0.
                   end)
                 res;
               (*Impl.Accumulator1.clear res;*)
               Tools.Timer.stop timer_id_finalizer)
           | Gapped (k, g) ->
-            let res = Impl.Accumulator2.create 128 in
-            let add hh w =
+            let hs = Tools.StackArray.create () and res = Impl.Accumulator2.create 128 in
+            let add ((h1, h2) as hh) w =
               match Impl.Accumulator2.find_opt res hh with
               | None ->
-                ref w |> Impl.Accumulator2.add res hh
-              | Some n ->
+                (Tools.StackArray.length hs, ref w) |> Impl.Accumulator2.add res hh;
+                Tools.StackArray.push hs (Impl.to_string h1 ^ "_" ^ Impl.to_string h2)
+              | Some (_, n) ->
                 n := !n +. w
               [@@inline] in
             (* Here we just have to simulate a longer k *)
@@ -718,10 +721,11 @@ module Iterator:
             let timer_id_finalizer = Tools.Timer.of_string "KMers.Iterator.Finalizer" in
             (fun () ->
               Tools.Timer.start timer_id_finalizer;
+              let hs = Tools.StackArray.contents hs in
               Impl.Accumulator2.iter
-                (fun (h1, h2) n ->
+                (fun _ (id, n) ->
                   if !n > 0. then begin
-                    f (Impl.to_string h1 ^ "_" ^ Impl.to_string h2) !n;
+                    f hs id !n;
                     n := 0.
                   end)
                 res;

@@ -453,27 +453,32 @@ module List:
         Some hd
   end
 
-(* Note that due to the different arities for the constructors of floatarray and 'a Array.t,
-    the following only works if we define an auxiliary type tt first and we make it the same as t later *)
+(* Some additional functionality for arrays, which should work independent of
+    the actual array implementation (and in particular for both Array and Float.Array).
+   Note that due to the different arities for the constructors of floatarray and 'a Array.t,
+    the following only works if we first define auxiliary types depending on 'a
+    and then we erase the dependency when needed *)
 module type Array_t =
   sig
-    type 'a tt
-    type 'a elt_tt
-    val make: int -> 'a elt_tt -> 'a tt
-    val length: 'a tt -> int
-    val get: 'a tt -> int -> 'a elt_tt
-    val unsafe_get: 'a tt -> int -> 'a elt_tt
-    val set: 'a tt -> int -> 'a elt_tt -> unit
-    val unsafe_set: 'a tt -> int -> 'a elt_tt -> unit
-    val sub: 'a tt -> int -> int -> 'a tt
-    val blit: 'a tt -> int -> 'a tt -> int -> int -> unit
-    val iter: ('a elt_tt -> unit) -> 'a tt -> unit
-    val iteri: (int -> 'a elt_tt -> unit) -> 'a tt -> unit
-    val iter2: ('a elt_tt -> 'b elt_tt -> unit) -> 'a tt -> 'b tt -> unit
-    val map: ('a elt_tt -> 'b elt_tt) -> 'a tt -> 'b tt
-    val mapi: (int -> 'a elt_tt -> 'b elt_tt) -> 'a tt -> 'b tt
-    val of_list: 'a elt_tt list -> 'a tt
-    val to_list: 'a tt -> 'a elt_tt list
+    type 'a t
+    type 'a elt_t
+    val empty: 'a t
+    val init: int -> (int -> 'a elt_t) -> 'a t
+    val make: int -> 'a elt_t -> 'a t
+    val length: 'a t -> int
+    val get: 'a t -> int -> 'a elt_t
+    val unsafe_get: 'a t -> int -> 'a elt_t
+    val set: 'a t -> int -> 'a elt_t -> unit
+    val unsafe_set: 'a t -> int -> 'a elt_t -> unit
+    val sub: 'a t -> int -> int -> 'a t
+    val blit: 'a t -> int -> 'a t -> int -> int -> unit
+    val iter: ('a elt_t -> unit) -> 'a t -> unit
+    val iteri: (int -> 'a elt_t -> unit) -> 'a t -> unit
+    val iter2: ('a elt_t -> 'b elt_t -> unit) -> 'a t -> 'b t -> unit
+    val map: ('a elt_t -> 'b elt_t) -> 'a t -> 'b t
+    val mapi: (int -> 'a elt_t -> 'b elt_t) -> 'a t -> 'b t
+    val of_list: 'a elt_t list -> 'a t
+    val to_list: 'a t -> 'a elt_t list
   end
 module type ExtendedArrayFunctionality_t =
   sig
@@ -481,6 +486,7 @@ module type ExtendedArrayFunctionality_t =
     type 'a elt_tt
     val ( .@() ): 'a tt -> int -> 'a elt_tt
     val ( .@()<- ): 'a tt -> int -> 'a elt_tt -> unit
+    val copy: 'a tt -> 'a tt
     val riter: ('a elt_tt -> unit) -> 'a tt -> unit
     val riteri: (int -> 'a elt_tt -> unit) -> 'a tt -> unit
     val iter2i: (int -> 'a elt_tt -> 'b elt_tt -> unit) -> 'a tt -> 'b tt -> unit
@@ -492,11 +498,11 @@ module type ExtendedArrayFunctionality_t =
     val of_rlist: 'a elt_tt list -> 'a tt
     val to_rlist: 'a tt -> 'a elt_tt list
   end
-module MakeExtendedArrayFunctionality (Array: Array_t): ExtendedArrayFunctionality_t with type 'a tt = 'a Array.tt and type 'a elt_tt = 'a Array.elt_tt =
+module MakeExtendedArrayFunctionality (Array: Array_t): ExtendedArrayFunctionality_t with type 'a tt := 'a Array.t and type 'a elt_tt := 'a Array.elt_t =
   struct
-    include Array
     let ( .@() ) = Array.get
     let ( .@()<- ) = Array.set
+    let copy a = Array.init (Array.length a) (Array.get a)
     let riter f a =
       for i = Array.length a - 1 downto 0 do
         Array.unsafe_get a i |> f
@@ -559,19 +565,18 @@ module MakeExtendedArrayFunctionality (Array: Array_t): ExtendedArrayFunctionali
 module Array:
   sig
     include module type of Array
-    include ExtendedArrayFunctionality_t with type 'a tt = 'a t and type 'a elt_tt = 'a
+    include ExtendedArrayFunctionality_t with type 'a tt := 'a t and type 'a elt_tt := 'a
   end
 = struct
     include Array
     include MakeExtendedArrayFunctionality (
       struct
         include Array
-        type 'a tt = 'a t
-        type 'a elt_tt = 'a
+        let empty = [||]
+        type 'a elt_t = 'a
       end
     )
   end
-
 module Float:
   sig
     include module type of Float
@@ -579,7 +584,7 @@ module Float:
     module Array:
       sig
         include module type of Float.Array
-        include ExtendedArrayFunctionality_t with type 'a tt = t and type 'a elt_tt = float
+        include ExtendedArrayFunctionality_t with type 'a tt := t and type 'a elt_tt := float
       end
   end
 = struct
@@ -591,8 +596,9 @@ module Float:
         include MakeExtendedArrayFunctionality (
           struct
             include Float.Array
-            type 'a tt = t
-            type 'a elt_tt = float
+            let empty = Float.Array.make 0 0. (* Immutable *)
+            type 'a t = Float.Array.t
+            type 'a elt_t = float
           end
         )
       end
