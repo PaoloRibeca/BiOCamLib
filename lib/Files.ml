@@ -675,21 +675,21 @@ end
         type template_t =
           | SingleEndRead of Base.Read.t
           | PairedEndRead of Base.Read.t * Base.Read.t
-        type t = template_t Tools.StackArray.t
+        type t = template_t Tools.ArrayStack.t
         let singleton = 0
         let selected = 1
         let unmarked = 2
         type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-        let empty = Tools.StackArray.create ()
+        let empty = Tools.ArrayStack.create ()
         let iter f =
-          Tools.StackArray.riteri
+          Tools.ArrayStack.riteri
             (fun templ_i -> function
               | SingleEndRead segm ->
                 f (templ_i, 0, segm)
               | PairedEndRead (segm1, segm2) ->
                 f (templ_i, 0, segm1);
                 f (templ_i, 1, segm2))
-        let length = Tools.StackArray.length
+        let length = Tools.ArrayStack.length
         let seq_length store =
           let res = ref 0 in
           iter (fun (_, _, segm) -> res := !res + String.length segm.seq) store;
@@ -698,19 +698,19 @@ end
                           store file =
           iter_se_pe ~linter ~verbose
             (fun (_, _, read) ->
-              SingleEndRead read |> Tools.StackArray.push store)
+              SingleEndRead read |> Tools.ArrayStack.push store)
             (fun (_, _, read1) (_, _, read2) ->
-              PairedEndRead (read1, read2) |> Tools.StackArray.push store)
+              PairedEndRead (read1, read2) |> Tools.ArrayStack.push store)
             file;
           if verbose then
             Printf.eprintf "(%s): %d reads in store so far (total length %d)\n%!"
-              __FUNCTION__ (Tools.StackArray.length store) (seq_length store)
+              __FUNCTION__ (Tools.ArrayStack.length store) (seq_length store)
         let raise_invalid_filter_length __FUNCTION__ num_reads len =
           Exception.raise __FUNCTION__ Algorithm
             (Printf.sprintf
               "Filter length must be zero or the same as the number of reads, %d (found %d)" num_reads len)
         let to_fast ?(verbose = false) store filter prefix =
-          let len = Tools.StackArray.length store and f_len = Bigarray.Array1.dim filter in
+          let len = Tools.ArrayStack.length store and f_len = Bigarray.Array1.dim filter in
           (* The filter can be empty *)
           if f_len <> len && f_len <> 0 then
             raise_invalid_filter_length __FUNCTION__ len f_len;
@@ -723,7 +723,7 @@ end
           and output2 = [| open_out (prefix ^ "_PE_1.fastq"); open_out (prefix ^ "_PE_2.fastq") |] in
           if verbose then
             Printf.eprintf "(%s): Writing %d reads...%!" __FUNCTION__ len;
-          Tools.StackArray.riteri begin
+          Tools.ArrayStack.riteri begin
             if f_len <> 0 then
               (fun i -> function
                 | SingleEndRead segm ->
@@ -752,14 +752,14 @@ end
           if verbose then
             Printf.eprintf " done.\n%!"
         let to_tabular ?(verbose = false) store filter path =
-          let len = Tools.StackArray.length store and f_len = Bigarray.Array1.dim filter in
+          let len = Tools.ArrayStack.length store and f_len = Bigarray.Array1.dim filter in
           (* The filter can be empty *)
           if f_len <> len && f_len <> 0 then
             raise_invalid_filter_length __FUNCTION__ len f_len;
           let output = open_out path in
           if verbose then
             Printf.eprintf "(%s): Writing %d reads...%!" __FUNCTION__ len;
-          Tools.StackArray.riteri begin
+          Tools.ArrayStack.riteri begin
             if f_len <> 0 then
               (fun i -> function
                 | SingleEndRead segm ->

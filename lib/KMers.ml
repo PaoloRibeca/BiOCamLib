@@ -631,12 +631,12 @@ module Iterator:
           let module Impl = (val impl: Hash_t) in
           match h with
           | K_mers k ->
-            let hs = Tools.StackArray.create () and res = Impl.Accumulator1.create 128 in
+            let hs = Tools.ArrayStack.create () and res = Impl.Accumulator1.create 128 in
             let add h w =
               match Impl.Accumulator1.find_opt res h with
               | None ->
-                (Tools.StackArray.length hs, ref w) |> Impl.Accumulator1.add res h;
-                Tools.StackArray.push hs (Impl.to_string h)
+                (Tools.ArrayStack.length hs, ref w) |> Impl.Accumulator1.add res h;
+                Tools.ArrayStack.push hs (Impl.to_string h)
               | Some (_, n) ->
                 n := !n +. w
               [@@inline] in
@@ -666,7 +666,7 @@ module Iterator:
             let timer_id_finalizer = Tools.Timer.of_string "KMers.Iterator.Finalizer" in
             (fun () ->
               Tools.Timer.start timer_id_finalizer;
-              let hs = Tools.StackArray.contents hs in
+              let hs = Tools.ArrayStack.contents hs in
               Impl.Accumulator1.iter
                 (fun _ (id, n) ->
                   if !n > 0. then begin
@@ -677,12 +677,12 @@ module Iterator:
               (*Impl.Accumulator1.clear res;*)
               Tools.Timer.stop timer_id_finalizer)
           | Gapped (k, g) ->
-            let hs = Tools.StackArray.create () and res = Impl.Accumulator2.create 128 in
+            let hs = Tools.ArrayStack.create () and res = Impl.Accumulator2.create 128 in
             let add ((h1, h2) as hh) w =
               match Impl.Accumulator2.find_opt res hh with
               | None ->
-                (Tools.StackArray.length hs, ref w) |> Impl.Accumulator2.add res hh;
-                Tools.StackArray.push hs (Impl.to_string h1 ^ "_" ^ Impl.to_string h2)
+                (Tools.ArrayStack.length hs, ref w) |> Impl.Accumulator2.add res hh;
+                Tools.ArrayStack.push hs (Impl.to_string h1 ^ "_" ^ Impl.to_string h2)
               | Some (_, n) ->
                 n := !n +. w
               [@@inline] in
@@ -721,7 +721,7 @@ module Iterator:
             let timer_id_finalizer = Tools.Timer.of_string "KMers.Iterator.Finalizer" in
             (fun () ->
               Tools.Timer.start timer_id_finalizer;
-              let hs = Tools.StackArray.contents hs in
+              let hs = Tools.ArrayStack.contents hs in
               Impl.Accumulator2.iter
                 (fun _ (id, n) ->
                   if !n > 0. then begin

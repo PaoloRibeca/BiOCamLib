@@ -152,7 +152,7 @@ end):
     val create: unit -> 'a t
     val push: 'a t -> 'a Array.elt_t -> unit (* We depart from Stdlib conventions here and swap arguments *)
     val push_array: 'a t -> 'a Array.t -> unit
-    val push_stackarray: 'a t -> 'a t -> unit
+    val push_arraystack: 'a t -> 'a t -> unit
     val pop: 'a t -> 'a Array.elt_t (* Can fail *)
     val pop_opt: 'a t -> 'a Array.elt_t option
     val pop_n: 'a t -> int -> 'a Array.elt_t (* Can fail *)
@@ -210,7 +210,7 @@ end):
         Array.blit a 0 s.data s.size arr_length;
         s.size <- aug_length
       end
-    let push_stackarray dst src =
+    let push_arraystack dst src =
       if src.size > 0 then begin
         let aug_length = dst.size + src.size in
         if Array.length dst.data < aug_length then
@@ -219,14 +219,14 @@ end):
         Array.blit src.data 0 dst.data dst.size src.size;
         dst.size <- aug_length
       end
-    let raise_stackarray_is_empty __FUNCTION__ =
-      Exception.raise __FUNCTION__ Algorithm "Stackarray is empty"
+    let raise_arraystack_is_empty __FUNCTION__ =
+      Exception.raise __FUNCTION__ Algorithm "Arraystack is empty"
     let pop s =
       if s.size > 0 then begin
         s.size <- s.size - 1;
         s.data.@(s.size)
       end else
-        raise_stackarray_is_empty __FUNCTION__
+        raise_arraystack_is_empty __FUNCTION__
     let pop_opt s =
       if s.size > 0 then begin
         s.size <- s.size - 1;
@@ -239,12 +239,12 @@ end):
         s.data.@(s.size)
       end else
         Exception.raise __FUNCTION__ Algorithm
-          (Printf.sprintf "Only %d elements in stackarray (requested %d)" s.size n)
+          (Printf.sprintf "Only %d elements in arraystack (requested %d)" s.size n)
     let top s =
       if s.size > 0 then
         s.data.@(s.size - 1)
       else
-        raise_stackarray_is_empty __FUNCTION__
+        raise_arraystack_is_empty __FUNCTION__
     let top_opt s =
       if s.size > 0 then
         Some s.data.@(s.size - 1)
@@ -304,12 +304,12 @@ end):
       if idx < s.size then
         s.data.@(idx)
       else
-        Exception.raise_index_out_of_range __FUNCTION__ idx "stackarray" s.size
+        Exception.raise_index_out_of_range __FUNCTION__ idx "arraystack" s.size
     let set s idx el =
       if idx < s.size then
         s.data.@(idx) <- el
       else
-        Exception.raise_index_out_of_range __FUNCTION__ idx "stackarray" s.size
+        Exception.raise_index_out_of_range __FUNCTION__ idx "arraystack" s.size
     let contents s =
       Array.sub s.data 0 s.size
     let rcontents s =
@@ -330,7 +330,6 @@ module Array =
     )
   end
 module ArrayStack = Array.Stack
-module StackArray = Array.Stack
 module Float =
   struct
     module Array =
@@ -347,7 +346,6 @@ module Float =
       end
   end
 module FloatArrayStack = Float.Array.Stack
-module StackFloatArray = Float.Array.Stack
 
 (* Note that this is _not_ thread-safe *)
 module Timer:
@@ -362,20 +360,20 @@ module Timer:
   end
 = struct
     type t = int
-    let id_to_string = StackArray.create ()
+    let id_to_string = ArrayStack.create ()
     and string_to_id = ref StringMap.empty
-    let counters = StackArray.create ()
-    and starts = StackArray.create ()
-    let ( .@() ) = StackArray.( .@() )
-    and ( .@() <- ) = StackArray.( .@() <- )
+    let counters = ArrayStack.create ()
+    and starts = ArrayStack.create ()
+    let ( .@() ) = ArrayStack.( .@() )
+    and ( .@() <- ) = ArrayStack.( .@() <- )
     let of_string s =
       match StringMap.find_opt s !string_to_id with
       | None ->
-        let id = StackArray.length id_to_string in
-        StackArray.push id_to_string s;
+        let id = ArrayStack.length id_to_string in
+        ArrayStack.push id_to_string s;
         string_to_id := StringMap.add s id !string_to_id;
-        StackArray.push counters 0.;
-        StackArray.push starts 0.;
+        ArrayStack.push counters 0.;
+        ArrayStack.push starts 0.;
         id
       | Some id ->
         id
@@ -451,13 +449,13 @@ module Trie:
       The integer is the hashed index of the string, with -1 indicating absence *)
     type node_t = Node of int * node_t array
     type t = {
-      hash: string StackArray.t;
+      hash: string ArrayStack.t;
       trie: node_t
     }
     (* Note that this is in fact immutable *)
     let empty_node = Node (-1, [||])
     let create () = {
-      hash = StackArray.create ();
+      hash = ArrayStack.create ();
       trie = empty_node
     }
     let to_string t =
@@ -486,8 +484,8 @@ module Trie:
             (* This means that the string is already in the dictionary *)
               t.trie
             else begin
-              let id = StackArray.length t.hash in
-              StackArray.push t.hash s;
+              let id = ArrayStack.length t.hash in
+              ArrayStack.push t.hash s;
               Node (id, ta)
             end
           else
@@ -498,8 +496,8 @@ module Trie:
                 ta
             and c = Char.code s.[i] in
             if ta.(c) = empty_node then begin
-              let id = StackArray.length t.hash in
-              StackArray.push t.hash s;
+              let id = ArrayStack.length t.hash in
+              ArrayStack.push t.hash s;
               let tail = Node (id, [||]) |> ref in
               for ii = n - 1 downto i + 1 do
                 let ta = Array.make 256 empty_node in
@@ -511,14 +509,14 @@ module Trie:
               ta.(c) <- _add (i + 1) ta.(c);
             Node (path_ending_here, ta) in
       { t with trie = _add 0 t.trie }
-    let length t = StackArray.length t.hash
+    let length t = ArrayStack.length t.hash
     let nth t i =
-      let l = StackArray.length t.hash in
+      let l = ArrayStack.length t.hash in
       if i < 0 || i >= l then
         Exception.raise_index_out_of_range __FUNCTION__ i "dictionary" l
       else
-        StackArray.(t.hash.@(i))
-    let all t = StackArray.contents t.hash
+        ArrayStack.(t.hash.@(i))
+    let all t = ArrayStack.contents t.hash
     (* Remember that in all the next functions there is only exactly _one_ path to explore *)
     let _longest_substring t s idx =
       let i = ref idx and n = String.length s and current_node = ref t.trie and res = ref (idx, -1) in

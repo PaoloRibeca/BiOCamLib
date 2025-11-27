@@ -474,7 +474,7 @@ module FloatBAVector = BAVector (
 )
 module FBAVector = FloatBAVector
 
-module StackBAVector (BAVector: Vector_t) = Tools.Stack (
+module BAVectorStack (BAVector: Vector_t) = Tools.Stack (
   struct
     include BAVector
     type 'a t = BAVector.t
@@ -485,14 +485,14 @@ module StackBAVector (BAVector: Vector_t) = Tools.Stack (
       [@@inline]
   end
 )
-module StackInt32BAVector = StackBAVector(Int32BAVector)
-module StackI32BAVector = StackInt32BAVector
-module StackIntBAVector = StackBAVector(IntBAVector)
-module StackIBAVector = StackIntBAVector
-module StackFloat32BAVector = StackBAVector(Float32BAVector)
-module StackF32BAVector = StackFloat32BAVector
-module StackFloatBAVector = StackBAVector(FloatBAVector)
-module StackFBAVector = StackFloatBAVector
+module Int32BAVectorStack = BAVectorStack(Int32BAVector)
+module I32BAVectorStack = Int32BAVectorStack
+module IntBAVectorStack = BAVectorStack(IntBAVector)
+module IBAVectorStack = IntBAVectorStack
+module Float32BAVectorStack = BAVectorStack(Float32BAVector)
+module F32BAVectorStack = Float32BAVectorStack
+module FloatBAVectorStack = BAVectorStack(FloatBAVector)
+module FBAVectorStack = FloatBAVectorStack
 
 module LinearFit (V: Vector_t):
   sig

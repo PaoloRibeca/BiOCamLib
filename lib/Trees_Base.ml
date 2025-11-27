@@ -235,30 +235,30 @@ module Newick:
         end in
       dfs_map_rec t
     (*let dfs_flatten_as_subtrees t =
-      let res = Tools.StackArray.create () in
+      let res = Tools.ArrayStack.create () in
       let rec dfs_rec (Node (_, edges) as t) =
-        Tools.StackArray.push res t;
+        Tools.ArrayStack.push res t;
         Array.iter
           (fun (_, subnode) ->
             dfs_rec subnode)
           edges in
       dfs_rec t;
-      Tools.StackArray.contents res*)
+      Tools.ArrayStack.contents res*)
     type flat_t = edge_t * int * node_t * (edge_t * int) array
     let dfs_flatten t =
-      let res = Tools.StackArray.create () in
+      let res = Tools.ArrayStack.create () in
       let rec dfs_rec (edge_prev, idx_prev) (Node (node, edges)) =
-        Tools.StackArray.push res (edge_prev, idx_prev, node, [||]);
-        let idx_curr = Tools.StackArray.length res - 1 in
+        Tools.ArrayStack.push res (edge_prev, idx_prev, node, [||]);
+        let idx_curr = Tools.ArrayStack.length res - 1 in
         let v =
           Array.map
             (fun (edge, subnode) ->
               edge, dfs_rec (edge, idx_curr) subnode)
             edges in
-        Tools.StackArray.(res.@(idx_curr) <- edge_prev, idx_prev, node, v);
+        Tools.ArrayStack.(res.@(idx_curr) <- edge_prev, idx_prev, node, v);
         idx_curr in
       ignore (dfs_rec (edge (), -1) t);
-      Tools.StackArray.contents res
+      Tools.ArrayStack.contents res
     module Queue = Set.Make (MakeComparable (struct type t = float * int end))
     let dijkstra fl n =
       let l = Array.length fl in
