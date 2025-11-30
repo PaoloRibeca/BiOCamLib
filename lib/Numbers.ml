@@ -362,10 +362,10 @@ module Bigarray:
              This is incompatible with the semantics of Stdlib.Array.sub
               which DOES copy content, and would produce buffer errors
               as content becomes mutable *)
-          if length ba < l then
-            Exception.raise_index_out_of_range __FUNCTION__ l "vector" (length ba);
+          if length ba < (i + l) then
+            Exception.raise_index_out_of_range __FUNCTION__ (i + l) "vector" (length ba);
           let res = BA1.create T.elt Bigarray.C_layout l in
-          BA1.(blit (sub ba 0 l) res);
+          BA1.(blit (sub ba i l) res);
           res
         let blit ba1 i1 ba2 i2 l = BA1.(blit (sub ba1 i1 l) (sub ba2 i2 l))
         let fill ba i l n = BA1.(fill (sub ba i l) n)

@@ -177,8 +177,8 @@ module String:
     include module type of String
     val ( ^ ): string -> string -> string
     val ( .@() ): string -> int -> char
-    (* The string comparison function you would have always liked to have
-        and never really dared to ask for *)
+    (* The comparison function needed to sort large numbers represented as strings.
+       For it to work, they must NOT have trailing zeros though *)
     val compare_lexicolength: string -> string -> int
     val rev: string -> string
     val accum: string ref -> string -> unit
