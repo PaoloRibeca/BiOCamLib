@@ -356,7 +356,17 @@ module Bigarray:
         let ( .--() ) = decr
         let decr_by ba n v = ba.@(n) <- N.(ba.@(n) - v) [@@inline]
         let ( .-()<- ) = decr_by
-        let sub = BA1.sub
+        let sub ba i l =
+          (* Note that this CANNOT be BA1.sub, as BA1.sub does not copy content
+              but rather just returns a pointer to the same buffer.
+             This is incompatible with the semantics of Stdlib.Array.sub
+              which DOES copy content, and would produce buffer errors
+              as content becomes mutable *)
+          if length ba < l then
+            Exception.raise_index_out_of_range __FUNCTION__ l "vector" (length ba);
+          let res = BA1.create T.elt Bigarray.C_layout l in
+          BA1.(blit (sub ba 0 l) res);
+          res
         let blit ba1 i1 ba2 i2 l = BA1.(blit (sub ba1 i1 l) (sub ba2 i2 l))
         let fill ba i l n = BA1.(fill (sub ba i l) n)
         let iter f v =
