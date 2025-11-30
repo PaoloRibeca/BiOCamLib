@@ -24,9 +24,10 @@ open Better
 type working_mode_t =
   | Compact
   | Expand
-  | Match of Str.regexp
   | RevCom
   | UnQuals
+  | Match of Str.regexp
+  | Rename of Str.regexp * string
 and to_do_t =
   | SetWorkingMode of working_mode_t
   | SetLinter of Sequences.Lint.string_t Sequences.Lint.String.t
@@ -57,8 +58,8 @@ module Parameters =
 
 let info = {
   Tools.Argv.name = "FASTools";
-  version = "12";
-  date = "27-Nov-2025"
+  version = "13";
+  date = "30-Nov-2025"
 } and authors = [
   "2022-2025", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
@@ -80,14 +81,6 @@ let () =
       [ "split each tab-separated line into one or more FASTA/FASTQ records" ],
       TA.Optional,
       (fun _ -> SetWorkingMode Expand |> List.accum Parameters.program);
-    [ "match"; "-m"; "--match" ],
-      Some "<regexp>",
-      [ "select sequence names matching the specified regexp";
-        "in FASTA/FASTQ records or tab-separated lines.";
-        "The regexp must be defined according to <https://ocaml.org/api/Str.html>.";
-        "For paired-end files, the pair matches when at least one name matches." ],
-      TA.Optional,
-      (fun _ -> SetWorkingMode (Match (TA.get_parameter () |> Str.regexp)) |> List.accum Parameters.program);
     [ "revcom"; "-r"; "--revcom" ],
       None,
       [ "reverse-complement sequences (and reverse qualities if present)";
@@ -99,6 +92,26 @@ let () =
       [ "drop qualities in FASTA/FASTQ records or tab-separated lines" ],
       TA.Optional,
       (fun _ -> SetWorkingMode UnQuals |> List.accum Parameters.program);
+    [ "match"; "-m"; "--match" ],
+      Some "<regexp>",
+      [ "select sequence names matching the specified regexp";
+        "in FASTA/FASTQ records or tab-separated lines.";
+        "The regexp must be defined according to <https://ocaml.org/api/Str.html>.";
+        "For paired-end files, the pair matches when at least one name matches." ],
+      TA.Optional,
+      (fun _ -> SetWorkingMode (Match (TA.get_parameter () |> Str.regexp)) |> List.accum Parameters.program);
+    [ "rename"; "-R"; "--rename" ],
+      Some "<regexp> <replacement>",
+      [ "replace with the provided pattern all the instances of the specified";
+        "regexp occurring in the sequence names of FASTA/FASTQ records";
+        "or tab-separated lines.";
+        "The regexp must be defined according to <https://ocaml.org/api/Str.html>.";
+        "Replacement expressions can contain identifiers \\1 ... \\9 for the groups";
+        "matched by the regular expression; \\0 represents the full match" ],
+      TA.Optional,
+      (fun _ ->
+        let regexp = TA.get_parameter () |> Str.regexp in
+        SetWorkingMode (Rename (regexp, TA.get_parameter ())) |> List.accum Parameters.program);
     TA.make_separator_multiline [ "Input/Output."; "Executed delayed in order of specification, default='-F'." ];
     [ "-f"; "--fasta" ],
       Some "<fasta_file_name>",
@@ -178,9 +191,9 @@ let () =
         "Use '/dev/stdout' for standard output" ],
       TA.Default (Fun.const "/dev/stdout"),
       (fun _ ->
-        let output_1 = TA.get_parameter () in
-        let output_2 = TA.get_parameter () in
-        SetOutputPE (output_1, output_2) |> List.accum Parameters.program);
+        let output1 = TA.get_parameter () in
+        let output2 = TA.get_parameter () in
+        SetOutputPE (output1, output2) |> List.accum Parameters.program);
     [ "--flush"; "--flush-output" ],
       None,
       [ "flush output after each record (global option)" ],
@@ -230,7 +243,7 @@ let () =
       let o = open_out fname in
       outputs := StringMap.add fname o !outputs;
       output := o
-  and output_1 = ref stdout and output_2 = ref stdout in
+  and output1 = ref stdout and output2 = ref stdout in
   let output_fast_record ?(rc = false) (_, segm, { Files.Base.Read.tag; seq; qua }) =
     let seq, qua =
       if rc then
@@ -239,8 +252,8 @@ let () =
         seq, qua
     and output =
       match segm with
-      | 0 -> !output_1
-      | 1 -> !output_2
+      | 0 -> !output1
+      | 1 -> !output2
       | _ -> assert false in
     if qua = "" then begin
       output_char output '>';
@@ -267,8 +280,8 @@ let () =
         seq, qua
     and output =
       match segm with
-      | 0 -> !output_1
-      | 1 -> !output_2
+      | 0 -> !output1
+      | 1 -> !output2
       | _ -> assert false in
     output_string output tag;
     output_char output '\t';
@@ -277,7 +290,7 @@ let () =
       output_char output '\t';
       output_string output qua
     end;
-    if pe && !output_1 = !output_2 && segm = 0 then
+    if pe && !output1 = !output2 && segm = 0 then
       output_char output '\t'
     else begin
       output_char output '\n';
@@ -314,52 +327,61 @@ let () =
         | Compact -> (* We convert records to tabular form *)
           Files.Reads.iter_se_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
             output_tabular_record
-            (fun record_1 record_2 ->
+            (fun record1 record2 ->
               let output_record = output_tabular_record ~pe:true in
-              output_record record_1;
-              output_record record_2)
+              output_record record1;
+              output_record record2)
             input
         | Expand -> (* We convert records to FAST* form *)
           Files.Reads.iter_se_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
             output_fast_record
-            (fun record_1 record_2 ->
-              output_fast_record record_1; (* There is no PE switch for FAST output *)
-              output_fast_record record_2)
+            (fun record1 record2 ->
+              output_fast_record record1; (* There is no PE switch for FAST output *)
+              output_fast_record record2)
+            input
+        | RevCom ->
+          Files.Reads.iter_se_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
+            (output_record ~rc:true input)
+            (fun record1 record2 ->
+              let output_record = output_record ~rc:true ~pe:true input in
+              output_record record1;
+              output_record record2)
+            input
+        | UnQuals ->
+          Files.Reads.iter_se_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
+            (fun (id, segm, read) ->
+              (output_record input) (id, segm, { read with qua = "" }))
+            (fun (id1, segm1, read1) (id2, segm2, read2) ->
+              let output_record = output_record ~pe:true input in
+              output_record (id1, segm1, { read1 with qua = "" });
+              output_record (id2, segm2, { read2 with qua = "" }))
             input
         | Match regexp ->
           Files.Reads.iter_se_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
             (fun ((_, _, { tag; _ }) as record) ->
               if Str.matches regexp tag then
                 output_record input record)
-            (fun (_, _, { tag = tag_1; _ } as record_1) (_, _, { tag = tag_2; _ } as record_2) ->
-              if Str.matches regexp tag_1 || Str.matches regexp tag_2 then begin
+            (fun (_, _, { tag = tag1; _ } as record1) (_, _, { tag = tag2; _ } as record2) ->
+              if Str.matches regexp tag1 || Str.matches regexp tag2 then begin
                 let output_record = output_record ~pe:true input in
-                output_record record_1;
-                output_record record_2
+                output_record record1;
+                output_record record2
               end)
             input
-        | RevCom ->
+        | Rename (regexp, replacement) ->
           Files.Reads.iter_se_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
-            (output_record ~rc:true input)
-            (fun record_1 record_2 ->
-              let output_record = output_record ~rc:true ~pe:true input in
-              output_record record_1;
-              output_record record_2)
-            input
-        | UnQuals ->
-          Files.Reads.iter_se_pe ~linter:(get_linter ()) ~verbose:!Parameters.verbose
-            (fun (id, segm, read) ->
-              (output_record input) (id, segm, { read with qua = "" }))
-            (fun (id_1, segm_1, read_1) (id_2, segm_2, read_2) ->
+            (fun (id, segm, ({ tag; _ } as read)) ->
+              output_record input (id, segm, { read with tag = Str.global_replace regexp replacement tag }))
+            (fun (id1, segm1, ({ tag = tag1; _ } as read1)) (id2, segm2, ({ tag = tag2; _ } as read2)) ->
               let output_record = output_record ~pe:true input in
-              output_record (id_1, segm_1, { read_1 with qua = "" });
-              output_record (id_2, segm_2, { read_2 with qua = "" }))
+              output_record (id1, segm1, { read1 with tag = Str.global_replace regexp replacement tag1 });
+              output_record (id2, segm2, { read2 with tag = Str.global_replace regexp replacement tag2 }))
             input
         end
       | SetOutput fname ->
-        get_output_stream fname output_1
-      | SetOutputPE (fname_1, fname_2) ->
-        get_output_stream fname_1 output_1;
-        get_output_stream fname_2 output_2)
+        get_output_stream fname output1
+      | SetOutputPE (fname1, fname2) ->
+        get_output_stream fname1 output1;
+        get_output_stream fname2 output2)
     (List.rev !Parameters.program)
 
