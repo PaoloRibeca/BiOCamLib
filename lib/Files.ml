@@ -525,7 +525,7 @@ module Reads:
     (* OCaml-style iterators *)
     val iter: t Base.Iterator.t
     val iter_se_pe: t Base.Iterator.se_pe_t
-end
+  end
 = struct
     type t =
       | FASTA of string
