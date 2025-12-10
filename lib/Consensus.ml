@@ -32,18 +32,18 @@ include (
   struct
     (* PRIVATE *)
     let dashes_re = Str.regexp "[-]+"
-    let check_percentage arg_name n =
+    let check_percentage __FUNCTION__ arg_name n =
       if n < 0 || n >= 100 then
-        Printf.sprintf "(%s): Invalid value %d to percentage argument '%s'" __FUNCTION__ n arg_name
-          |> failwith
+        Exception.raise __FUNCTION__ Initialize
+          (Printf.sprintf "Argument '%s' must be a percentage (found %d)" arg_name n);
     (* PUBLIC *)
     module Alignment =
       struct
         let remove_tips ?(tip_gap_multiplier = 2.5) ?(max_tip_threshold = 30) s =
           if tip_gap_multiplier < 0. then
-            Printf.sprintf "(%s): Negative value %g to argument 'tip_gap_multiplier'" __FUNCTION__ tip_gap_multiplier
-              |> failwith;
-          check_percentage "max_tip_threshold" max_tip_threshold;
+            Exception.raise __FUNCTION__ Initialize
+              (Printf.sprintf "Argument 'tip_gap_multiplier' cannot be negative (found %g)" tip_gap_multiplier);
+          check_percentage __FUNCTION__ "max_tip_threshold" max_tip_threshold;
           let split_at_dashes = String.Split.full_as_list dashes_re s in
           let max_deleted_len =
             begin
@@ -114,31 +114,34 @@ include (
         ?(tip_gap_multiplier = 2.5) ?(max_tip_threshold = 30) ?(min_branch_threshold = 40)
         ?(consensus_window = 7) ?(min_coverage = 5) al =
       if tip_gap_multiplier < 0. then
-        Printf.sprintf "(%s): Negative value %g to argument 'tip_gap_multiplier'" __FUNCTION__ tip_gap_multiplier
-          |> failwith;
-      check_percentage "max_tip_threshold" max_tip_threshold;
-      check_percentage "min_branch_threshold" min_branch_threshold;
+        Exception.raise __FUNCTION__ Initialize
+          (Printf.sprintf "Argument 'tip_gap_multiplier' cannot be negative (found %g)" tip_gap_multiplier);
+      check_percentage __FUNCTION__ "max_tip_threshold" max_tip_threshold;
+      check_percentage __FUNCTION__ "min_branch_threshold" min_branch_threshold;
       if consensus_window < 1 then
-        Printf.sprintf "(%s): Argument 'consensus_window' must be positive (found %d)" __FUNCTION__ consensus_window
-          |> failwith;
+        Exception.raise __FUNCTION__ Initialize
+          (Printf.sprintf "Argument 'consensus_window' must be positive (found %d)" consensus_window);
       if min_coverage < 0 then
-        Printf.sprintf "(%s): Negative value %d to argument 'min_coverage'" __FUNCTION__ min_coverage |> failwith;
+        Exception.raise __FUNCTION__ Initialize
+          (Printf.sprintf "Argument 'min_coverage' cannot be negative (found %d)" min_coverage);
       let n_seqs = Array.length al in
       if n_seqs = 0 then
         ""
       else begin
         let seq_len = String.length al.(0) in
         if consensus_window < 0 || consensus_window > seq_len then
-          Printf.sprintf "(%s): Argument 'consensus_window' must be non-negative and no greater than alignment length"
-            __FUNCTION__ |> failwith;
+          Exception.raise __FUNCTION__ Initialize
+            (Printf.sprintf
+              "Argument 'consensus_window' cannot be negative or greater than the alignment length %d (found %d)"
+              seq_len consensus_window);
         (* We lint sequences and remove tips *)
         let al =
           Array.mapi
             (fun i seq ->
               if String.length seq <> seq_len then
-                Printf.sprintf "(%s): Incompatible sequence length on line %d (expected %d, found %d)"
-                  __FUNCTION__ i seq_len (String.length seq)
-                |> failwith;
+                Exception.raise __FUNCTION__ IO_Format
+                  (Printf.sprintf "Incompatible sequence length on line %d (expected %d, found %d)"
+                    i seq_len (String.length seq));
               Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:true seq
                 |> Alignment.remove_tips ~tip_gap_multiplier ~max_tip_threshold |> Bytes.of_string)
             al in

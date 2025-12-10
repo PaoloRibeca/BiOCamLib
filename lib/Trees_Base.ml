@@ -136,16 +136,19 @@ module Newick:
        When they are specified, length >= 0. and 0. >= bootstrap, probability >= 1. *)
     let edge ?(length = -1.) ?(bootstrap = -1.) ?(probability = -1.)
              ?(dict = StringMap.empty) ?(is_ghost = false) () =
+      let fail parameter_name v =
+        Exception.raise __FUNCTION__ Initialize
+          (Printf.sprintf "Invalid value for parameter '%s' (found %g)" parameter_name v) in
       if length < 0. && length <> -1. then
-        Printf.sprintf "(%s): Invalid length parameter (found %g)" __FUNCTION__ length |> failwith;
-      let check_value what v =
+        fail "length" length;
+      let check_fraction what v =
         if (v < 0. && v <> -1.) || v > 1. then
-          Printf.sprintf "(%s): Invalid %s parameter (found %g)" __FUNCTION__ what v |> failwith;
+          fail what v;
         v in
       { edge_is_ghost = is_ghost;
         edge_length = length;
-        edge_bootstrap = check_value "bootstrap" bootstrap;
-        edge_probability = check_value "probability" probability;
+        edge_bootstrap = check_fraction "bootstrap" bootstrap;
+        edge_probability = check_fraction "probability" probability;
         edge_dict = dict }
     let join ?(name = "") ?(dict = StringMap.empty) subs =
       Node ({ node_is_root = false; node_hybrid = None; node_name = name; node_dict = dict }, subs)
@@ -263,7 +266,7 @@ module Newick:
     let dijkstra fl n =
       let l = Array.length fl in
       if n < 0 || n >= l then
-        Printf.sprintf "(%s): Index %d is out of range" __FUNCTION__ n |> failwith;
+        Exception.raise_index_out_of_range __FUNCTION__ n "node set" l;
       let queue = ref Queue.empty and res = Float.Array.make l Float.infinity in
       Float.Array.set res n 0.;
       Float.Array.iteri

@@ -381,7 +381,7 @@ module Exception =
         (function
           | E _ as e -> Some (to_string e)
           | _ -> None)
-    let fail e =
+    let failwith e =
       to_string e |> failwith
     let raise __FUNCTION__ kind message =
       E (kind, __FUNCTION__, message) |> raise
