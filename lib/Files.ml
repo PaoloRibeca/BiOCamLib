@@ -680,7 +680,7 @@ module Reads:
         let selected = 1
         let unmarked = 2
         type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-        let empty = Tools.ArrayStack.create ()
+        let empty = Tools.ArrayStack.empty ()
         let iter f =
           Tools.ArrayStack.riteri
             (fun templ_i -> function

@@ -236,7 +236,7 @@ module Splits:
       let path = make_filename_binary prefix in
       let output = open_out path in
       if verbose then
-        Printf.eprintf "(%s): Outputting DB to file '%s'...%!" __FUNCTION__ path;
+        Printf.eprintf "(%s): Outputting database to file '%s'...%!" __FUNCTION__ path;
       to_channel output ss;
       close_out output;
       if verbose then
@@ -250,7 +250,7 @@ module Splits:
       let path = make_filename_binary prefix in
       let input = open_in path in
       if verbose then
-        Printf.eprintf "(%s): Reading DB from file '%s'...%!" __FUNCTION__ path;
+        Printf.eprintf "(%s): Reading database from file '%s'...%!" __FUNCTION__ path;
       let res = of_channel input in
       close_in input;
       if verbose then

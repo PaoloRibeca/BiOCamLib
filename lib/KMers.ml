@@ -631,7 +631,7 @@ module Iterator:
           let module Impl = (val impl: Hash_t) in
           match h with
           | K_mers k ->
-            let hs = Tools.ArrayStack.create () and res = Impl.Accumulator1.create 128 in
+            let hs = Tools.ArrayStack.empty () and res = Impl.Accumulator1.create 128 in
             let add h w =
               match Impl.Accumulator1.find_opt res h with
               | None ->
@@ -677,7 +677,7 @@ module Iterator:
               (*Impl.Accumulator1.clear res;*)
               Tools.Timer.stop timer_id_finalizer)
           | Gapped (k, g) ->
-            let hs = Tools.ArrayStack.create () and res = Impl.Accumulator2.create 128 in
+            let hs = Tools.ArrayStack.empty () and res = Impl.Accumulator2.create 128 in
             let add ((h1, h2) as hh) w =
               match Impl.Accumulator2.find_opt res hh with
               | None ->

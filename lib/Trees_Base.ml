@@ -246,7 +246,7 @@ module Newick:
       Tools.ArrayStack.contents res*)
     type flat_t = edge_t * int * node_t * (edge_t * int) array
     let dfs_flatten t =
-      let res = Tools.ArrayStack.create () in
+      let res = Tools.ArrayStack.empty () in
       let rec dfs_rec (edge_prev, idx_prev) (Node (node, edges)) =
         Tools.ArrayStack.push res (edge_prev, idx_prev, node, [||]);
         let idx_curr = Tools.ArrayStack.length res - 1 in

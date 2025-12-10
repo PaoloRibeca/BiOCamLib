@@ -142,14 +142,14 @@ module Multimap (CmpKey: ComparableType_t) (CmpVal: ComparableType_t) =
   end
 
 (* An indexed stack, or extensible array, with additional get() and reverse (bottom-to-top) iterators.
-   The interface is compatible with that of Stdlib.Stack *)
+   The interface is mostly compatible with that of Stdlib.Stack *)
 module Stack (Array: sig
   include Array_t
   include ExtendedArrayFunctionality_t with type 'a tt := 'a t and type 'a elt_tt := 'a elt_t
 end):
   sig
     type 'a t
-    val create: unit -> 'a t
+    val empty: unit -> 'a t
     val push: 'a t -> 'a Array.elt_t -> unit (* We depart from Stdlib conventions here and swap arguments *)
     val push_array: 'a t -> 'a Array.t -> unit
     val push_arraystack: 'a t -> 'a t -> unit
@@ -188,7 +188,7 @@ end):
       mutable data: 'a Array.t;
       mutable size: int
     }
-    let create () = { data = Array.empty; size = 0 }
+    let empty () = { data = Array.empty; size = 0 }
     let ( .@() ) = Array.get
     let ( .@()<- ) = Array.set
     let push s el =
@@ -360,10 +360,10 @@ module Timer:
   end
 = struct
     type t = int
-    let id_to_string = ArrayStack.create ()
+    let id_to_string = ArrayStack.empty ()
     and string_to_id = ref StringMap.empty
-    let counters = ArrayStack.create ()
-    and starts = ArrayStack.create ()
+    let counters = ArrayStack.empty ()
+    and starts = ArrayStack.empty ()
     let ( .@() ) = ArrayStack.( .@() )
     and ( .@() <- ) = ArrayStack.( .@() <- )
     let of_string s =
@@ -455,7 +455,7 @@ module Trie:
     (* Note that this is in fact immutable *)
     let empty_node = Node (-1, [||])
     let create () = {
-      hash = ArrayStack.create ();
+      hash = ArrayStack.empty ();
       trie = empty_node
     }
     let to_string t =
