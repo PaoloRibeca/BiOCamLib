@@ -150,9 +150,9 @@ module Bytes:
     let ( .@() ) = Bytes.get
     let ( .@()<- ) = Bytes.set
     let rev b =
-      let red_len = length b - 1 in
-      let half_len = red_len / 2 in
-      for i = 0 to half_len do
+      let len = length b in
+      let red_len = len - 1 in
+      for i = 0 to len / 2 - 1 do
         let idx = red_len - i in
         let c = b.@(i) in
         b.@(i) <- b.@(idx);
