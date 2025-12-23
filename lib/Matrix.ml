@@ -206,7 +206,7 @@ module IO:
         type kind_t =
           | Real of t
           | Virtual of int * int
-        let to_channel ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) m output =
+        let to_channel ?(precision = 15) ?(threads = 1) ?(elements_per_step = 1048576) ?(verbose = false) m output =
           let n_rows, n_cols, m =
             match m with
             | Real m ->
