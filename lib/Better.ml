@@ -1,5 +1,5 @@
 (*
-    Better.ml -- (c) 2015-2025 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    Better.ml -- (c) 2015-2026 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     This file is part of BiOCamLib, the OCaml foundations upon which
     a number of the bioinformatics tools I developed are built.
@@ -22,7 +22,21 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 *)
 
-(* We extend some Stdlib types with additional functionality *)
+(* We mostly extend some Stdlib types with additional functionality *)
+
+let input_line c =
+  (* Life is too short for Windows \r characters *)
+  let res = Stdlib.input_line c in
+  if res = "" then
+    res
+  else begin
+    let red_len = String.length res - 1 in
+    if res.[red_len] = '\r' then
+      String.sub res 0 red_len
+    else
+      res
+  end
+  [@@inline]
 
 let min_max a b =
   if compare a b > 0 then
