@@ -22,10 +22,12 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 *)
 
-(* We mostly extend some Stdlib types with additional functionality *)
+(* We redefine some Stdlib functions/types or extend them with additional functionality.
+   In order for the idea to work, one has to open Better at the beginning of each file *)
 
+(* Life is too short for Windows \r characters and the bugs they generate.
+   We redefine input_line in order to nuke them all when they are present *)
 let input_line c =
-  (* Life is too short for Windows \r characters *)
   let res = Stdlib.input_line c in
   if res = "" then
     res
