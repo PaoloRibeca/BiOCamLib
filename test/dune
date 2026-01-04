@@ -1,6 +1,6 @@
 (env
  (dev
-  (ocamlopt_flags (:standard -O3 -ccopt -O3)))
+  (ocamlopt_flags (:standard -g -ccopt -static)))
  (release
   (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static))))
 
