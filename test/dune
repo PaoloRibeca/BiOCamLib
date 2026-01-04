@@ -1,8 +1,8 @@
 (env
-  (dev
-    (ocamlopt_flags (:standard -O3 -ccopt -O3)))
-  (release
-    (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static))))
+ (dev
+  (ocamlopt_flags (:standard -O3 -ccopt -O3)))
+ (release
+  (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static))))
 
 (executables
  (public_names Vectors Trees)
