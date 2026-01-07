@@ -36,6 +36,8 @@ export PATH=~/.local/bin:$PATH
 ```
 or add it to one of your login scripts (such as `~/.bashrc` or similar for `bash`).
 
+Note that the binaries are generated according to the recipe described [here](https://github.com/PaoloRibeca/ocaml-static-binaries).
+
 ### Manual install
 
 Alternatively, you can install `RC`, `Octopus`, `Parallel`, and `FASTools` manually by cloning and compiling the BiOCamLib sources. You'll need an up-to-date distribution of the OCaml compiler and the [Dune package manager](https://github.com/ocaml/dune) for that. Both can be installed through [OPAM](https://opam.ocaml.org/), the official OCaml distribution system. Once you have a working OPAM distribution you'll also have a working OCaml compiler, and Dune can be installed with the command
