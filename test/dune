@@ -1,7 +1,11 @@
 (env
  (dev
+  (ocamlopt_flags (:standard -g)))
+ (dev-static
   (ocamlopt_flags (:standard -g -ccopt -static)))
  (release
+  (ocamlopt_flags (:standard -O3 -ccopt -O3)))
+ (release-static
   (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static))))
 
 (executables
