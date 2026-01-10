@@ -25,21 +25,6 @@
 (* We redefine some Stdlib functions/types or extend them with additional functionality.
    In order for the idea to work, one has to open Better at the beginning of each file *)
 
-(* Life is too short for Windows \r characters and the bugs they generate.
-   We redefine input_line in order to nuke them all when they are present *)
-let input_line c =
-  let res = Stdlib.input_line c in
-  if res = "" then
-    res
-  else begin
-    let red_len = String.length res - 1 in
-    if res.[red_len] = '\r' then
-      String.sub res 0 red_len
-    else
-      res
-  end
-  [@@inline]
-
 let min_max a b =
   if compare a b > 0 then
     b, a
@@ -373,9 +358,18 @@ module Exception =
     module Kind =
       struct
         type t =
+          (* Exceptions signaling bad parameters given to initialisers *)
           | Initialize
+          (* Exceptions signaling that some specified input cannot be found *)
+          | No_such_input
+          (* Exceptions signaling problems with the format of input data,
+              for instance incompatible lengths *)
           | IO_Format
+          (* Exceptions signaling that the invariant for some algorithm is violated,
+              for instance some index is out of range *)
           | Algorithm
+          (* Exceptions signaling that output has been truncated,
+              for instance due to a closed pipe downstream *)
           | End_of_output
       end
     (* Kind, __FUNCTION__, message *)
@@ -422,6 +416,8 @@ module Exception =
     let raise_incompatible_archive_version __FUNCTION__ found expected =
       raise __FUNCTION__ IO_Format
         (Printf.sprintf "Incompatible archive version (found '%s', expected '%s')" found expected)
+    let raise_no_such_input __FUNCTION s =
+      raise __FUNCTION__ No_such_input (Printf.sprintf "Input file not found (expected '%s')" s)
     let raise_unexpected_end_of_output __FUNCTION__ =
       raise __FUNCTION__ End_of_output (Printf.sprintf "Unexpected end of output file")
     let catch_unexpected_end_of_output __FUNCTION__ f =
@@ -430,20 +426,41 @@ module Exception =
       with End_of_file ->
         raise_unexpected_end_of_output __FUNCTION__
     let handle __FUNCTION__ usage unexpected = function
-    | E (Kind.End_of_output, _, _) as e ->
+    | E (End_of_output, _, _) as e ->
+      (* We prevent all processes from generating error messages here *)
       if Unix.getppid () = 1 then
         to_string e |> String.TermIO.red |> Printf.eprintf "(%s): FATAL: %s\n%!" __FUNCTION__
-    | E (Kind.Initialize, _, _) | E (Kind.IO_Format, _, _) as e ->
-      if Unix.getpid () = 1 then begin
-        usage ();
-        to_string e |> String.TermIO.red |> Printf.eprintf "(%s): FATAL: %s\n%!" __FUNCTION__
-      end
+    | E (Initialize, _, _) | E (No_such_input, _, _) | End_of_file | E (IO_Format, _, _) as e ->
+      usage ();
+      to_string e |> String.TermIO.red |> Printf.eprintf "(%s): FATAL: %s\n%!" __FUNCTION__
     | exc ->
       Printf.peprintf "(%s): %s\n%!" __FUNCTION__
         ("FATAL: Uncaught exception: " ^ Printexc.to_string exc |> String.TermIO.red);
       unexpected ();
       Printexc.print_backtrace stderr
   end
+
+(* We redefine Stdlib.open_in so that it emits an understandable exception if no input is found *)
+let open_in s =
+  try
+    Stdlib.open_in s
+  with _ ->
+    Exception.raise_no_such_input __FUNCTION__ s
+  [@@inline]
+(* Life is too short for Windows \r characters and the bugs they generate.
+   We redefine Stdlib.input_line in order to nuke them all when they are present *)
+let input_line c =
+  let res = Stdlib.input_line c in
+  if res = "" then
+    res
+  else begin
+    let red_len = String.length res - 1 in
+    if res.[red_len] = '\r' then
+      String.sub res 0 red_len
+    else
+      res
+  end
+  [@@inline]
 
 module List:
   sig
