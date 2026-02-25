@@ -436,7 +436,7 @@ module Exception =
     | End_of_file as e ->
       usage ();
       (* We cannot use to_string() here *)
-      Printexc.to_string e |> Printf.eprintf "(%s): FATAL: %s\n%!" __FUNCTION__
+      Printexc.to_string e |> String.TermIO.red |> Printf.eprintf "(%s): FATAL: %s\n%!" __FUNCTION__
     | exc ->
       Printf.peprintf "(%s): %s\n%!" __FUNCTION__
         ("FATAL: Uncaught exception: " ^ Printexc.to_string exc |> String.TermIO.red);
