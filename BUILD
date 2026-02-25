@@ -36,7 +36,7 @@ cp _build/default/bin/Yggdrasill.exe build/Yggdrasill
 
 chmod 755 build/*
 
-if [[ "$PROFILE" == "release" ]]; then
+if [[ "$PROFILE" == "release" || "$PROFILE" == "release-static" ]]; then
   strip build/*
   rm -rf _build
 fi
