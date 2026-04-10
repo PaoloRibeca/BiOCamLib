@@ -33,20 +33,6 @@ let min_max a b =
 
 let string_of_char = String.make 1
 
-module Option:
-  sig
-    val unbox: 'a option -> 'a
-    val unbox_def: 'a -> 'a option -> 'a
-  end
-= struct
-    let unbox = function
-      | None -> assert false
-      | Some r -> r
-    let unbox_def def = function
-      | None -> def
-      | Some r -> r
-  end
-
 module type PeanoInt_t =
   sig
     type t
