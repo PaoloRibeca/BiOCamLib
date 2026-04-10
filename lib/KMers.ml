@@ -166,7 +166,7 @@ module IntHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = 
     let ceil_log16 = (bits * k + 3) / 4
     let to_string h =
       let res = Bytes.create ceil_log16 and rem = ref h in
-      for i = 0 to ceil_log16 - 1 do
+      for i = ceil_log16 - 1 downto 0 do
         Bytes.(res.@(i) <- begin
           match !rem land 15 with
           | 0 -> '0'
