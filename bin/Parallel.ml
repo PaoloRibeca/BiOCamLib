@@ -1,5 +1,5 @@
 (*
-    Parallel.ml -- (c) 2019-2025 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    Parallel.ml -- (c) 2019-2026 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     Parallel allows to split and process an input file chunk-wise,
     using the reader/workers/writer model implemented in
@@ -47,9 +47,9 @@ module Parameters =
 let info = {
   Tools.Argv.name = "Parallel";
   version = "10";
-  date = "10-Nov-2025"
+  date = "25-Apr-2026"
 } and authors = [
-  "2019-2025", "Paolo Ribeca", "paolo.ribeca@gmail.com"
+  "2019-2026", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 
 let () =
@@ -150,7 +150,12 @@ let () =
             print_num_lines "read";
             eof := true
           end;
-          base_input_line_num, !buf
+          (* We need to check for this as the result might be empty
+              when the boundary of a new block is hit *)
+          if !buf = [] then
+            raise End_of_file
+          else
+            base_input_line_num, !buf
         end else
           raise End_of_file)
       (fun (base_input_line_num, input_lines) ->
