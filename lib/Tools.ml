@@ -357,6 +357,16 @@ module Timer:
     val start: t -> unit
     val stop: t -> unit
     val read: string -> float (* Can fail if timer undefined *)
+    (* Enumerate every registered timer as (name, accumulated_seconds), in
+       registration order.  Useful for summaries. *)
+    val snapshot: unit -> (string * float) list
+    (* Global on/off switch.
+       When disabled, start() and stop() are no-ops (their per-call cost
+       reduces to one [bool ref] deref + branch), which minimises overhead
+       in production even if the calls are left in place for conditional profiling.
+       Default is enabled. *)
+    val set_enabled: bool -> unit
+    val is_enabled: unit -> bool
   end
 = struct
     type t = int
@@ -364,6 +374,7 @@ module Timer:
     and string_to_id = ref StringMap.empty
     let counters = ArrayStack.empty ()
     and starts = ArrayStack.empty ()
+    let enabled = ref true
     let ( .@() ) = ArrayStack.( .@() )
     and ( .@() <- ) = ArrayStack.( .@() <- )
     let of_string s =
@@ -382,10 +393,10 @@ module Timer:
       counters.@(n) <- 0.;
       starts.@(n) <- 0.
     let start n =
-      if starts.@(n) = 0. then
+      if !enabled && starts.@(n) = 0. then
         starts.@(n) <- Unix.gettimeofday ()
     let stop n =
-      if starts.@(n) > 0. then begin
+      if !enabled && starts.@(n) > 0. then begin
         counters.@(n) <- counters.@(n) +. (Unix.gettimeofday () -. starts.@(n));
         starts.@(n) <- 0.
       end
@@ -395,6 +406,15 @@ module Timer:
         Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Undefined timer '%s'" s)
       | Some n ->
         counters.@(n)
+    let snapshot () =
+      let n = ArrayStack.length id_to_string in
+      let lst = ref [] in
+      for i = n - 1 downto 0 do
+        lst := (id_to_string.@(i), counters.@(i)) :: !lst
+      done;
+      !lst
+    let set_enabled b = enabled := b
+    let is_enabled () = !enabled
   end
 
 module Trie:
