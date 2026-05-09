@@ -27,11 +27,22 @@ open Better
 module Newick:
   sig
     include module type of Trees_Base.Newick
-    (* Input *)
-    val of_string: ?rich_format:bool -> string -> t
-    val array_of_string: ?rich_format:bool -> string -> t array
-    val of_file: ?rich_format:bool -> string -> t
-    val array_of_file: ?rich_format:bool -> string -> t array
+    (* Input.  [negative_branches] tells the reader what to do
+       on encountering a negative branch length (e.g. NJ-induced
+       noise); see [Trees_Base.Newick.on_negative_branches_t].
+       Default is [Error] for backwards compatibility. *)
+    val of_string: ?rich_format:bool ->
+                   ?negative_branches:on_negative_branches_t ->
+                   string -> t
+    val array_of_string: ?rich_format:bool ->
+                         ?negative_branches:on_negative_branches_t ->
+                         string -> t array
+    val of_file: ?rich_format:bool ->
+                 ?negative_branches:on_negative_branches_t ->
+                 string -> t
+    val array_of_file: ?rich_format:bool ->
+                       ?negative_branches:on_negative_branches_t ->
+                       string -> t array
     (* Output *)
     val to_string: ?rich_format:bool -> t -> string
     val array_to_string: ?rich_format:bool -> t array -> string
@@ -40,14 +51,18 @@ module Newick:
   end
 = struct
     include Trees_Base.Newick
-    let _of_string ?(rich_format = true) f s =
+    let _of_string ?(rich_format = true)
+                   ?(negative_branches = Error) f s =
       (* This adds an implicit unrooted token to the first tree *)
-      let s = "\n" ^ s and state = Trees_Lex.Newick.create ~rich_format () in
+      let s = "\n" ^ s
+      and state = Trees_Lex.Newick.create ~rich_format ~negative_branches () in
       f (Trees_Lex.newick state) (Lexing.from_string ~with_positions:true s)
-    let of_string ?(rich_format = true) s = _of_string ~rich_format Trees_Parse.newick_tree s
-    let array_of_string ?(rich_format = true) s =
-      _of_string ~rich_format Trees_Parse.zero_or_more_newick_trees s |> Array.of_list
-    let _of_file ?(rich_format = true) f s =
+    let of_string ?(rich_format = true) ?(negative_branches = Error) s =
+      _of_string ~rich_format ~negative_branches Trees_Parse.newick_tree s
+    let array_of_string ?(rich_format = true) ?(negative_branches = Error) s =
+      _of_string ~rich_format ~negative_branches
+        Trees_Parse.zero_or_more_newick_trees s |> Array.of_list
+    let _of_file ?(rich_format = true) ?(negative_branches = Error) f s =
       (* Here we have to reimplement buffering due to the initial unrooted tag *)
       let buf = ref "\n" and ic = open_in s and eof_reached = ref false in
       let lexbuf payload n =
@@ -72,11 +87,13 @@ module Newick:
         (* Here either res > 0 or !eof_reached == true *)
         (*Printf.eprintf "RES(%d)='%s'\n%!" !res (String.escaped (String.sub payload 0 !res));*)
         !res
-      and state = Trees_Lex.Newick.create ~rich_format () in
+      and state = Trees_Lex.Newick.create ~rich_format ~negative_branches () in
       f (Trees_Lex.newick state) (Lexing.from_function ~with_positions:true lexbuf)
-    let of_file ?(rich_format = true) s = _of_file ~rich_format Trees_Parse.newick_tree s
-    let array_of_file ?(rich_format = true) s =
-      _of_file ~rich_format Trees_Parse.zero_or_more_newick_trees s |> Array.of_list
+    let of_file ?(rich_format = true) ?(negative_branches = Error) s =
+      _of_file ~rich_format ~negative_branches Trees_Parse.newick_tree s
+    let array_of_file ?(rich_format = true) ?(negative_branches = Error) s =
+      _of_file ~rich_format ~negative_branches
+        Trees_Parse.zero_or_more_newick_trees s |> Array.of_list
     let add_to_buffer ?(rich_format = true) buf t =
       let add_hybrid_info buf hy =
         match rich_format, hy with

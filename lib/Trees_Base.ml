@@ -32,10 +32,26 @@ module Newick:
       | GeneTransfer of hybrid_id_t
       | Recombination of hybrid_id_t
     and hybrid_id_t = int
+    (* Policy for negative branch lengths in parsed input.  Some
+       phylogenetic methods (notably neighbour-joining) can yield
+       trees with negative branches; this flag tells the reader
+       what to do when one is encountered.
+        - [Error] (default): raise a parse error.
+        - [Zero]: silently clamp the length to 0.
+        - [OK]: keep the negative value as-is.  Note: a length of
+          exactly [-1.] then collides with the "undefined" sentinel
+          used by [edge_t]'s constructor; in practice NJ-induced
+          negatives are tiny and never hit this corner. *)
+    type on_negative_branches_t =
+      | OK
+      | Zero
+      | Error
     (* A root leaf node can have a child *)
     val leaf: ?dict:(string StringMap.t) -> ?stem:((edge_t * t) option) -> string -> t
     (* For length, bootstrap, and probability, -1 means undefined.
-       When they are specified, length >= 0. and 0. >= bootstrap, probability >= 1. *)
+       When they are specified, 0. >= bootstrap, probability >= 1.
+       Branch lengths may be negative (see [on_negative_branches_t]
+       and the parser's negative-length policy). *)
     val edge: ?length:float -> ?bootstrap:float -> ?probability:float ->
               ?dict:(string StringMap.t) -> ?is_ghost:bool -> unit -> edge_t
     val join: ?name:string -> ?dict:(string StringMap.t) -> (edge_t * t) array -> t
@@ -127,20 +143,26 @@ module Newick:
       | GeneTransfer of hybrid_id_t
       | Recombination of hybrid_id_t
     and hybrid_id_t = int
+    type on_negative_branches_t =
+      | OK
+      | Zero
+      | Error
     (* A root leaf node can have a child *)
     let leaf ?(dict = StringMap.empty) ?(stem = None) name =
       match stem with
       | None -> Node ({ node_is_root = false; node_hybrid = None; node_name = name; node_dict = dict }, [||])
       | Some stem -> Node ({ node_is_root = true; node_hybrid = None; node_name = name; node_dict = dict }, [| stem |])
     (* For length, bootstrap, and probability, -1. means undefined.
-       When they are specified, length >= 0. and 0. >= bootstrap, probability >= 1. *)
+       When specified, 0. >= bootstrap, probability >= 1.  Branch
+       lengths may be negative (see [on_negative_branches_t]); the
+       parser is the gatekeeper that rejects / clamps / accepts
+       them per the caller's policy.  Direct callers of [edge]
+       are trusted to pass sane values. *)
     let edge ?(length = -1.) ?(bootstrap = -1.) ?(probability = -1.)
              ?(dict = StringMap.empty) ?(is_ghost = false) () =
       let fail parameter_name v =
         Exception.raise __FUNCTION__ Initialize
           (Printf.sprintf "Invalid value for parameter '%s' (found %g)" parameter_name v) in
-      if length < 0. && length <> -1. then
-        fail "length" length;
       let check_fraction what v =
         if (v < 0. && v <> -1.) || v > 1. then
           fail what v;

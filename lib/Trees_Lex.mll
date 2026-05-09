@@ -21,21 +21,28 @@
   module Newick:
     sig
       type t
-      val create: ?rich_format:bool -> unit -> t
+      val create: ?rich_format:bool ->
+                  ?negative_branches:Trees_Base.Newick.on_negative_branches_t ->
+                  unit -> t
       val is_rich_format: t -> bool
+      val negative_branches: t -> Trees_Base.Newick.on_negative_branches_t
       val incr_line: t -> unit
       val parse_error: t -> string -> 'a
     end
   = struct
       type t = {
         rich_format: bool;
+        negative_branches: Trees_Base.Newick.on_negative_branches_t;
         mutable line: int
       }
-      let create ?(rich_format = true) () = {
+      let create ?(rich_format = true)
+                 ?(negative_branches = Trees_Base.Newick.Error) () = {
         rich_format;
+        negative_branches;
         line = 1
       }
       let is_rich_format state = state.rich_format
+      let negative_branches state = state.negative_branches
       let incr_line state =
         state.line <- state.line + 1
       let parse_error state s =
@@ -83,11 +90,19 @@ rule newick state = parse
   { Newick_RBRACK }
 | ','
   { Newick_COMMA }
-| ':' (( '.'['0'-'9']+ | ['0'-'9']+('.'(['0'-'9']*))?) (['e''E']['+''-']?['0'-'9']*)? as n)
-  { try
-      Newick_LENGTH (float_of_string n)
-    with _ ->
-      Newick.parse_error state ("Invalid number '" ^ n ^ "'") }
+| ':' (('-'? ('.'['0'-'9']+ | ['0'-'9']+('.'(['0'-'9']*))?)) (['e''E']['+''-']?['0'-'9']*)? as n)
+  { let v =
+      try float_of_string n
+      with _ ->
+        Newick.parse_error state ("Invalid number '" ^ n ^ "'") in
+    if v < 0. then
+      match Newick.negative_branches state with
+      | Trees_Base.Newick.OK -> Newick_LENGTH v
+      | Trees_Base.Newick.Zero -> Newick_LENGTH 0.
+      | Trees_Base.Newick.Error ->
+        Newick.parse_error state ("Negative branch length '" ^ n ^ "'")
+    else
+      Newick_LENGTH v }
 | ':'
   { Newick_COLON }
 | ';'
