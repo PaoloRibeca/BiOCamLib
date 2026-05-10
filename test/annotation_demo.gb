@@ -1,0 +1,22 @@
+LOCUS       demo01     30 bp    DNA              circular UNK
+DEFINITION  Synthetic demo entry.
+ACCESSION   demo01
+VERSION     demo01.1
+SOURCE      synthetic construct.
+  ORGANISM  synthetic construct
+            other sequences; artificial sequences.
+FEATURES             Location/Qualifiers
+     source          1..30
+                     /organism="synthetic"
+     gene            1..15
+                     /gene="abcA"
+                     /locus_tag="DEMO_0001"
+     CDS             1..15
+                     /gene="abcA"
+                     /codon_start=1
+                     /product="hypothetical"
+     gene            complement(16..30)
+                     /gene="xyzB"
+ORIGIN      
+        1 atgcccgggt aagcgactag cgcatcgtca
+//

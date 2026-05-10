@@ -126,18 +126,23 @@ module Newick:
             Buffer.add_char buf ',')
         (fun _ edge ->
           let dict = get_edge_dict edge in
-          begin match get_edge_values edge with
-          | -1., -1., -1. ->
+          let l, b, p = get_edge_values edge in
+          let l_def = l <> neg_infinity
+          and b_def = b <> -1.
+          and p_def = p <> -1. in
+          begin match l_def, b_def, p_def with
+          | false, false, false ->
             if dict <> StringMap.empty then
-              (* Here the only unambiguous way to print out things is by adding an empty length *)
+              (* The only unambiguous way to print out things
+                 here is by adding an empty length. *)
               Buffer.add_string buf ":0"
-          | -1., -1., p -> Printf.bprintf buf ":::%.10g" p
-          | -1., b, -1. -> Printf.bprintf buf "::%.10g" b
-          | l, -1., -1. -> Printf.bprintf buf ":%.10g" l
-          | -1., b, p -> Printf.bprintf buf "::%.10g:%.10g" b p
-          | l, -1., p -> Printf.bprintf buf ":%.10g::%.10g" l p
-          | l, b, -1. -> Printf.bprintf buf ":%.10g:%.10g" l b
-          | l, b, p -> Printf.bprintf buf ":%.10g:%.10g:%.10g" l b p
+          | false, false, true  -> Printf.bprintf buf ":::%.10g" p
+          | false, true,  false -> Printf.bprintf buf "::%.10g" b
+          | true,  false, false -> Printf.bprintf buf ":%.10g" l
+          | false, true,  true  -> Printf.bprintf buf "::%.10g:%.10g" b p
+          | true,  false, true  -> Printf.bprintf buf ":%.10g::%.10g" l p
+          | true,  true,  false -> Printf.bprintf buf ":%.10g:%.10g" l b
+          | true,  true,  true  -> Printf.bprintf buf ":%.10g:%.10g:%.10g" l b p
           end;
           add_dict_info buf dict)
         (fun node num_edges ->

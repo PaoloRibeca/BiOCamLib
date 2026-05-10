@@ -38,20 +38,22 @@ module Newick:
        what to do when one is encountered.
         - [Error] (default): raise a parse error.
         - [Zero]: silently clamp the length to 0.
-        - [OK]: keep the negative value as-is.  Note: a length of
-          exactly [-1.] then collides with the "undefined" sentinel
-          used by [edge_t]'s constructor; in practice NJ-induced
-          negatives are tiny and never hit this corner. *)
+        - [OK]: keep the negative value as-is.  The undefined-
+          length sentinel is [Float.neg_infinity], not [-1.], so
+          there is no collision with NJ-style negatives. *)
     type on_negative_branches_t =
       | OK
       | Zero
       | Error
     (* A root leaf node can have a child *)
     val leaf: ?dict:(string StringMap.t) -> ?stem:((edge_t * t) option) -> string -> t
-    (* For length, bootstrap, and probability, -1 means undefined.
-       When they are specified, 0. >= bootstrap, probability >= 1.
-       Branch lengths may be negative (see [on_negative_branches_t]
-       and the parser's negative-length policy). *)
+    (* Undefined sentinels: [neg_infinity] for [length] (so any
+       finite real, including arbitrary negatives, is a valid
+       value), and [-1.] for [bootstrap] / [probability] (whose
+       ranges are [0., 1.] when specified, leaving [-1.]
+       unambiguously outside).  Branch lengths may be negative
+       (see [on_negative_branches_t] and the parser's
+       negative-length policy). *)
     val edge: ?length:float -> ?bootstrap:float -> ?probability:float ->
               ?dict:(string StringMap.t) -> ?is_ghost:bool -> unit -> edge_t
     val join: ?name:string -> ?dict:(string StringMap.t) -> (edge_t * t) array -> t
@@ -152,13 +154,14 @@ module Newick:
       match stem with
       | None -> Node ({ node_is_root = false; node_hybrid = None; node_name = name; node_dict = dict }, [||])
       | Some stem -> Node ({ node_is_root = true; node_hybrid = None; node_name = name; node_dict = dict }, [| stem |])
-    (* For length, bootstrap, and probability, -1. means undefined.
-       When specified, 0. >= bootstrap, probability >= 1.  Branch
-       lengths may be negative (see [on_negative_branches_t]); the
-       parser is the gatekeeper that rejects / clamps / accepts
-       them per the caller's policy.  Direct callers of [edge]
-       are trusted to pass sane values. *)
-    let edge ?(length = -1.) ?(bootstrap = -1.) ?(probability = -1.)
+    (* Undefined sentinels: [neg_infinity] for [length] (any
+       finite real, including arbitrary negatives, is a valid
+       value); [-1.] for [bootstrap] / [probability].  Branch
+       lengths may be negative (see [on_negative_branches_t]);
+       the parser is the gatekeeper that rejects / clamps /
+       accepts them per the caller's policy.  Direct callers of
+       [edge] are trusted to pass sane values. *)
+    let edge ?(length = neg_infinity) ?(bootstrap = -1.) ?(probability = -1.)
              ?(dict = StringMap.empty) ?(is_ghost = false) () =
       let fail parameter_name v =
         Exception.raise __FUNCTION__ Initialize

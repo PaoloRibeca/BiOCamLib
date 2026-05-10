@@ -1,7 +1,7 @@
 (menhir
- (modules Trees_Parse)
+ (modules Trees_Parse Annotations_Parse)
  (flags --dump --explain --automaton-graph --cmly))
-(ocamllex Trees_Lex)
+(ocamllex Trees_Lex Annotations_Lex)
 
 (library
  (libraries zarith)

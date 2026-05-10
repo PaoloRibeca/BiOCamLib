@@ -127,15 +127,25 @@ newick_opt_dict:
 
 newick_opt_lengths_and_dict:
   | /* EMPTY */
-    { -1., -1., -1., Better.StringMap.empty }
+    { neg_infinity, -1., -1., Better.StringMap.empty }
   | Newick_LENGTH newick_opt_dict
     { $1, -1., -1., $2 }
-  | newick_opt_length Newick_LENGTH newick_opt_dict
+  | newick_opt_length_pos Newick_LENGTH newick_opt_dict
     { $1, $2, -1., $3 }
-  | newick_opt_length newick_opt_length Newick_LENGTH newick_opt_dict
+  | newick_opt_length_pos newick_opt_other Newick_LENGTH newick_opt_dict
     { $1, $2, $3, $4 }
 
-newick_opt_length:
+/* Empty (bare ":") in length position resolves to the
+   undefined-length sentinel [neg_infinity]; in
+   bootstrap/probability position to [-1.] (which sits outside
+   the valid [0., 1.] range). */
+newick_opt_length_pos:
+  | Newick_COLON
+    { neg_infinity }
+  | Newick_LENGTH
+    { $1 }
+
+newick_opt_other:
   | Newick_COLON
     { -1. }
   | Newick_LENGTH

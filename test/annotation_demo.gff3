@@ -1,0 +1,11 @@
+##gff-version 3
+##sequence-region chr1 1 1000
+chr1	demo	gene	100	500	.	+	.	ID=gene1;Name=ABC1
+chr1	demo	mRNA	100	500	.	+	.	ID=mRNA1;Parent=gene1
+chr1	demo	exon	100	200	.	+	.	ID=ex1;Parent=mRNA1
+chr1	demo	exon	300	500	.	+	.	ID=ex2;Parent=mRNA1
+chr1	demo	CDS	150	200	.	+	0	ID=cds1;Parent=mRNA1
+chr1	demo	CDS	300	450	.	+	2	ID=cds2;Parent=mRNA1
+chr1	demo	gene	600	900	.	-	.	ID=gene2
+chr1	demo	miRNA	600	900	.	-	.	ID=miR1;Parent=gene2
+chr1	demo	exon	600	900	.	-	.	ID=miR1_ex;Parent=miR1
