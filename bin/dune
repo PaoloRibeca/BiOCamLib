@@ -9,8 +9,8 @@
   (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static))))
 
 (executables
- (public_names Parallel Octopus RC FASTools Annotools TREx Cophenetic Yggdrasill)
- (names Parallel Octopus RC FASTools Annotools TREx Cophenetic Yggdrasill)
+ (public_names Parallel Octopus RC FASTools AnnoTools TREx Cophenetic Yggdrasill)
+ (names Parallel Octopus RC FASTools AnnoTools TREx Cophenetic Yggdrasill)
  (libraries str unix BiOCamLib zarith))
 
 (install
@@ -20,7 +20,7 @@
   (Octopus.exe as Octopus)
   (RC.exe as RC)
   (FASTools.exe as FASTools)
-  (Annotools.exe as Annotools)
+  (AnnoTools.exe as AnnoTools)
   (TREx.exe as TREx)
   (Cophenetic.exe as Cophenetic)
   (Yggdrasill.exe as Yggdrasill)))

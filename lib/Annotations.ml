@@ -1279,7 +1279,7 @@ module GenBank:
 end
 
 (* A serialisable handle on the three formats, used by the
-   [Annotools] CLI and by any caller that wants to dispatch on
+   [AnnoTools] CLI and by any caller that wants to dispatch on
    format at runtime.  The constructor names mirror the module
    names but live in their own namespace ([Format.GFF3] vs
    [GFF3]), so the two never clash. *)

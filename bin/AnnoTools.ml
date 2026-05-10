@@ -1,7 +1,7 @@
 (*
-    Annotools.ml -- (c) 2026 Paolo Ribeca, <paolo.ribeca@gmail.com>.
+    AnnoTools.ml -- (c) 2026 Paolo Ribeca, <paolo.ribeca@gmail.com>.
 
-    Annotools manipulates a single in-memory annotation register
+    AnnoTools manipulates a single in-memory annotation register
     via a CLI-driven action stream, mirroring the structure of
     KPopCountDB / KPopTwistDB.  Supported formats: GFF3, GTF,
     GenBank.  References are loaded from multi-FASTA.  Validation
@@ -67,7 +67,7 @@ module Parameters = struct
 end
 
 let info = {
-  Tools.Argv.name = "Annotools";
+  Tools.Argv.name = "AnnoTools";
   version = "1";
   date = "09-May-2026"
 } and authors = [

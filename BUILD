@@ -19,6 +19,7 @@ dune build --profile="$PROFILE" bin/Parallel.exe $FLAGS
 dune build --profile="$PROFILE" bin/Octopus.exe $FLAGS
 dune build --profile="$PROFILE" bin/RC.exe $FLAGS
 dune build --profile="$PROFILE" bin/FASTools.exe $FLAGS
+dune build --profile="$PROFILE" bin/AnnoTools.exe $FLAGS
 dune build --profile="$PROFILE" bin/TREx.exe $FLAGS
 dune build --profile="$PROFILE" bin/Cophenetic.exe $FLAGS
 dune build --profile="$PROFILE" bin/Yggdrasill.exe $FLAGS
@@ -30,6 +31,7 @@ cp _build/default/bin/Parallel.exe build/Parallel
 cp _build/default/bin/Octopus.exe build/Octopus
 cp _build/default/bin/RC.exe build/RC
 cp _build/default/bin/FASTools.exe build/FASTools
+cp _build/default/bin/AnnoTools.exe build/AnnoTools
 cp _build/default/bin/TREx.exe build/TREx
 cp _build/default/bin/Cophenetic.exe build/Cophenetic
 cp _build/default/bin/Yggdrasill.exe build/Yggdrasill

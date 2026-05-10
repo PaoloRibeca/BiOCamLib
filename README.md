@@ -9,9 +9,9 @@ As a bonus, BiOCamLib comes bundled with a few programs:
 * `Octopus`, which is a high-throughput program to compute the transitive closure of strings. This is useful to cluster things.
 * `Parallel`, which allows you to split and process an input file chunk-wise using the reader/workers/writer model implemented in `BiOCamLib.Tools.Parallel`. You can see it as a demonstration of the capabilities of the library, but I also often use it as a useful tool to solve real-life problems, be they bioinformatics or not. A number of high-throughput real-life examples can be found in the [KPop README](https://github.com/PaoloRibeca/KPop/).
 * `FASTools`, which is a Swiss-knife tool for the manipulation of FASTA/FASTQ files. It supports all formats (FASTA, single- and paired-end FASTQ, interleaved FASTQ) and a simpler tabular format whereby FASTA/FASTQ records are represented as tab-separated lines. It facilitates format interconversions and other manipulations.
-* `Annotools`, which manipulates a single in-memory genome-annotation register through a CLI-driven action stream. It can read and write GFF3, GTF, and GenBank files (round-tripping each), attach a multi-FASTA reference, validate that an annotation is consistent with the reference, and serialise the register to a compact binary `.Annotation` archive that loads orders of magnitude faster than reparsing the source.
+* `AnnoTools`, which manipulates a single in-memory genome-annotation register through a CLI-driven action stream. It can read and write GFF3, GTF, and GenBank files (round-tripping each), attach a multi-FASTA reference, validate that an annotation is consistent with the reference, and serialise the register to a compact binary `.Annotation` archive that loads orders of magnitude faster than reparsing the source.
 
-## Installing `RC`, `Octopus`, `Parallel`, `FASTools`, and `Annotools`
+## Installing `RC`, `Octopus`, `Parallel`, `FASTools`, and `AnnoTools`
 
 > :warning: Note that the only operating systems we officially support are Linux and MacOS. :warning:
 >
@@ -41,7 +41,7 @@ Note that the binaries are generated according to the recipe described [here](ht
 
 ### Manual install
 
-Alternatively, you can install `RC`, `Octopus`, `Parallel`, `FASTools`, and `Annotools` manually by cloning and compiling the BiOCamLib sources. You'll need an up-to-date distribution of the OCaml compiler and the [Dune package manager](https://github.com/ocaml/dune) for that. Both can be installed through [OPAM](https://opam.ocaml.org/), the official OCaml distribution system. Once you have a working OPAM distribution you'll also have a working OCaml compiler, and Dune can be installed with the command
+Alternatively, you can install `RC`, `Octopus`, `Parallel`, `FASTools`, and `AnnoTools` manually by cloning and compiling the BiOCamLib sources. You'll need an up-to-date distribution of the OCaml compiler and the [Dune package manager](https://github.com/ocaml/dune) for that. Both can be installed through [OPAM](https://opam.ocaml.org/), the official OCaml distribution system. Once you have a working OPAM distribution you'll also have a working OCaml compiler, and Dune can be installed with the command
 ```bash
 opam install dune
 ```
@@ -52,7 +52,7 @@ Then go to the directory into which you have downloaded the latest BiOCamLib sou
 ./BUILD
 ```
 
-That should generate the executables `RC`, `Octopus`, `Parallel`, `FASTools`, and `Annotools`. Copy them to some favourite location in your PATH, for instance `~/.local/bin`.
+That should generate the executables `RC`, `Octopus`, `Parallel`, `FASTools`, and `AnnoTools`. Copy them to some favourite location in your PATH, for instance `~/.local/bin`.
 
 ## Using `RC`
 
@@ -320,52 +320,52 @@ Executed delayed in order of specification, default=<mark>_-F_</mark>.
 | `-V`<br>`--version` |  |  print version and exit |  |
 | `-h`<br>`--help` |  |  print syntax and exit |  |
 
-## Using `Annotools`
+## Using `AnnoTools`
 
-`Annotools` manipulates a single in-memory genome-annotation register through a CLI-driven action stream. The action stream is built up across the command line (one switch &rarr; one action) and executed in order at the end &mdash; the same pattern used by `KPopCountDB` and `KPopTwistDB`. Supported formats are GFF3, GTF, and GenBank; multi-FASTA files attach as a reference sequence; the resulting register can be written back to any of the three formats or serialised to a compact `.Annotation` binary archive.
+`AnnoTools` manipulates a single in-memory genome-annotation register through a CLI-driven action stream. The action stream is built up across the command line (one switch &rarr; one action) and executed in order at the end &mdash; the same pattern used by `KPopCountDB` and `KPopTwistDB`. Supported formats are GFF3, GTF, and GenBank; multi-FASTA files attach as a reference sequence; the resulting register can be written back to any of the three formats or serialised to a compact `.Annotation` binary archive.
 
 A typical round-trip looks like
 ```bash
-Annotools --from-gff3 chr22.gff3 --to-gtf chr22.gtf
+AnnoTools --from-gff3 chr22.gff3 --to-gtf chr22.gtf
 ```
 which loads `chr22.gff3` into a fresh register and writes it back out as a GTF file. The `--from-...` switches default to *replace* semantics &mdash; they wipe the current register and start over. The `--annotation` switch lets you instead say *add*, which extends the existing register with the new file's features:
 ```bash
-Annotools --from-gff3 part1.gff3 -a add gff3 part2.gff3 --to-gff3 merged.gff3
+AnnoTools --from-gff3 part1.gff3 -a add gff3 part2.gff3 --to-gff3 merged.gff3
 ```
-GFF3 input is interpreted under a built-in *standard* hierarchy by default. `Annotools` ships a second built-in dialect for the GENCODE schema (which collapses every transcript biotype into the single type `transcript` and adds the `stop_codon_redefined_as_selenocysteine` child of `CDS`); switch to it via
+GFF3 input is interpreted under a built-in *standard* hierarchy by default. `AnnoTools` ships a second built-in dialect for the GENCODE schema (which collapses every transcript biotype into the single type `transcript` and adds the `stop_codon_redefined_as_selenocysteine` child of `CDS`); switch to it via
 ```bash
-Annotools --dialect gff3 gencode --from-gff3 gencode.v47.basic.annotation.gff3 -o gencode_v47
+AnnoTools --dialect gff3 gencode --from-gff3 gencode.v47.basic.annotation.gff3 -o gencode_v47
 ```
 which also dumps the resulting register to `gencode_v47.Annotation`. The `--dialect` and `--hierarchy` overrides are *sticky*: they apply to every subsequent input operation in the named format until another `--dialect` or `--hierarchy` replaces them. To revert to a format's default, just say `--dialect <fmt> standard`. A custom hierarchy can be pinned via `--hierarchy <fmt> "<S-expression>"`.
 
 Annotation-input switches share the register with multi-FASTA inputs:
 ```bash
-Annotools --from-gff3 chr22.gff3 --from-fasta chr22.fa --validate
+AnnoTools --from-gff3 chr22.gff3 --from-fasta chr22.fa --validate
 ```
 This loads the annotation, attaches the matching reference, and runs every consistency check &mdash; `--validate-sequences-present` (every annotated sequence name appears in the reference), `--validate-feature-bounds` (every interval lies within its sequence), and `--validate-translation` (CDS `/translation=` qualifiers agree with the translated sequence). `--validate` is the catch-all that runs all three; the individual `--validate-...` switches let you run them selectively. Each check raises and exits non-zero on the first violation. A GenBank file carrying an `ORIGIN` block replaces both the annotation and the reference in one pass, since its sequence is part of the record.
 
 Once a register has been built, the binary archive lifecycle (`-o` / `-i`) lets you cache it for later runs:
 ```bash
-Annotools --from-gff3 huge.gff3 --from-fasta huge.fa -o huge        # writes huge.Annotation
-Annotools -i huge --validate --to-gtf huge.gtf                      # reloads + validates + writes
+AnnoTools --from-gff3 huge.gff3 --from-fasta huge.fa -o huge        # writes huge.Annotation
+AnnoTools -i huge --validate --to-gtf huge.gtf                      # reloads + validates + writes
 ```
 The binary archive is an OCaml `Marshal`-encoded value preceded by a version string; the default suffix is `.Annotation` unless the prefix points under `/dev/*`. Reloading is dominated by I/O (no parsing), which on GENCODE-class inputs is roughly two orders of magnitude faster than reparsing the source.
 
-### Command line options for `Annotools`
+### Command line options for `AnnoTools`
 
-This is the full list of command line options available for the program `Annotools`. You can visualise the list by typing
+This is the full list of command line options available for the program `AnnoTools`. You can visualise the list by typing
 ```bash
-Annotools -h
+AnnoTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is Annotools version 1 [09-May-2026]
+This is AnnoTools version 1 [09-May-2026]
  compiled against: BiOCamLib version 506 [09-May-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
 ```
-Annotools [ACTIONS]
+AnnoTools [ACTIONS]
 ```
 
 **Actions.**
