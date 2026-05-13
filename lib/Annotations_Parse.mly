@@ -313,6 +313,15 @@ gb_qualifiers:
   | Gb_QUAL_LINE gb_qual_continuations gb_qualifiers
     { let key, value_stub = $1 in
       let value = String.concat "" (value_stub :: $2) in
+      (* Quoted multi-line values carry one double quote on the
+         first physical line and the matching one on the last;
+         both survive the per-line lexer because each individual
+         line only sees one of the two.  Strip them after
+         concatenation. *)
+      let value =
+        let n = String.length value in
+        if n >= 2 && value.[0] = '"' && value.[n - 1] = '"'
+        then String.sub value 1 (n - 2) else value in
       (key, value) :: $3 }
 
 gb_qual_continuations:

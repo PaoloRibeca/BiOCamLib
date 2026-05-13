@@ -342,7 +342,7 @@ Annotation-input switches share the register with multi-FASTA inputs:
 ```bash
 AnnoTools --from-gff3 chr22.gff3 --from-fasta chr22.fa --validate
 ```
-This loads the annotation, attaches the matching reference, and runs every consistency check &mdash; `--validate-sequences-present` (every annotated sequence name appears in the reference), `--validate-feature-bounds` (every interval lies within its sequence), and `--validate-translation` (CDS `/translation=` qualifiers agree with the translated sequence). `--validate` is the catch-all that runs all three; the individual `--validate-...` switches let you run them selectively. Each check raises and exits non-zero on the first violation. A GenBank file carrying an `ORIGIN` block replaces both the annotation and the reference in one pass, since its sequence is part of the record.
+This loads the annotation, attaches the matching reference, and runs every consistency check &mdash; `--validate-sequences-present` (every annotated sequence name appears in the reference), `--validate-feature-bounds` (every interval lies within its sequence), and `--validate-translation` (CDS `/translation=` qualifiers agree with the translated sequence). `--validate` is the catch-all that runs all three; the individual `--validate-...` switches let you run them selectively. Each of these stops at the first violation, prints a two-line message pointing the user at `--validate-report`, and exits non-zero. For a complete enumeration, use the sibling `--validate-report <file>` action: it walks the whole register, writes one tab-separated row per violation (`check`, `path`, `feature_id`, `message`) to `<file>`, and exits non-zero only if at least one violation was found. A GenBank file carrying an `ORIGIN` block replaces both the annotation and the reference in one pass, since its sequence is part of the record.
 
 Once a register has been built, the binary archive lifecycle (`-o` / `-i`) lets you cache it for later runs:
 ```bash
@@ -414,6 +414,7 @@ Each check raises and exits non-zero on the first violation. All require a refer
 | `--validate-feature-bounds` |  |  every feature interval must lie within the corresponding sequence's length |  |
 | `--validate-translation` |  |  translated CDS features must agree with their `/translation=` qualifier |  |
 | `--validate` |  |  run every validation in turn |  |
+| `--validate-report` | _file_ |  run every validation against the whole register \(do not stop at the first violation\) and write a tab\-separated report \(`check`, `path`, `feature_id`, `message`\) to _file_; exit non\-zero iff any violation was found |  |
 | `--summary` |  |  print a one\-line summary of the current register to stderr |  |
 
 *Annotation output.*

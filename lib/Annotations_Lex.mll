@@ -124,8 +124,12 @@
             | None -> body, ""
             | Some i ->
               String.sub body 0 i,
-              strip_quotes
-                (String.sub body (i + 1) (String.length body - i - 1)) in
+              String.sub body (i + 1) (String.length body - i - 1) in
+          (* Quote-stripping happens in the grammar, AFTER every
+             continuation line has been folded in: a multi-line
+             value carries one double quote on its first physical
+             line and the matching one on its last, and stripping
+             per-line would handle neither. *)
           Annotations_Parse.Gb_QUAL_LINE (key, value)
         else
           Annotations_Parse.Gb_CONT_LINE rest

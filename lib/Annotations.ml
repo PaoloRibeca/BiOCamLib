@@ -40,6 +40,15 @@
 open Better
 open Annotations_Base
 
+(* Re-export base interning modules under [Annotations] so callers
+   need only one import. *)
+module Path = Annotations_Base.Path
+module Seq = Annotations_Base.Seq
+module AttrKey = Annotations_Base.AttrKey
+module AttrMap = Annotations_Base.AttrMap
+module Value = Annotations_Base.Value
+module ValueTable = Annotations_Base.ValueTable
+
 (* Read an entire file into memory.  All format readers below
    are string-based (they keep the whole input around for
    topological sorting anyway), so the file-vs-string distinction
@@ -95,9 +104,30 @@ module Annotation:
     val of_binary: ?verbose:bool -> string -> t
     val to_channel: out_channel -> t -> unit
     val of_channel: in_channel -> t
-    val validate_sequences_present: t -> unit
-    val validate_feature_bounds: t -> unit
-    val validate_translation: t -> unit
+    (* Validation.  Each [validate_*] iterates over the
+       annotation register; on every violation it calls the
+       supplied [?on_violation] callback with the violating
+       feature's path, the feature's id (or [""] if none was
+       parsed), and a human-readable message.  The default
+       callback raises [Validation_failed] with the same
+       payload, which preserves the historical fail-fast
+       behaviour for callers that have not opted in.  Passing
+       a non-raising callback (e.g.\ one that writes to a
+       file) makes the walk run through the whole register and
+       collect every violation. *)
+    exception Validation_failed of {
+      path: string;
+      feature_id: string;
+      message: string
+    }
+    type on_violation_t =
+      path:string -> feature_id:string -> message:string -> unit
+    val validate_sequences_present:
+      ?on_violation:on_violation_t -> t -> unit
+    val validate_feature_bounds:
+      ?on_violation:on_violation_t -> t -> unit
+    val validate_translation:
+      ?on_violation:on_violation_t -> t -> unit
   end
 = struct
     include Annotations_Base.Annotation
@@ -140,27 +170,37 @@ module Annotation:
         Exception.raise __FUNCTION__ Algorithm
           (Printf.sprintf "%s: no reference set on the annotation"
              who)
-    let validate_sequences_present ann =
+    exception Validation_failed of {
+      path: string;
+      feature_id: string;
+      message: string
+    }
+    type on_violation_t =
+      path:string -> feature_id:string -> message:string -> unit
+    let default_on_violation ~path ~feature_id ~message =
+      raise (Validation_failed { path; feature_id; message })
+    let feature_id_of feature =
+      match feature.id with Some s -> s | None -> ""
+    let validate_sequences_present
+        ?(on_violation = default_on_violation) ann =
       let r = require_reference ann "validate_sequences_present" in
-      let missing = ref StringSet.empty in
-      iter (fun ~path:_ feature ->
+      iter (fun ~path feature ->
         let name = seq_name ann feature in
         if name <> "" then
-          (try
-             let _ = Sequences.Reference.find r
-               (Sequences.Types.Forward name) in ()
-           with _ ->
-             missing := StringSet.add name !missing)
-      ) ann;
-      if not (StringSet.is_empty !missing) then
-        Exception.raise __FUNCTION__ Algorithm
-          (Printf.sprintf
-             "Annotation references sequence(s) not in reference: %s"
-             (String.concat ", "
-                (StringSet.elements !missing)))
-    let validate_feature_bounds ann =
+          try
+            let _ = Sequences.Reference.find r
+              (Sequences.Types.Forward name) in ()
+          with _ ->
+            on_violation
+              ~path:(Path.to_string (paths ann) path)
+              ~feature_id:(feature_id_of feature)
+              ~message:(Printf.sprintf
+                "sequence %S referenced by feature not in reference" name)
+      ) ann
+    let validate_feature_bounds
+        ?(on_violation = default_on_violation) ann =
       let r = require_reference ann "validate_feature_bounds" in
-      iter (fun ~path:_ feature ->
+      iter (fun ~path feature ->
         let name = seq_name ann feature in
         if name <> "" then begin
           let len =
@@ -171,15 +211,17 @@ module Annotation:
           else
             List.iter (fun (i : Sequences.Types.simple_interval_t) ->
               if i.low < 0 || i.low + i.length > len then
-                Exception.raise __FUNCTION__ Algorithm
-                  (Printf.sprintf
-                     "Feature on %s [%d, %d) extends past sequence \
-                      length %d"
-                     name i.low (i.low + i.length) len)
+                on_violation
+                  ~path:(Path.to_string (paths ann) path)
+                  ~feature_id:(feature_id_of feature)
+                  ~message:(Printf.sprintf
+                    "feature on %s [%d, %d) extends past sequence length %d"
+                    name i.low (i.low + i.length) len)
             ) feature.intervals
         end
       ) ann
-    let validate_translation ann =
+    let validate_translation
+        ?(on_violation = default_on_violation) ann =
       let r = require_reference ann "validate_translation" in
       let strip_trailing_stop s =
         let n = String.length s in
@@ -240,23 +282,20 @@ module Annotation:
                     position = 0 };
                   length = 1 }
                 with _ -> Sequences.Translation.Table_1 in
-            let products =
-              Sequences.Translation.get_translations
-                ~replace_alternative_start_codons_with_methionine:true
-                ~only_largest_product:true ~min_length:0
-                table coding in
             let computed =
-              if Array.length products = 0 then ""
-              else
-                let _, p = products.(0) in
-                strip_trailing_stop p in
+              Sequences.Translation.translate
+                ~replace_alternative_start_codons_with_methionine:true
+                ~stop_on_first_stop:true
+                table coding in
             let claimed = strip_trailing_stop claimed in
             if computed <> claimed then
-              Exception.raise __FUNCTION__ Algorithm
-                (Printf.sprintf
-                   "CDS on %s [phase=%d, intervals=%d]: claimed \
-                    translation does not match computed."
-                   name phase (List.length feature.intervals))
+              on_violation
+                ~path:(Path.to_string (paths ann) path)
+                ~feature_id:(feature_id_of feature)
+                ~message:(Printf.sprintf
+                  "CDS on %s [phase=%d, intervals=%d]: claimed translation \
+                   does not match computed"
+                  name phase (List.length feature.intervals))
       ) ann
   end
 
@@ -628,9 +667,14 @@ module GFF3:
      path-leaf as the type column.  Multi-interval features
      emit one row per interval sharing the [ID]. *)
   let attribute_string ann feature =
-    attribute_pairs ann feature
-    |> List.map (fun (k, vs) -> k ^ "=" ^ String.concat "," vs)
-    |> String.concat ";"
+    let s =
+      attribute_pairs ann feature
+      |> List.map (fun (k, vs) -> k ^ "=" ^ String.concat "," vs)
+      |> String.concat ";" in
+    (* Column 9 is mandatory in GFF3 and uses [.] as the
+       attribute-less placeholder; an empty string is not
+       valid. *)
+    if s = "" then "." else s
   let row_of_feature ann path feature =
     let ftype = match List.rev path with [] -> "" | x :: _ -> x in
     let seq = seq_name ann feature
@@ -967,12 +1011,19 @@ module GTF: Format_t = struct
     let src =
       match feature_source ann feature with
       | Some s -> s | None -> "BiOCamLib" in
+    let attrs =
+      let s = attribute_string ann feature in
+      (* GTF separates each [key "value"] pair with a trailing
+         [;], including after the final pair.  When the feature
+         has no attributes we emit an empty column 9 rather than
+         a lonely [;], which no consumer would parse as a valid
+         attribute list. *)
+      if s = "" then "" else s ^ ";" in
     List.map (fun (i : Sequences.Types.simple_interval_t) ->
       let lo = i.low + 1 and hi = i.low + i.length in
       Printf.sprintf
-        "%s\t%s\t%s\t%d\t%d\t.\t%s\t%s\t%s;"
-        seq src leaf lo hi strand phase
-        (attribute_string ann feature)
+        "%s\t%s\t%s\t%d\t%d\t.\t%s\t%s\t%s"
+        seq src leaf lo hi strand phase attrs
     ) feature.intervals
   let to_buffer buf ann =
     iter_paths (fun ~path feature ->
@@ -1053,6 +1104,25 @@ module GenBank:
      Multi-interval (join/order) features fold to a single
      feature with multiple intervals; the strand carries
      through. *)
+  (* Aggregate qualifier repeats into per-key lists, then
+     freeze to an [AttrMap.t] over interned values.  Used both
+     by [feature_to_pair] and by the source-feature synthesis
+     in [read] below. *)
+  let attrs_of_qualifiers ~attr_keys ~values qualifiers =
+    let acc_lists =
+      List.fold_left (fun m (k, v) ->
+        let prev = try StringMap.find k m with Not_found -> [] in
+        StringMap.add k (prev @ [v]) m
+      ) StringMap.empty qualifiers in
+    let attrs =
+      StringMap.fold (fun k vs m ->
+        let kid = AttrKey.intern attr_keys k in
+        let arr =
+          Array.of_list
+            (List.map (ValueTable.intern values) vs) in
+        AttrMap.add kid arr m
+      ) acc_lists AttrMap.empty in
+    acc_lists, attrs
   let feature_to_pair ~seqs ~attr_keys ~values
                       hierarchy seq_name
                       (f : Annotations_Base.GenBankRecord.feature_t) =
@@ -1066,21 +1136,8 @@ module GenBank:
     let loc = GenBankLocation.of_string f.location in
     let pieces, strand = GenBankLocation.intervals loc in
     let intervals = List.map (fun (_, ivl) -> ivl) pieces in
-    (* Aggregate qualifier repeats into per-key lists, then
-       freeze to [Value.t array] so each value is interned. *)
-    let acc_lists =
-      List.fold_left (fun m (k, v) ->
-        let prev = try StringMap.find k m with Not_found -> [] in
-        StringMap.add k (prev @ [v]) m
-      ) StringMap.empty f.qualifiers in
-    let attrs =
-      StringMap.fold (fun k vs m ->
-        let kid = AttrKey.intern attr_keys k in
-        let arr =
-          Array.of_list
-            (List.map (ValueTable.intern values) vs) in
-        AttrMap.add kid arr m
-      ) acc_lists AttrMap.empty in
+    let acc_lists, attrs =
+      attrs_of_qualifiers ~attr_keys ~values f.qualifiers in
     let lookup_str_attr name =
       match StringMap.find_opt name acc_lists with
       | Some (v :: _) -> Some v
@@ -1124,20 +1181,45 @@ module GenBank:
         else ValueTable.drop_bloom (values !ann);
         let locus, seq_length = locus_and_length r.headers in
         let source_path = [ implicit_root_name; "source" ] in
+        let real_source =
+          List.find_opt
+            (fun (gf : Annotations_Base.GenBankRecord.feature_t) ->
+               gf.name = "source") r.features in
         if Hierarchy.validate hierarchy ~path:source_path then begin
-          let source_iv : Sequences.Types.simple_interval_t = {
-            low = 0;
-            length = seq_length
-          } in
-          let source_feature = {
-            seq = Seq.intern (seqs !ann) locus;
-            source = None;
-            intervals = [ source_iv ];
-            strand = None;
-            phase = None;
-            id = Some locus;
-            attributes = AttrMap.empty
-          } in
+          (* Build the top-level source feature from the file's
+             own [source] feature if there is one (so its
+             /organism, /mol_type, /isolate, /host, /db_xref,
+             ... qualifiers carry over to the AST), and fall
+             back to a bare LOCUS-line-derived span otherwise. *)
+          let source_feature =
+            match real_source with
+            | Some f ->
+              let loc = GenBankLocation.of_string f.location in
+              let pieces, _ = GenBankLocation.intervals loc in
+              let intervals = List.map (fun (_, ivl) -> ivl) pieces in
+              let _, attrs =
+                attrs_of_qualifiers
+                  ~attr_keys:(attr_keys !ann)
+                  ~values:(values !ann) f.qualifiers in
+              { seq = Seq.intern (seqs !ann) locus;
+                source = None;
+                intervals;
+                strand = None;
+                phase = None;
+                id = Some locus;
+                attributes = attrs }
+            | None ->
+              let source_iv : Sequences.Types.simple_interval_t = {
+                low = 0;
+                length = seq_length
+              } in
+              { seq = Seq.intern (seqs !ann) locus;
+                source = None;
+                intervals = [ source_iv ];
+                strand = None;
+                phase = None;
+                id = Some locus;
+                attributes = AttrMap.empty } in
           ann := add !ann ~path:source_path source_feature
         end;
         (* The LOCUS line is regenerated canonically by the

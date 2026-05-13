@@ -55,6 +55,7 @@ type to_do_t =
   | Validate_feature_bounds
   | Validate_translation
   | Validate_all
+  | Validate_report of string
   | Summary
 
 module Defaults = struct
@@ -196,8 +197,9 @@ let () =
     TA.make_separator_multiline
       [ "";
         "Validation.";
-        "Each check raises and exits non-zero on the first";
-        "violation.  All require a reference to be set." ];
+        "Each check stops at the first violation, exits non-zero,";
+        "and points the user at '--validate-report <file>' for the";
+        "full list.  All require a reference to be set." ];
     [ "--validate-sequences-present" ],
       None,
       [ "every sequence referenced by an annotation feature must";
@@ -226,6 +228,18 @@ let () =
       [ "run every validation in turn" ],
       TA.Optional,
       (fun _ -> Validate_all |> List.accum Parameters.program);
+    [ "--validate-report" ],
+      Some "<file>",
+      [ "run every validation against the current register but";
+        " do not stop at the first violation: walk the whole";
+        " register, write a tab-separated report with one row";
+        " per violation (columns: check, path, feature_id,";
+        " message) to <file>, and exit non-zero if any violation";
+        " was found." ],
+      TA.Optional,
+      (fun _ ->
+        Validate_report (TA.get_parameter ())
+        |> List.accum Parameters.program);
     [ "--summary" ],
       None,
       [ "print a one-line summary of the current register to stderr" ],
@@ -371,9 +385,49 @@ let () =
         A.Annotation.validate_sequences_present !current;
         A.Annotation.validate_feature_bounds !current;
         A.Annotation.validate_translation !current
+      | Validate_report path ->
+        (* Run all three checks against the register with a
+           non-raising callback that writes one TSV row per
+           violation to [path].  Count violations as we go and
+           report the total to stderr at the end; exit non-zero
+           if any was found. *)
+        let oc = open_out path in
+        output_string oc "check\tpath\tfeature_id\tmessage\n";
+        let total = ref 0 in
+        let mk_callback check =
+          fun ~path:p ~feature_id:fid ~message:m ->
+            incr total;
+            Printf.fprintf oc "%s\t%s\t%s\t%s\n" check p fid m in
+        A.Annotation.validate_sequences_present
+          ~on_violation:(mk_callback "sequences_present") !current;
+        A.Annotation.validate_feature_bounds
+          ~on_violation:(mk_callback "feature_bounds") !current;
+        A.Annotation.validate_translation
+          ~on_violation:(mk_callback "translation") !current;
+        close_out oc;
+        if !total = 0 then
+          Printf.eprintf "(%s): Validation OK; report at %S is empty.\n%!"
+            info.Tools.Argv.name path
+        else begin
+          Printf.eprintf
+            "(%s): Validation failed: %d violation(s); see %S.\n%!"
+            info.Tools.Argv.name !total path;
+          exit 1
+        end
       | Summary -> summary ()
     ) program
-  with e ->
+  with
+  | A.Annotation.Validation_failed { path; feature_id; message } ->
+    Printf.eprintf "(%s): Validation failed: %s\n%!"
+      info.Tools.Argv.name message;
+    if path <> "" || feature_id <> "" then
+      Printf.eprintf "(%s):   at path=%s feature_id=%S\n%!"
+        info.Tools.Argv.name path feature_id;
+    Printf.eprintf
+      "(%s): Re-run with '--validate-report <file>' to write every \
+       violation to a tab-separated file.\n%!" info.Tools.Argv.name;
+    exit 1
+  | e ->
     Exception.handle __FUNCTION__ TA.usage (fun () ->
       Printf.peprintf
         "(%s): Run with -x to print a full backtrace.\n%!"

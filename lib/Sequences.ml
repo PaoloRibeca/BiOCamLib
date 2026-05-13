@@ -377,16 +377,33 @@ module Translation:
       | Table_25 | Table_26 | Table_27 | Table_28 | Table_29 | Table_30
       | Table_31 | Table_33
     val of_string: string -> t
-    val get_stops: ?frames:int list -> t -> string -> IntSet.t
-    val get_starts:
+    val stops: ?frames:int list -> t -> string -> IntSet.t
+    val starts:
           ?frames:int list -> ?get_alternative_start_codons:bool -> t -> string -> IntSet.t
-    val get_translations:
+    val translations:
           ?get_alternative_start_codons: bool ->
           ?replace_alternative_start_codons_with_methionine:bool ->
           (* If several start codons are present before a stop
               we just return the largest possible translation *)
           ?only_largest_product:bool -> ?min_length:int ->
           t -> string -> (int * string) array
+    (* Translate [s] codon-by-codon in frame 0 starting at
+       [?phase] (default 0).  When [?stop_on_first_stop] (default
+       [true]) is set, the walk terminates at the first in-frame
+       stop codon and the [*] is NOT emitted; with the flag
+       cleared every stop codon is emitted as [*] and translation
+       continues to end of string.  When
+       [?replace_alternative_start_codons_with_methionine] is
+       set, the first emitted codon is rewritten to [M] if it is
+       a table-specific alternative start codon (e.g.\ GTG, TTG
+       for Table 1); subsequent alt-start triplets are
+       translated as their regular residue.  Unknown codons map
+       to [X]. *)
+    val translate:
+          ?phase:int ->
+          ?replace_alternative_start_codons_with_methionine:bool ->
+          ?stop_on_first_stop:bool ->
+          t -> string -> string
   end =
   struct
     type t =
@@ -464,23 +481,41 @@ module Translation:
     let raise_not_yet_implemented __FUNCTION__ t =
       Exception.raise __FUNCTION__ Algorithm
         (describe t |> Printf.sprintf "Translation table '%s' not yet implemented, sorry")
-    let get_starts ?(frames = [0; 1; 2]) ?(get_alternative_start_codons = false) table s =
+    (* Is [triplet] one of the alternative (non-ATG) start codons
+       accepted by [table]?  The membership is derived from the
+       NCBI translation-table catalogue; canonical [ATG] is
+       always a start codon and is not handled here. *)
+    let is_alt_start table triplet : bool =
+      match table, triplet with
+      | (Table_1 | Table_4 | Table_11 | Table_12 | Table_24 | Table_26),
+        "CTG" -> true
+      | (Table_1 | Table_4 | Table_5 | Table_11 | Table_13 | Table_24 | Table_25),
+        "TTG" -> true
+      | (Table_2 | Table_3 | Table_4 | Table_5 | Table_13 | Table_21),
+        "ATA" -> true
+      | (Table_2 | Table_4 | Table_5 | Table_11 | Table_23),
+        "ATT" -> true
+      | (Table_2 | Table_5),
+        "ATC" -> true
+      | (Table_2 | Table_4 | Table_5 | Table_9 | Table_11 | Table_13 |
+         Table_21 | Table_23 | Table_24 | Table_25),
+        "GTG" -> true
+      | _ -> false
+      [@@inline]
+    let starts ?(frames = [0; 1; 2])
+               ?(get_alternative_start_codons = false) table s =
       let starts = ref IntSet.empty in
       let add pos =
         starts := IntSet.add pos !starts in
       iterate ~frames
         (fun pos triplet ->
-          match table with
-          | Table_1 ->
-            begin match triplet, get_alternative_start_codons with
-            | "ATG", _ | "CTG", true | "TTG", true -> add pos
-            | _ -> ()
-            end
-          | _ ->
-            raise_not_yet_implemented __FUNCTION__ table)
+          if triplet = "ATG"
+             || (get_alternative_start_codons
+                 && is_alt_start table triplet)
+          then add pos)
         s;
       !starts
-    let get_stops ?(frames = [0; 1; 2]) table s =
+    let stops ?(frames = [0; 1; 2]) table s =
       let stops = ref IntSet.empty in
       let add pos =
         stops := IntSet.add pos !stops in
@@ -532,17 +567,175 @@ module Translation:
             end)
         s;
       !stops
+    (* Standard codon table.  Lifted out so every non-Table-1
+       translation table can fall through to it after its
+       short list of overrides has been consulted. *)
+    let residue_of_codon_table_1 = function
+      | "TAA" | "TAG" | "TGA" -> '*'
+      | "GCA" | "GCC" | "GCG" | "GCT" | "GCN" -> 'A'
+      | "TGC" | "TGT" -> 'C'
+      | "GAC" | "GAT" -> 'D'
+      | "GAA" | "GAG" -> 'E'
+      | "TTC" | "TTT" -> 'F'
+      | "GGA" | "GGC" | "GGG" | "GGT" | "GGN" -> 'G'
+      | "CAC" | "CAT" -> 'H'
+      | "ATA" | "ATC" | "ATT" -> 'I'
+      | "AAA" | "AAG" -> 'K'
+      | "CTA" | "CTC" | "CTG" | "CTT" | "CTN" | "TTA" | "TTG" -> 'L'
+      | "ATG" -> 'M'
+      | "AAC" | "AAT" -> 'N'
+      | "CCA" | "CCC" | "CCG" | "CCT" | "CCN" -> 'P'
+      | "CAA" | "CAG" -> 'Q'
+      | "AGA" | "AGG" | "CGA" | "CGC" | "CGG" | "CGT" | "CGN" -> 'R'
+      | "AGC" | "AGT" | "TCA" | "TCC" | "TCG" | "TCT" | "TCN" -> 'S'
+      | "ACA" | "ACC" | "ACG" | "ACT" | "ACN" -> 'T'
+      | "GTA" | "GTC" | "GTG" | "GTT" | "GTN" -> 'V'
+      | "TGG" -> 'W'
+      | "TAC" | "TAT" -> 'Y'
+      (* Anything outside the 64 canonical codons (typically an
+         in-sequence [N] or other ambiguity) cannot be resolved
+         deterministically and is reported as [X]. *)
+      | _ -> 'X'
+      [@@inline]
+    (* Residue (or stop [*] / unknown [X]) for one in-frame
+       codon under [table].  The per-table arms list only the
+       overrides from the standard table (Table 1); every codon
+       not mentioned by the per-table arm falls through to
+       [residue_of_codon_table_1].  Stops are kept consistent
+       with [stops] above. *)
+    let residue_of_codon table triplet : char =
+      match table with
+      | Table_1 | Table_11 ->
+        residue_of_codon_table_1 triplet
+      | Table_2 ->
+        (match triplet with
+         | "TGA" -> 'W'
+         | "AGA" | "AGG" -> '*'
+         | "ATA" -> 'M'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_3 ->
+        (match triplet with
+         | "TGA" -> 'W'
+         | "CTA" | "CTC" | "CTG" | "CTT" | "CTN" -> 'T'
+         | "ATA" -> 'M'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_4 ->
+        (match triplet with
+         | "TGA" -> 'W'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_5 ->
+        (match triplet with
+         | "TGA" -> 'W'
+         | "AGA" | "AGG" -> 'S'
+         | "ATA" -> 'M'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_6 ->
+        (match triplet with
+         | "TAA" | "TAG" -> 'Q'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_9 ->
+        (match triplet with
+         | "TGA" -> 'W'
+         | "AAA" -> 'N'
+         | "AGA" | "AGG" -> 'S'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_10 ->
+        (match triplet with
+         | "TGA" -> 'C'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_12 ->
+        (match triplet with
+         | "CTG" -> 'S'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_13 ->
+        (match triplet with
+         | "TGA" -> 'W'
+         | "AGA" | "AGG" -> 'G'
+         | "ATA" -> 'M'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_14 ->
+        (match triplet with
+         | "TAA" -> 'Y'
+         | "TGA" -> 'W'
+         | "AGA" | "AGG" -> 'S'
+         | "AAA" -> 'N'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_15 ->
+        (match triplet with
+         | "TAG" -> 'Q'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_16 ->
+        (match triplet with
+         | "TAG" -> 'L'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_21 ->
+        (match triplet with
+         | "TGA" -> 'W'
+         | "AGA" | "AGG" -> 'S'
+         | "ATA" -> 'M'
+         | "AAA" -> 'N'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_22 ->
+        (match triplet with
+         | "TCA" -> '*'
+         | "TAG" -> 'L'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_23 ->
+        (match triplet with
+         | "TTA" -> '*'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_24 ->
+        (match triplet with
+         | "TGA" -> 'W'
+         | "AGA" -> 'S'
+         | "AGG" -> 'K'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_25 ->
+        (match triplet with
+         | "TGA" -> 'G'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_26 ->
+        (match triplet with
+         | "CTG" -> 'A'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_27 | Table_28 ->
+        (* Tables 27 and 28 keep TAA/TAG/TGA exactly as in
+           Table 1 ([stops] above lists the same set), so they
+           share the standard residue map.  Their NCBI
+           description allows TAR codons to be read as Q in
+           context, but [stops] takes the strict reading. *)
+        residue_of_codon_table_1 triplet
+      | Table_29 ->
+        (match triplet with
+         | "TAA" | "TAG" -> 'Y'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_30 ->
+        (match triplet with
+         | "TAA" | "TAG" -> 'E'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_31 ->
+        (match triplet with
+         | "TGA" -> 'W'
+         | _ -> residue_of_codon_table_1 triplet)
+      | Table_33 ->
+        (match triplet with
+         | "TAA" -> 'Y'
+         | "TGA" -> 'W'
+         | "AGA" -> 'S'
+         | "AGG" -> 'K'
+         | _ -> residue_of_codon_table_1 triplet)
+      [@@inline]
     type feature_t =
       | StartCodon
       | StopCodon
     (* The translation is only done in frame *)
-    let get_translations
+    let translations
         ?(get_alternative_start_codons = false)
         ?(replace_alternative_start_codons_with_methionine = false)
         ?(only_largest_product = true) ?(min_length = 0) table s =
-      let starts = get_starts ~frames:[0] ~get_alternative_start_codons table s
-      and stops = get_stops ~frames:[0] table s in
-      let starts =
+      let s_starts = starts ~frames:[0] ~get_alternative_start_codons table s
+      and s_stops = stops ~frames:[0] table s in
+      let s_starts =
         if only_largest_product then begin
           let res = ref IntSet.empty in
           (* We need to do the selection frame by frame *)
@@ -553,12 +746,12 @@ module Translation:
                 (fun start ->
                   if start mod 3 = frame then
                     sorted := IntMap.add start StartCodon !sorted)
-                starts;
+                s_starts;
               IntSet.iter
                 (fun stop ->
                   if stop mod 3 = frame then
                     sorted := IntMap.add stop StopCodon !sorted)
-                stops;
+                s_stops;
               let last = ref None in
               IntMap.iter
                 (fun pos what ->
@@ -575,71 +768,69 @@ module Translation:
             [0];
           !res
         end else
-          starts in
-(*
-Printf.eprintf "String=%s\n%!" s;
-IntSet.iter (Printf.eprintf "Stop=%d\n%!") stops;
-*)
+          s_starts in
       let buf = Buffer.create 1024 and results = ref [] in
       IntSet.iter
         (fun start ->
-(*
-Printf.eprintf "<<<Start=%d\n%!" start;
-*)
           (* For each start there is one possible translation *)
           Buffer.clear buf;
           try
             iterate ~frames:[0]
               (fun pos triplet ->
-                if pos = 0 && replace_alternative_start_codons_with_methionine then
+                if pos = 0
+                   && replace_alternative_start_codons_with_methionine
+                then
                   Buffer.add_char buf 'M'
                 else
-                  begin match table with
-                  | Table_1 -> Buffer.add_char buf
-                    begin match triplet with
-                    | "TAA" | "TAG" | "TGA" -> '*'
-                    | "GCA" | "GCC" | "GCG" | "GCT" | "GCN" -> 'A'
-                    | "TGC" | "TGT" -> 'C'
-                    | "GAC" | "GAT" -> 'D'
-                    | "GAA" | "GAG" -> 'E'
-                    | "TTC" | "TTT" -> 'F'
-                    | "GGA" | "GGC" | "GGG" | "GGT" | "GGN" -> 'G'
-                    | "CAC" | "CAT" -> 'H'
-                    | "ATA" | "ATC" | "ATT" -> 'I'
-                    | "AAA" | "AAG" -> 'K'
-                    | "CTA" | "CTC" | "CTG" | "CTT" | "CTN" | "TTA" | "TTG" -> 'L'
-                    | "ATG" -> 'M'
-                    | "AAC" | "AAT" -> 'N'
-                    | "CCA" | "CCC" | "CCG" | "CCT" | "CCN" -> 'P'
-                    | "CAA" | "CAG" -> 'Q'
-                    | "AGA" | "AGG" | "CGA" | "CGC" | "CGG" | "CGT" | "CGN" -> 'R'
-                    | "AGC" | "AGT" | "TCA" | "TCC" | "TCG" | "TCT" | "TCN" -> 'S'
-                    | "ACA" | "ACC" | "ACG" | "ACT" | "ACN" -> 'T'
-                    | "GTA" | "GTC" | "GTG" | "GTT" | "GTN" -> 'V'
-                    | "TGG" -> 'W'
-                    | "TAC" | "TAT" -> 'Y'
-                    (* An assertion will not work here, because of course
-                        there can be some junk in the sequence *)
-                    | _ -> 'X' (*assert false*)
-                    end
-                  | _ ->
-                    raise_not_yet_implemented __FUNCTION__ table
-                  end;
-(*
-Printf.eprintf "%d>>>%s\n%!" pos (Buffer.contents buf);
-*)
-                if IntSet.mem (start + pos) stops then
+                  Buffer.add_char buf (residue_of_codon table triplet);
+                if IntSet.mem (start + pos) s_stops then
                   raise_notrace Exit)  (* This one is OK as it will be caught *)
               (String.sub s start (String.length s - start))
           with Exit ->
-(*
-Printf.eprintf "!!!%s\n%!" (Buffer.contents buf);
-*)
             let contents = Buffer.contents buf in
             if String.length contents >= min_length then
               List.accum results (start, contents))
-        starts;
+        s_starts;
       Array.of_list (List.rev !results)
+    (* Fixed-frame translator: translate [s] codon by codon in
+       frame 0, starting at [?phase] (default 0).  When
+       [?stop_on_first_stop] (default [true]) the walk terminates
+       at the first in-frame stop codon and the [*] is not
+       emitted; with the flag cleared every stop codon is
+       emitted as [*] and translation continues to end of string.
+       When
+       [?replace_alternative_start_codons_with_methionine] is
+       set, the first emitted residue is rewritten to [M] if the
+       leading triplet is one of the table-specific alternative
+       start codons (CTG / TTG / etc.); subsequent alt-start
+       triplets translate as their regular residue. *)
+    let translate
+        ?(phase = 0)
+        ?(replace_alternative_start_codons_with_methionine = false)
+        ?(stop_on_first_stop = true)
+        table s =
+      let n = String.length s in
+      if phase < 0 || phase >= n then ""
+      else
+        let coding = String.sub s phase (n - phase) in
+        let buf = Buffer.create ((n - phase) / 3) in
+        let first_is_alt_start =
+          replace_alternative_start_codons_with_methionine
+          && String.length coding >= 3
+          && is_alt_start table (String.sub coding 0 3) in
+        (try
+           iterate ~frames:[0]
+             (fun pos triplet ->
+                let c =
+                  if pos = 0 && first_is_alt_start then 'M'
+                  else residue_of_codon table triplet in
+                if c = '*' && stop_on_first_stop then
+                  raise_notrace Exit
+                else
+                  Buffer.add_char buf c)
+             coding
+         with Exit -> ());
+        Buffer.contents buf
   end
 
 (* A map (stranded name->string, translation table) from one or more multi-FASTA file,
