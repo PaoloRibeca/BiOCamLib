@@ -357,6 +357,7 @@ loads the annotation, attaches the matching reference, and runs every consistenc
 * `--validate-sequences-present` (every annotated sequence name appears in the reference)
 * `--validate-feature-bounds` (every interval lies within its sequence)
 * `--validate-translation` (CDS `/translation=` qualifiers agree with the translated sequence).
+
 Switch `--validate` is the catch-all that runs all three; the individual `--validate-...` switches let you run them selectively. Each of these stops at the first violation, prints a two-line message pointing the user at `--validate-report`, and exits non-zero. For a complete enumeration, use the sibling `--validate-report <file>` action: it walks the whole register, writes one tab-separated row per violation (`check`, `path`, `feature_id`, `message`) to `<file>`, and exits non-zero only if at least one violation was found.
 
 ### Command line options for `AnnoTools`
