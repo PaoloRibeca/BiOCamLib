@@ -322,7 +322,7 @@ Executed delayed in order of specification, default=<mark>_-F_</mark>.
 
 ## Using `AnnoTools`
 
-`AnnoTools` allows you to parse a genomic annotation and convert it from/to different widely used formats. It manipulates a single in-memory genome-annotation register through a CLI-driven action stream. The action stream is built up across the command line (one switch corresponding to one action) and executed in order at the end &mdash; the same pattern used by `FASTools`. Supported formats are GFF3, GTF, and GenBank; multi-FASTA files can be read to add reference sequences to the annotation. The resulting contents of the register can be written back to any of the three formats or serialised to a compact `.Annotation` binary archive.
+`AnnoTools` allows you to parse a genomic annotation and convert it from/to different widely used formats. It manipulates a single in-memory genome-annotation register through a CLI-driven action stream. The action stream is built up across the command line (one switch corresponding to one action) and executed in order at the end &mdash; the same pattern used by `FASTools`. Supported formats are GFF3, GTF, and GenBank; multi-FASTA files can be read to add reference sequences to the annotation (but a GenBank file carrying an `ORIGIN` block replaces both the annotation and the reference in one pass, since its sequence is part of the record). The resulting contents of the register can be written back to any of the three formats or serialised to a compact `.Annotation` binary archive.
 
 A typical round-trip looks like
 ```bash
@@ -332,24 +332,32 @@ which loads `chr22.gff3` into a fresh register and writes it back out as a GTF f
 ```bash
 AnnoTools --from-gff3 part1.gff3 -a add gff3 part2.gff3 --to-gff3 merged.gff3
 ```
-GFF3 input is interpreted under a built-in *standard* hierarchy by default. `AnnoTools` ships a second built-in dialect for the GENCODE schema (which collapses every transcript biotype into the single type `transcript` and adds the `stop_codon_redefined_as_selenocysteine` child of `CDS`); switch to it via
+Once a register has been built, options `-o` / `-i` let you cache it for later runs:
+```bash
+AnnoTools --from-gff3 huge.gff3 --from-fasta huge.fa -o huge        # loads huge.gff3 and writes huge.Annotation in binary format
+AnnoTools -i huge --to-gtf huge.gtf                                 # reloads binary and writes contents to huge.gtf
+```
+Reloading is dominated by I/O (no parsing), which on GENCODE-class inputs can be orders of magnitude faster than reparsing the source.
+
+### Parsing and validating annotation files
+
+Annotation files are notoriously fragile, with each major format having its quirks and a number of sometimes quite divergent dialects. `AnnoTools` provides configurable parsing and validation by associating each format to a description of the same in terms of one of more *hierarchies* of features. Hierarchies can be redefined by the user, providing a general way to describe and validate content even when the annotation schema used is not entirely standard.
+
+`AnnoTools` ships with default annotation schemas for Genbank and GTF, according to their respective standards. GFF3 input is interpreted under a built-in *standard* hierarchy by default. `AnnoTools` also provides a second built-in GFF3 dialect for the GENCODE schema, which collapses every transcript biotype into the single type `transcript` and adds the `stop_codon_redefined_as_selenocysteine` child of `CDS`; switch to it via
 ```bash
 AnnoTools --dialect gff3 gencode --from-gff3 gencode.v47.basic.annotation.gff3 -o gencode_v47
 ```
-which also dumps the resulting register to `gencode_v47.Annotation`. The `--dialect` and `--hierarchy` overrides are *sticky*: they apply to every subsequent input operation in the named format until another `--dialect` or `--hierarchy` replaces them. To revert to a format's default, just say `--dialect <fmt> standard`. A custom hierarchy can be pinned via `--hierarchy <fmt> "<S-expression>"`.
+The `--dialect` and `--hierarchy` overrides are *sticky*: they apply to every subsequent input operation in the named format until another `--dialect` or `--hierarchy` replaces them. To revert to a format's default, just say `--dialect <fmt> standard`. A custom hierarchy can be pinned via `--hierarchy <fmt> "<S-expression>"`.
 
-Annotation-input switches share the register with multi-FASTA inputs:
+Once loaded, the annotation (and an annotation combined with a reference sequence when the latter has been added to the register) can be validated. So
 ```bash
 AnnoTools --from-gff3 chr22.gff3 --from-fasta chr22.fa --validate
 ```
-This loads the annotation, attaches the matching reference, and runs every consistency check &mdash; `--validate-sequences-present` (every annotated sequence name appears in the reference), `--validate-feature-bounds` (every interval lies within its sequence), and `--validate-translation` (CDS `/translation=` qualifiers agree with the translated sequence). `--validate` is the catch-all that runs all three; the individual `--validate-...` switches let you run them selectively. Each of these stops at the first violation, prints a two-line message pointing the user at `--validate-report`, and exits non-zero. For a complete enumeration, use the sibling `--validate-report <file>` action: it walks the whole register, writes one tab-separated row per violation (`check`, `path`, `feature_id`, `message`) to `<file>`, and exits non-zero only if at least one violation was found. A GenBank file carrying an `ORIGIN` block replaces both the annotation and the reference in one pass, since its sequence is part of the record.
-
-Once a register has been built, the binary archive lifecycle (`-o` / `-i`) lets you cache it for later runs:
-```bash
-AnnoTools --from-gff3 huge.gff3 --from-fasta huge.fa -o huge        # writes huge.Annotation
-AnnoTools -i huge --validate --to-gtf huge.gtf                      # reloads + validates + writes
-```
-The binary archive is an OCaml `Marshal`-encoded value preceded by a version string; the default suffix is `.Annotation` unless the prefix points under `/dev/*`. Reloading is dominated by I/O (no parsing), which on GENCODE-class inputs is roughly two orders of magnitude faster than reparsing the source.
+loads the annotation, attaches the matching reference, and runs every consistency check implemented:
+* `--validate-sequences-present` (every annotated sequence name appears in the reference)
+* `--validate-feature-bounds` (every interval lies within its sequence)
+* `--validate-translation` (CDS `/translation=` qualifiers agree with the translated sequence).
+Switch `--validate` is the catch-all that runs all three; the individual `--validate-...` switches let you run them selectively. Each of these stops at the first violation, prints a two-line message pointing the user at `--validate-report`, and exits non-zero. For a complete enumeration, use the sibling `--validate-report <file>` action: it walks the whole register, writes one tab-separated row per violation (`check`, `path`, `feature_id`, `message`) to `<file>`, and exits non-zero only if at least one violation was found.
 
 ### Command line options for `AnnoTools`
 
