@@ -322,7 +322,7 @@ Executed delayed in order of specification, default=<mark>_-F_</mark>.
 
 ## Using `AnnoTools`
 
-`AnnoTools` manipulates a single in-memory genome-annotation register through a CLI-driven action stream. The action stream is built up across the command line (one switch &rarr; one action) and executed in order at the end &mdash; the same pattern used by `KPopCountDB` and `KPopTwistDB`. Supported formats are GFF3, GTF, and GenBank; multi-FASTA files attach as a reference sequence; the resulting register can be written back to any of the three formats or serialised to a compact `.Annotation` binary archive.
+`AnnoTools` allows you to parse a genomic annotation and convert it from/to different widely used formats. It manipulates a single in-memory genome-annotation register through a CLI-driven action stream. The action stream is built up across the command line (one switch corresponding to one action) and executed in order at the end &mdash; the same pattern used by `FASTools`. Supported formats are GFF3, GTF, and GenBank; multi-FASTA files can be read to add reference sequences to the annotation. The resulting contents of the register can be written back to any of the three formats or serialised to a compact `.Annotation` binary archive.
 
 A typical round-trip looks like
 ```bash
