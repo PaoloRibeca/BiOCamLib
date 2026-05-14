@@ -170,6 +170,23 @@ let () =
           let splits_ok, tree, splits_ko = Trees.Splits.to_tree ~verbose:!Parameters.verbose !splits in
           Newick.to_file tree filename_tree;
           Splits.to_binary splits_ok prefix;
+          (* Dropped-weight diagnostic: report how tree-like the input split set was.
+             W_kept = sum of weights of accepted (compatible) splits; W_dropped = sum
+             of weights of rejected (incompatible) splits; the ratio
+             W_dropped / (W_kept + W_dropped) is a direct measure of non-tree-likeness. *)
+          let w_kept = ref 0. and w_dropped = ref 0. in
+          Splits.iter (fun _ w -> w_kept := !w_kept +. w) splits_ok;
+          Splits.iter (fun _ w -> w_dropped := !w_dropped +. w) splits_ko;
+          let total = !w_kept +. !w_dropped in
+          Printf.eprintf
+            "(%s): Tree built from %d compatible splits (total weight %.6g); %d incompatible splits dropped (total weight %.6g%s).\n%!"
+            __FUNCTION__
+            (Splits.cardinal splits_ok) !w_kept
+            (Splits.cardinal splits_ko) !w_dropped
+            (if total > 0. then
+              Printf.sprintf "; W_dropped/(W_kept+W_dropped) = %.4f" (!w_dropped /. total)
+            else
+              "");
           splits := splits_ko
         | To_binary prefix ->
           Splits.to_binary ~verbose:!Parameters.verbose !splits prefix

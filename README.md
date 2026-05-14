@@ -9,13 +9,14 @@ As a bonus, BiOCamLib comes bundled with a few programs:
 * `Octopus`, which is a high-throughput program to compute the transitive closure of strings. This is useful to cluster things.
 * `Parallel`, which allows you to split and process an input file chunk-wise using the reader/workers/writer model implemented in `BiOCamLib.Tools.Parallel`. You can see it as a demonstration of the capabilities of the library, but I also often use it as a useful tool to solve real-life problems, be they bioinformatics or not. A number of high-throughput real-life examples can be found in the [KPop README](https://github.com/PaoloRibeca/KPop/).
 * `FASTools`, which is a Swiss-knife tool for the manipulation of FASTA/FASTQ files. It supports all formats (FASTA, single- and paired-end FASTQ, interleaved FASTQ) and a simpler tabular format whereby FASTA/FASTQ records are represented as tab-separated lines. It facilitates format interconversions and other manipulations.
+* `TREx`, which finds exact tandem repeats in all the sequences of a FASTA file. The output is a tab-separated table of repeats with their position, length, and unit, suitable for downstream filtering or annotation.
+* `Cophenetic`, which reads a Newick tree on standard input and writes the cophenetic-distance matrix between every pair of labelled nodes (leaves and internal alike) to standard output. By default the matrix carries shortest-path distances along branch lengths; an option switches to longest-path distances, which is the right convention when branch lengths encode partial quantities (e.g. allele frequencies).
+* `Yggdrasill`, which builds a phylogenetic tree from a register of weighted splits. It loads a `.PhyloSplits` file (binary or tabular), greedy-filters the splits for pairwise compatibility in order of decreasing weight, and emits a Newick tree assembled via the Buneman construction. The incompatible residual is retained for further inspection or iterative refinement, and a dropped-weight ratio is emitted to stderr as a measure of how tree-like the input split system is. This is the natural downstream tool for [KPop](https://github.com/PaoloRibeca/KPop/)'s `KPopTwistDB --splits` output.
 * `AnnoTools`, which manipulates a single in-memory genome-annotation register through a CLI-driven action stream. It can read and write GFF3, GTF, and GenBank files (round-tripping each), attach a multi-FASTA reference, validate that an annotation is consistent with the reference, and serialise the register to a compact binary `.Annotation` archive that loads orders of magnitude faster than reparsing the source.
 
-## Installing `RC`, `Octopus`, `Parallel`, `FASTools`, and `AnnoTools`
+## Installing `RC`, `Octopus`, `Parallel`, `FASTools`, `TREx`, `Cophenetic`, `Yggdrasill`, and `AnnoTools`
 
-> :warning: Note that the only operating systems we officially support are Linux and MacOS. :warning:
->
-> Both OCaml and R are highly portable and you might be able to manually compile/install everything successfully on other platforms (for instance, Windows). Please let us know if you succeed or if you encounter some unexpected behaviour. However, please note that in general we are unable to provide installation-related support or troubleshooting on specific hardware/software combinations.
+:warning: Note that the only operating systems we officially support are Linux and MacOS. :warning:
 
 There are several possible ways of installing the software on your machine: through `conda`; by downloading pre-compiled binaries (Linux and MacOS x86_64 only); or manually.
 
@@ -41,7 +42,7 @@ Note that the binaries are generated according to the recipe described [here](ht
 
 ### Manual install
 
-Alternatively, you can install `RC`, `Octopus`, `Parallel`, `FASTools`, and `AnnoTools` manually by cloning and compiling the BiOCamLib sources. You'll need an up-to-date distribution of the OCaml compiler and the [Dune package manager](https://github.com/ocaml/dune) for that. Both can be installed through [OPAM](https://opam.ocaml.org/), the official OCaml distribution system. Once you have a working OPAM distribution you'll also have a working OCaml compiler, and Dune can be installed with the command
+Alternatively, you can install `RC`, `Octopus`, `Parallel`, `FASTools`, `TREx`, `Cophenetic`, `Yggdrasill`, and `AnnoTools` manually by cloning and compiling the BiOCamLib sources. You'll need an up-to-date distribution of the OCaml compiler and the [Dune package manager](https://github.com/ocaml/dune) for that. Both can be installed through [OPAM](https://opam.ocaml.org/), the official OCaml distribution system. Once you have a working OPAM distribution you'll also have a working OCaml compiler, and Dune can be installed with the command
 ```bash
 opam install dune
 ```
@@ -52,7 +53,7 @@ Then go to the directory into which you have downloaded the latest BiOCamLib sou
 ./BUILD
 ```
 
-That should generate the executables `RC`, `Octopus`, `Parallel`, `FASTools`, and `AnnoTools`. Copy them to some favourite location in your PATH, for instance `~/.local/bin`.
+This should generate the executables `RC`, `Octopus`, `Parallel`, `FASTools`, `TREx`, `Cophenetic`, `Yggdrasill`, and `AnnoTools`. Copy them to some favourite location in your PATH, for instance `~/.local/bin`.
 
 ## Using `RC`
 
@@ -359,6 +360,137 @@ loads the annotation, attaches the matching reference, and runs every consistenc
 * `--validate-translation` (CDS `/translation=` qualifiers agree with the translated sequence).
 
 Switch `--validate` is the catch-all that runs all three; the individual `--validate-...` switches let you run them selectively. Each of these stops at the first violation, prints a two-line message pointing the user at `--validate-report`, and exits non-zero. For a complete enumeration, use the sibling `--validate-report <file>` action: it walks the whole register, writes one tab-separated row per violation (`check`, `path`, `feature_id`, `message`) to `<file>`, and exits non-zero only if at least one violation was found.
+
+## Using `TREx`
+
+`TREx` finds exact tandem repeats in all the sequences present in a FASTA file read on standard input, and writes a tab-separated record per identified locus to standard output (sequence name, start and end coordinates, unit length, repeat count, and the repeat unit itself). The output is convenient for downstream filtering by length, intersection against an annotation, or visualisation as a per-sequence track.
+
+The input alphabet is configured by `--linter` (default `dna`); the algorithm-tuning options `--minimum_locus_length` and `--maximum_repeat_length` bound the search. A typical invocation requiring loci of at least 50 bp and unit length up to 10 nt looks like
+
+```bash
+TREx -m 50 -M 10 < genome.fasta > repeats.tsv
+```
+
+### Command line options for `TREx`
+
+```
+This is TREx version 4 [16-Apr-2024]
+ compiled against: BiOCamLib version 500 [06-Apr-2026]
+ (c) 2023-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
+```
+*Usage:*
+```
+TREx [OPTIONS]
+```
+
+**Input/Output**
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-l`<br>`--linter` | _'none'&#124;'DNA'&#124;'dna'&#124;'protein'_ |  sets linter for sequence\.<br>All non\-base \(for DNA\) or non\-AA \(for protein\) characters  are converted to unknowns | <ins>default=<mark>_dna_</mark></ins> |
+| `--linter-keep-lowercase` | _&lt;bool&gt;_ |  sets whether the linter should keep lowercase DNA/protein characters  appearing in sequences rather than capitalise them | <ins>default=<mark>_false_</mark></ins> |
+| `--linter-keep-dashes` | _&lt;bool&gt;_ |  sets whether the linter should keep dashes appearing in sequences  rather than convert them to unknowns | <ins>default=<mark>_false_</mark></ins> |
+
+**Algorithm**
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-M`<br>`--maximum_repeat_length` | _&lt;non\_negative\_integer&gt;_ |  maximum unit length for a tandem repeat to be considered | <ins>default=<mark>_4611686018427387903_</mark></ins> |
+| `-m`<br>`--minimum_locus_length` | _&lt;non\_negative\_integer&gt;_ |  minimum locus length for a tandem repeat to be considered | <ins>default=<mark>_0_</mark></ins> |
+
+**Miscellaneous**
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-v`<br>`--verbose` |  |  set verbose execution \(global option\) | <ins>default=<mark>_quiet execution_</mark></ins> |
+| `-V`<br>`--version` |  |  print version and exit |  |
+| `-h`<br>`--help` |  |  print syntax and exit |  |
+
+## Using `Cophenetic`
+
+`Cophenetic` reads a Newick tree on standard input and writes the cophenetic-distance matrix between every pair of labelled nodes (leaves and internal alike) to standard output, as a tab-separated table with row and column headers. By default the distances are shortest-path along branch lengths &mdash; the standard cophenetic interpretation. The `-M`/`--max-distances` switch produces the longest-path matrix instead, which is the right convention when branch lengths encode partial quantities such as allele frequencies (so two siblings of a common ancestor with branch lengths 0.3 and 0.5 sit at "distance" 0.5 rather than 0.8). The matrix computation is parallelised across the cores chosen by `-t`/`--threads`.
+
+```bash
+Cophenetic -t 4 < tree.nwk > distances.tsv
+```
+
+### Command line options for `Cophenetic`
+
+```
+This is Cophenetic version 2 [06-Jun-2024]
+ compiled against: BiOCamLib version 500 [06-Apr-2026]
+ (c) 2024 Paolo Ribeca <paolo.ribeca@gmail.com>
+```
+*Usage:*
+```
+Cophenetic [OPTIONS]
+```
+
+**Algorithm**
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-M`<br>`--max-distances`<br>`--maximum-distances`<br>`--longest-path-distances` |  |  compute longest\- rather than shortest\-path distances | <ins>default=<mark>_compute shortest\-path distances_</mark></ins> |
+
+**Miscellaneous**
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-t`<br>`-T`<br>`--threads` | _&lt;computing\_threads&gt;_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_4_</mark></ins> |
+| `-v`<br>`--verbose` |  |  set verbose execution \(global option\) | <ins>default=<mark>_false_</mark></ins> |
+| `-V`<br>`--version` |  |  print version and exit |  |
+| `-h`<br>`--help` |  |  print syntax and exit |  |
+
+## Using `Yggdrasill`
+
+`Yggdrasill` builds an unrooted phylogenetic tree from a register of weighted splits. The natural input is a `.PhyloSplits` file produced by [`KPopTwistDB`](https://github.com/PaoloRibeca/KPop/)'s `--splits` action, but any tool that emits the same format can drive it. The action-language semantics mirrors `KPopCountDB` and `KPopTwistDB`: each command-line flag enqueues one register operation, the operations are executed in command-line order, and combinations of `-i`/`-I`/`-a`/`-A`/`-t`/`-o`/`-O` let you load, merge, build trees from, and dump splits in any order.
+
+The central operation is `-t`/`--tree <prefix>`: it reads the live splits register, greedy-filters the splits in order of decreasing weight for pairwise compatibility, assembles the accepted subset into a Newick tree via the Buneman construction, and writes the tree to `<prefix>.nwk` and the compatible-splits subset to `<prefix>.PhyloSplits`. The incompatible residual is left in the register, so a subsequent `-t` pass can build a "tree of residuals", or the residual can be written out via `-o`/`-O` for inspection.
+
+After every `-t` pass, a one-line summary is emitted to stderr reporting how many compatible splits were accepted, how many were dropped as incompatible, the total weight on each side, and the ratio of dropped to total weight. That ratio is a direct measure of how tree-like the input split system was: values near zero indicate the data is essentially tree-like, while values approaching one signal genuine network-like structure that the Buneman construction necessarily projects away.
+
+A typical end-to-end pipeline taking a `KPopTwistDB` splits output and producing both the tree and the residual is
+
+```bash
+KPopTwistDB -i T train -i t train --splits-algorithm gaps -S splits
+Yggdrasill  -i splits -t tree -O dropped
+```
+
+### Command line options for `Yggdrasill`
+
+```
+This is Yggdrasill version 5 [05-Feb-2025]
+ compiled against: BiOCamLib version 500 [06-Apr-2026]
+ (c) 2024-2025 Paolo Ribeca <paolo.ribeca@gmail.com>
+```
+*Usage:*
+```
+Yggdrasill [OPTIONS]
+```
+
+**Actions\.**
+They are executed delayed and in order of specification\.
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-c`<br>`--clear` |  |  clear the splits register \(keep names, discard existing splits\) |  |
+| `-i`<br>`--input` | _&lt;binary\_file\_prefix&gt;_ |  load into the splits register the specified binary database  \(which must have extension '\.PhyloSplits' unless file is '/dev/\*'\) |  |
+| `-I`<br>`--Input` | _&lt;splits\_file\_prefix&gt;_ |  load into the splits register the specified plain text database  \(which must have extension '\.PhyloSplits\.txt' unless file is '/dev/\*'\) |  |
+| `-a`<br>`--add` | _&lt;binary\_file\_prefix&gt;_ |  add to the contents of the splits register the specified binary database  \(which must have extension '\.PhyloSplits' unless file is '/dev/\*'\) |  |
+| `-A`<br>`--Add` | _&lt;splits\_file\_prefix&gt;_ |  add to the contents of the splits register the specified plain text database  \(which must have extension '\.PhyloSplits\.txt' unless file is '/dev/\*'\) |  |
+| `-t`<br>`--tree` | _&lt;tree\_file\_prefix&gt;_ |  generate a phylogenetic tree from the contents of the splits register\.<br>The results will be a Newick file  \(which will be given extension '\.nwk' unless file is '/dev/\*'\) and the database of compatible splits used to build the tree  \(which will be given extension '\.PhyloSplits\.txt' unless file is '/dev/\*'\)\.<br>The residual incompatible splits will be moved back to the splits register |  |
+| `-o`<br>`--output` | _&lt;binary\_file\_prefix&gt;_ |  dump the contents of the splits register to the specified binary file  \(which will be given extension '\.PhyloSplits' unless file is '/dev/\*'\) |  |
+| `--precision` | _&lt;positive\_integer&gt;_ |  set the number of precision digits to be used when outputting numbers | <ins>default=<mark>_10_</mark></ins> |
+| `-O`<br>`--Output` | _&lt;splits\_file\_prefix&gt;_ |  dump the contents of the splits register to the specified plain text file  \(which will be given extension '\.PhyloSplits\.txt' unless file is '/dev/\*'\) |  |
+
+**Miscellaneous options\.**
+They are set immediately\.
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-v`<br>`--verbose` |  |  set verbose execution \(global option\) | <ins>default=<mark>_quiet execution_</mark></ins> |
+| `-V`<br>`--version` |  |  print version and exit |  |
+| `-h`<br>`--help` |  |  print syntax and exit |  |
 
 ### Command line options for `AnnoTools`
 
