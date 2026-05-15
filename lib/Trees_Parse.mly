@@ -1,7 +1,7 @@
 %{
 
   (*
-      Trees_Parse.mly -- (c) 2024-2025 Paolo Ribeca, <paolo.ribeca@gmail.com>
+      Trees_Parse.mly -- (c) 2024-2026 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
       This file is part of BiOCamLib, the OCaml foundations upon which
       a number of the bioinformatics tools I developed are built.
@@ -10,6 +10,12 @@
        * phylogenetic trees represented in several dialects
           of the Newick format
        * list of weighted splits.
+
+      This program was designed and developed by the author(s),
+      with the assistance of the following AI tool(s):
+        2026 Claude (Anthropic).
+      The final logic and implementation were reviewed and verified in
+      their entirety by the author(s).
 
       This program is free software: you can redistribute it and/or modify
       it under the terms of the GNU General Public License as published by
@@ -164,6 +170,11 @@ split_set:
     { let res = Array.of_list $1 |> Trees_Base.Splits.create in
       List.iter (fun (split, weight) -> Trees_Base.Splits.add_split res split weight) $3;
       res }
+  | zero_or_more_names Splits_SEMICOLON
+    /* Empty split sets may omit the colon: the colon's role is to separate
+       names from splits, and with no splits there is nothing to separate.
+       Both forms (`names;` and `names:;`) yield the same Splits.t. */
+    { Array.of_list $1 |> Trees_Base.Splits.create }
 
 zero_or_more_names:
   | /* EMPTY */

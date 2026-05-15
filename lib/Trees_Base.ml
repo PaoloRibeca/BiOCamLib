@@ -1,10 +1,16 @@
 (*
-    Trees_Base.ml -- (c) 2024 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    Trees_Base.ml -- (c) 2024-2026 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     This file is part of BiOCamLib, the OCaml foundations upon which
     a number of the bioinformatics tools I developed are built.
 
     Trees_Base.ml implements tools to represent and process phylogenetic trees.
+
+    This program was designed and developed by the author(s),
+    with the assistance of the following AI tool(s):
+      2026 Claude (Anthropic).
+    The final logic and implementation were reviewed and verified in
+    their entirety by the author(s).
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -468,11 +474,19 @@ module Splits:
           end)
         src.splits
     module SplitsRMultimap = Tools.Multimap (RComparableFloat) (ComparableIntZ)
-    type duplication_state_t =
-      | ZeroColors
-      | OneColor of IntZ.t
-      | TwoOrMoreColors
     module ColorsToTrees = Tools.Multimap (ComparableIntZ) (MakeComparable(Newick))
+    (* Compatibility check (Buneman): a candidate split is compatible with the
+       set of currently accepted splits iff AT MOST ONE existing colour class
+       has elements on both sides of the candidate.  Each colour class is the
+       equivalence class of elements under the accepted splits; a class
+       straddling the new split would force the existing tree to branch in
+       two independent places, which violates pairwise/joint compatibility.
+       A single straddling class is fine -- it just refines that branch by
+       one extra bit.  The previous implementation checked the weaker
+       "either side sees >= 2 colours" condition, which rejected genuine
+       refinements (e.g. the nested chain of splits emitted by the hdbscan
+       algorithm) and so under-built the tree.  Cost is O(n) per candidate,
+       same as before. *)
     let to_tree ?(verbose = false) splits =
       (* We invert the table *)
       let num_elts = Array.length splits.names and sorted_splits = ref SplitsRMultimap.empty in
@@ -492,42 +506,26 @@ module Splits:
           if !num_colors >= num_elts then
             add_split_to ko
           else
-            (* Is the split compatible with current colours? *)
+            (* Is the split compatible with current colours?  For each colour
+               class, record whether we have seen it on side 0, side 1, or
+               both.  We abort as soon as TWO classes are observed to
+               straddle the new split. *)
             try
-              let state_zero = ref ZeroColors and state_one = ref ZeroColors in
+              let straddle = IntZHashtbl.create 16 in
+              let straddling_count = ref 0 in
               for i = 0 to red_num_elts do
                 let bit = IntZ.testbit split i in
-                if bit then begin
-                  (* One *)
-                  match !state_one with
-                  | ZeroColors ->
-                    (* First colour *)
-                    state_one := OneColor colors.(i)
-                  | OneColor c ->
-                    if colors.(i) <> c then begin
-                      if !state_zero = TwoOrMoreColors then
-                        (* Incompatible split *)
-                        raise_notrace Exit (* This one is OK as it will be caught *)
-                      else
-                        state_one := TwoOrMoreColors
-                    end
-                  | TwoOrMoreColors -> ()
-                end else begin
-                  (* Zero *)
-                  match !state_zero with
-                  | ZeroColors ->
-                    (* First colour *)
-                    state_zero := OneColor colors.(i)
-                  | OneColor c ->
-                    if colors.(i) <> c then begin
-                      if !state_one = TwoOrMoreColors then
-                        (* Incompatible split *)
-                        raise_notrace Exit (* This one is OK as it will be caught *)
-                      else
-                        state_zero := TwoOrMoreColors
-                    end
-                  | TwoOrMoreColors -> ()
-                end
+                let c = colors.(i) in
+                let s1, s0 =
+                  try IntZHashtbl.find straddle c
+                  with Not_found -> false, false in
+                let s1' = s1 || bit and s0' = s0 || not bit in
+                if not (s1 && s0) && s1' && s0' then begin
+                  incr straddling_count;
+                  if !straddling_count > 1 then
+                    raise_notrace Exit
+                end;
+                IntZHashtbl.replace straddle c (s1', s0')
               done;
               (* Compatible split - we update colours and their number *)
               for i = 0 to red_num_elts do
