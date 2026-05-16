@@ -507,8 +507,13 @@ module type ExtendedArrayFunctionality_t =
   sig
     type 'a tt
     type 'a elt_tt
+    (* Bounds-checked indexing.  ( .@!() ) is the unsafe (no-bounds-check)
+       counterpart for hot inner loops where the caller has proven the
+       index is in range. *)
     val ( .@() ): 'a tt -> int -> 'a elt_tt
     val ( .@()<- ): 'a tt -> int -> 'a elt_tt -> unit
+    val ( .@!() ): 'a tt -> int -> 'a elt_tt
+    val ( .@!()<- ): 'a tt -> int -> 'a elt_tt -> unit
     val copy: 'a tt -> 'a tt
     val riter: ('a elt_tt -> unit) -> 'a tt -> unit
     val riteri: (int -> 'a elt_tt -> unit) -> 'a tt -> unit
@@ -525,6 +530,8 @@ module MakeExtendedArrayFunctionality (Array: Array_t): ExtendedArrayFunctionali
   struct
     let ( .@() ) = Array.get
     let ( .@()<- ) = Array.set
+    let ( .@!() ) = Array.unsafe_get
+    let ( .@!()<- ) = Array.unsafe_set
     let copy a = Array.init (Array.length a) (Array.get a)
     let riter f a =
       for i = Array.length a - 1 downto 0 do

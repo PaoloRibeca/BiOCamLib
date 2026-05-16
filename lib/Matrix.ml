@@ -324,6 +324,11 @@ include (
         end
       )
     )
+    (* Unsafe (no-bounds-check) Float.Array accessors for the hot matrix
+       loops below; bounds are guaranteed by the surrounding
+       Array.length / Float.Array.length checks. *)
+    let ( .@!() ) = Float.Array.( .@!() )
+    let ( .@!()<- ) = Float.Array.( .@!()<- )
     let to_channel ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) m output =
       to_channel ~precision ~threads ~elements_per_step ~verbose (Real m) output
     let to_file ?(precision = 15) ?(threads = 1) ?(elements_per_step = 40000) ?(verbose = false) m path =
@@ -342,7 +347,7 @@ include (
           Array.init (Array.length m.col_names)
             (fun old_col ->
               Float.Array.init (Array.length m.row_names)
-                (fun old_row -> Float.Array.get m.data.(old_row) old_col)) }
+                (fun old_row -> m.data.(old_row).@!(old_col))) }
     module Exception =
       struct
         include Exception
@@ -400,7 +405,7 @@ include (
             (fun el_1 el_2 ->
               acc := !acc +. (el_1 *. el_2))
             row v;
-          Float.Array.set res i !acc;
+          res.@!(i) <- !acc;
           incr elts_done;
           if verbose && !elts_done mod 100 = 0 then
             Printf.eprintf "%s\r(%s): Done %d/%d elements%!" String.TermIO.clear __FUNCTION__ !elts_done d)
@@ -424,9 +429,9 @@ include (
           let acc = ref 0. in
           IntMap.iter
             (fun j el ->
-              acc := !acc +. (Float.Array.get row j *. el))
+              acc := !acc +. (row.@!(j) *. el))
             s_v.elements;
-          Float.Array.set res i !acc;
+          res.@!(i) <- !acc;
           incr elts_done;
           if verbose && !elts_done mod 100 = 0 then
             Printf.eprintf "%s\r(%s): Done %d/%d elements%!" String.TermIO.clear __FUNCTION__ !elts_done d)
@@ -469,7 +474,7 @@ include (
           List.iteri
             (fun offs_i el ->
               (* Only here do we actually fill out the memory for the result *)
-              Float.Array.set res (lo_row + offs_i) el;
+              res.@!(lo_row + offs_i) <- el;
               if verbose && !processed_rows mod rows_per_step = 0 then
                 Printf.eprintf "%s\r(%s): Done %d/%d rows%!"
                   String.TermIO.clear __FUNCTION__ !processed_rows n_rows;
@@ -517,13 +522,13 @@ include (
             let acc = ref 0. in
             Float.Array.iteri
               (fun k el ->
-                acc := !acc +. (el *. Float.Array.get m2.data.(k) j))
+                acc := !acc +. (el *. m2.data.(k).@!(j)))
               m1.data.(i);
             i, j, !acc))
         (List.iter
           (fun (i, j, el) ->
             (* Only here do we actually fill out the memory for the result *)
-            Float.Array.set data.(i) j el;
+            data.(i).@!(j) <- el;
             if verbose && !elts_done mod elements_per_step = 0 then
               Printf.eprintf "%s\r(%s): Done %d/%d elements%!" String.TermIO.clear __FUNCTION__ !elts_done prod;
             incr elts_done))
