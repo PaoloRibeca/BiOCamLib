@@ -69,6 +69,6 @@ let () =
       let _, _, n, _ = ft.(i) in
       Printf.printf "%d[\"%s\"] %.10g\n%!" i (Trees.Newick.get_node_name n) d)
     ds;
-  let dm = Trees.Newick.get_distance_matrix t in
+  let dm = Trees.Newick.get_min_distance_matrix t in
   Matrix.to_file dm "test/phylo_tb_truth.dm.txt"
 

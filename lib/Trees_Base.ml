@@ -40,17 +40,24 @@ module Newick:
     and hybrid_id_t = int
     (* Policy for negative branch lengths in parsed input.  Some
        phylogenetic methods (notably neighbour-joining) can yield
-       trees with negative branches; this flag tells the reader
-       what to do when one is encountered.
-        - [Error] (default): raise a parse error.
+       trees with negative branches; this submodule's [t] tells
+       the reader what to do when one is encountered.
+        - [Error]: raise a parse error.
         - [Zero]: silently clamp the length to 0.
         - [OK]: keep the negative value as-is.  The undefined-
           length sentinel is [Float.neg_infinity], not [-1.], so
-          there is no collision with NJ-style negatives. *)
-    type on_negative_branches_t =
-      | OK
-      | Zero
-      | Error
+          there is no collision with NJ-style negatives.
+       Standard [of_string] / [to_string] use 'error'|'zero'|'ok'
+       as the canonical CLI form. *)
+    module NegativeBranchesPolicy:
+      sig
+        type t =
+          | OK
+          | Zero
+          | Error
+        val of_string: string -> t
+        val to_string: t -> string
+      end
     (* A root leaf node can have a child *)
     val leaf: ?dict:(string StringMap.t) -> ?stem:((edge_t * t) option) -> string -> t
     (* Undefined sentinels: [neg_infinity] for [length] (so any
@@ -58,7 +65,7 @@ module Newick:
        value), and [-1.] for [bootstrap] / [probability] (whose
        ranges are [0., 1.] when specified, leaving [-1.]
        unambiguously outside).  Branch lengths may be negative
-       (see [on_negative_branches_t] and the parser's
+       (see [NegativeBranchesPolicy.t] and the parser's
        negative-length policy). *)
     val edge: ?length:float -> ?bootstrap:float -> ?probability:float ->
               ?dict:(string StringMap.t) -> ?is_ghost:bool -> unit -> edge_t
@@ -151,10 +158,22 @@ module Newick:
       | GeneTransfer of hybrid_id_t
       | Recombination of hybrid_id_t
     and hybrid_id_t = int
-    type on_negative_branches_t =
-      | OK
-      | Zero
-      | Error
+    module NegativeBranchesPolicy =
+      struct
+        type t =
+          | OK
+          | Zero
+          | Error
+        let of_string = function
+          | "ok" -> OK
+          | "zero" -> Zero
+          | "error" -> Error
+          | s -> Exception.raise_unrecognized_initializer __FUNCTION__ "negative-branches policy" s
+        let to_string = function
+          | OK -> "ok"
+          | Zero -> "zero"
+          | Error -> "error"
+      end
     (* A root leaf node can have a child *)
     let leaf ?(dict = StringMap.empty) ?(stem = None) name =
       match stem with
@@ -163,7 +182,7 @@ module Newick:
     (* Undefined sentinels: [neg_infinity] for [length] (any
        finite real, including arbitrary negatives, is a valid
        value); [-1.] for [bootstrap] / [probability].  Branch
-       lengths may be negative (see [on_negative_branches_t]);
+       lengths may be negative (see [NegativeBranchesPolicy.t]);
        the parser is the gatekeeper that rejects / clamps /
        accepts them per the caller's policy.  Direct callers of
        [edge] are trusted to pass sane values. *)
@@ -390,7 +409,7 @@ module Newick:
       _get_distance_matrix ~invert:true ~threads ~elements_per_step ~verbose t
   end
 
-module Splits:
+module type Splits_base =
   sig
     module Split:
       sig
@@ -398,6 +417,16 @@ module Splits:
         val of_string: string -> t
         val of_list: int list -> t
         val of_array: int array -> t
+        (* Wrap an existing IntZ bitmask as a Split.t.  Each set bit i
+           in the input mask corresponds to element index i being on
+           one side of the bipartition.  No canonicalisation is done
+           here; canonicalisation happens inside [add_split]. *)
+        val of_intz: IntZ.t -> t
+        (* The dual of [of_intz]: project a Split.t back to its IntZ bitmask,
+           so a client can do bit algebra (popcount, complement, set-bit
+           iteration) on splits without the representation being exposed as a
+           type equation.  Used by [Trees.of_splits]. *)
+        val to_intz: t -> IntZ.t
         val to_string: t -> string
       end
     type t
@@ -412,11 +441,31 @@ module Splits:
     val add_split: t -> Split.t -> float -> unit
     (* It fails if the element names of the split sets are different *)
     val add_splits: t -> t -> unit
-    (* Converts to a tree the largest subset of compatible splits,
-        obtained by considering the splits in order of decreasing weight.
-       Both the used and unused splits are returned *)
-    val to_tree: ?verbose:bool -> t -> t * Newick.t * t
+    (* Bipartition weight when constructing splits from a tree.
+       Constant uses a fixed weight per bipartition; Bootstrap uses
+       the parent-edge bootstrap value (falling back to 1.0 if absent) *)
+    type weight_t =
+      | Constant of float
+      | Bootstrap
+    (* Build a split set from a Newick tree.  The element-name array
+       is the alphabetically-sorted list of leaves.  Each non-trivial
+       bipartition is added once with the chosen weight. *)
+    val of_newick: ?weight_kind:weight_t -> Newick.t -> t
+    (* Add the bipartitions of a Newick tree to an existing register.
+       Tree-leaves must equal register-names (otherwise raise);
+       weights accumulate (matching add_split's semantics). *)
+    val add_newick: ?weight_kind:weight_t -> t -> Newick.t -> unit
+    (* In-place: drop every split whose weight is strictly below [cutoff]
+       (equivalently, keep those with weight >= cutoff). *)
+    val drop_weight_below: t -> float -> unit
   end
+
+(* Splits is purely the splits-register DATA layer: it exposes exactly
+   [Splits_base] (container, I/O-free operations, Newick<->splits, weight
+   filtering).  The tree CONSTRUCTORS ([of_splits]/[of_clades]) do not live
+   here -- they sit one layer up, in [Trees], above the parser, where they
+   belong; see the sealed block at the end of Trees.ml. *)
+module Splits: Splits_base
 = struct
     module Split =
       struct
@@ -428,6 +477,8 @@ module Splits:
           List.fold_left (fun res i -> IntZ.(res + (one lsl i))) IntZ.zero
         let of_array =
           Array.fold_left (fun res i -> IntZ.(res + (one lsl i))) IntZ.zero
+        let of_intz x = x [@@inline]
+        let to_intz x = x [@@inline]
         let to_string s = IntZ.to_string s [@@inline]
       end
     type t = {
@@ -473,118 +524,97 @@ module Splits:
             | Some w -> w +. weight
           end)
         src.splits
-    module SplitsRMultimap = Tools.Multimap (RComparableFloat) (ComparableIntZ)
-    module ColorsToTrees = Tools.Multimap (ComparableIntZ) (MakeComparable(Newick))
-    (* Compatibility check (Buneman): a candidate split is compatible with the
-       set of currently accepted splits iff AT MOST ONE existing colour class
-       has elements on both sides of the candidate.  Each colour class is the
-       equivalence class of elements under the accepted splits; a class
-       straddling the new split would force the existing tree to branch in
-       two independent places, which violates pairwise/joint compatibility.
-       A single straddling class is fine -- it just refines that branch by
-       one extra bit.  The previous implementation checked the weaker
-       "either side sees >= 2 colours" condition, which rejected genuine
-       refinements (e.g. the nested chain of splits emitted by the hdbscan
-       algorithm) and so under-built the tree.  Cost is O(n) per candidate,
-       same as before. *)
-    let to_tree ?(verbose = false) splits =
-      (* We invert the table *)
-      let num_elts = Array.length splits.names and sorted_splits = ref SplitsRMultimap.empty in
+    (* Bipartition weight assignment when constructing splits from a Newick tree *)
+    type weight_t =
+      | Constant of float
+      | Bootstrap
+    (* Collect every leaf name from a Newick tree, sorted alphabetically
+       and dedup-checked (so add_newick fails fast on duplicate leaves). *)
+    let _newick_leaves tree =
+      let acc = ref [] in
+      Newick.dfs_iter
+        (fun node n_children ->
+          if n_children = 0 then
+            acc := Newick.get_node_name node :: !acc)
+        (fun _ _ -> ()) (fun _ _ -> ()) (fun _ _ -> ())
+        tree;
+      let arr = List.rev !acc |> Array.of_list in
+      Array.sort String.compare arr;
+      let seen = ref StringSet.empty in
+      Array.iter
+        (fun n ->
+          if StringSet.mem n !seen then
+            Exception.raise __FUNCTION__ IO_Format
+              (Printf.sprintf "Duplicate leaf %S in Newick" n);
+          seen := StringSet.add n !seen)
+        arr;
+      arr
+    (* DFS over a Newick tree, emitting one bipartition per internal
+       node into [reg].  The stack holds (mask, leaf-count) per active
+       subtree; on entering an internal node we push a placeholder, on
+       leaving we pop the n_children child accumulators plus the
+       placeholder, combine, push the result, and emit a bipartition
+       if non-trivial (1 < size < n-1). *)
+    let _add_newick_into ~weight_kind reg tree =
+      let names = get_names reg in
+      let n = Array.length names in
+      let name_to_idx = Hashtbl.create n in
+      Array.iteri (fun i nm -> Hashtbl.add name_to_idx nm i) names;
+      let stack = Stack.create () in
+      Newick.dfs_iter
+        (fun node n_children ->
+          if n_children = 0 then begin
+            let nm = Newick.get_node_name node in
+            match Hashtbl.find_opt name_to_idx nm with
+            | Some i -> Stack.push (IntZ.(one lsl i), 1) stack
+            | None ->
+              Exception.raise __FUNCTION__ IO_Format
+                (Printf.sprintf "Newick leaf %S is not in the splits register" nm)
+          end else
+            Stack.push (IntZ.zero, 0) stack)
+        (fun _ _ -> ())
+        (fun _ _ -> ())
+        (fun _ n_children ->
+          if n_children > 0 then begin
+            let combined_mask = ref IntZ.zero
+            and combined_size = ref 0 in
+            for _ = 1 to n_children do
+              let (m, s) = Stack.pop stack in
+              combined_mask := IntZ.logor !combined_mask m;
+              combined_size := !combined_size + s
+            done;
+            (* discard the pre-pushed placeholder for this internal node *)
+            let _ = Stack.pop stack in
+            Stack.push (!combined_mask, !combined_size) stack;
+            if !combined_size > 1 && !combined_size < n - 1 then begin
+              let w = match weight_kind with
+                | Constant c -> c
+                | Bootstrap -> 1.0 (* TODO: thread parent-edge bootstrap via dfs_iteri *) in
+              add_split reg !combined_mask w
+            end
+          end)
+        tree
+    let of_newick ?(weight_kind = Constant 1.0) tree =
+      let leaves = _newick_leaves tree in
+      let reg = create leaves in
+      _add_newick_into ~weight_kind reg tree;
+      reg
+    let add_newick ?(weight_kind = Constant 1.0) reg tree =
+      let tree_leaves = _newick_leaves tree in
+      let reg_leaves = get_names reg in
+      if Array.length reg_leaves = 0 then
+        Exception.raise __FUNCTION__ IO_Format
+          "add_newick on empty register: call of_newick first";
+      if tree_leaves <> reg_leaves then
+        Exception.raise_incompatible_arrays __FUNCTION__ "splits set" "leaf names"
+          Array.iter Fun.id tree_leaves reg_leaves;
+      _add_newick_into ~weight_kind reg tree
+    let drop_weight_below splits cutoff =
+      let keep = ref [] in
       IntZHashtbl.iter
-        (fun split weight ->
-          sorted_splits := SplitsRMultimap.add weight split !sorted_splits)
+        (fun s w -> if w >= cutoff then List.accum keep (s, w))
         splits.splits;
-      let red_num_elts = num_elts - 1 and colors = Array.make num_elts IntZ.zero and num_colors = ref 1
-      (* We partition splits based on their compatibility *)
-      and ok = ref SplitsRMultimap.empty and ok_weights = ref []
-      and ko = ref SplitsRMultimap.empty in
-      SplitsRMultimap.iter
-        (fun weight split ->
-          let add_split_to partition =
-            partition := SplitsRMultimap.add weight split !partition in
-          (* Do we need more splits? If colours are all different, we have found enough *)
-          if !num_colors >= num_elts then
-            add_split_to ko
-          else
-            (* Is the split compatible with current colours?  For each colour
-               class, record whether we have seen it on side 0, side 1, or
-               both.  We abort as soon as TWO classes are observed to
-               straddle the new split. *)
-            try
-              let straddle = IntZHashtbl.create 16 in
-              let straddling_count = ref 0 in
-              for i = 0 to red_num_elts do
-                let bit = IntZ.testbit split i in
-                let c = colors.(i) in
-                let s1, s0 =
-                  try IntZHashtbl.find straddle c
-                  with Not_found -> false, false in
-                let s1' = s1 || bit and s0' = s0 || not bit in
-                if not (s1 && s0) && s1' && s0' then begin
-                  incr straddling_count;
-                  if !straddling_count > 1 then
-                    raise_notrace Exit
-                end;
-                IntZHashtbl.replace straddle c (s1', s0')
-              done;
-              (* Compatible split - we update colours and their number *)
-              for i = 0 to red_num_elts do
-                colors.(i) <- IntZ.(colors.(i) lsl 1 + if testbit split i then one else zero)
-              done;
-              num_colors := Array.to_seq colors |> IntZSet.of_seq |> IntZSet.cardinal;
-              add_split_to ok;
-              List.accum ok_weights weight
-            with Exit ->
-              (* Incompatible split *)
-              add_split_to ko)
-        !sorted_splits;
-      if verbose then
-        Printf.eprintf "(%s): Found %d colors for %d elements, used %d/%d splits\n%!"
-          __FUNCTION__ !num_colors (Array.length splits.names)
-          (SplitsRMultimap.cardinal !ok) (SplitsRMultimap.cardinal !ko);
-      (* To return used and unused splits, we need to invert tables *)
-      let partition_to_splits partition =
-        let res = create splits.names in
-        SplitsRMultimap.iter (fun weight split -> add_split res split weight) !partition;
-        res in
-      (* We build and output the tree corresponding to names, colours, and weights.
-         Note that at this point the elements might or might not have distinct colours *)
-      let res =
-        (* We initialise the result with as many leaves as the elements.
-           First we collect leaves by colour... *)
-        let colors_to_trees = ref ColorsToTrees.empty in
-        Array.iter2
-          (fun color name ->
-            colors_to_trees := ColorsToTrees.add color (Newick.leaf name) !colors_to_trees)
-          colors splits.names;
-        (* ...and then we merge all the leaves associated with the same colour, if there is more than one.
-           Branches all have length 0 *)
-        ColorsToTrees.map_set
-          (fun leaves ->
-            if ColorsToTrees.ValSet.cardinal leaves > 1 then
-              ColorsToTrees.ValSet.elements_array leaves |> Array.map (fun leaf -> Newick.edge (), leaf) |> Newick.join
-            else
-              ColorsToTrees.ValSet.min_elt leaves)
-          !colors_to_trees
-        |> ref in
-      while IntZMap.cardinal !res > 1 do
-        let colors_to_trees = ref ColorsToTrees.empty in
-        IntZMap.iter
-          (fun color tree ->
-            (* We update the colour *)
-            colors_to_trees := ColorsToTrees.add IntZ.(color asr 1) tree !colors_to_trees)
-          !res;
-        (* We merge all the trees associated with the same colour *)
-        let branch_length = List.pop ok_weights in
-        res := begin
-          ColorsToTrees.map_set
-            (fun trees ->
-              ColorsToTrees.ValSet.elements_array trees
-              |> Array.map (fun tree -> Newick.edge ~length:branch_length (), tree) |> Newick.join)
-            !colors_to_trees
-        end
-      done;
-      assert (!ok_weights = []);
-      partition_to_splits ok, IntZMap.min_binding !res |> snd, partition_to_splits ko
+      IntZHashtbl.clear splits.splits;
+      List.iter (fun (s, w) -> IntZHashtbl.replace splits.splits s w) !keep
   end
 

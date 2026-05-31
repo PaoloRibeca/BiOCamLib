@@ -22,21 +22,21 @@
     sig
       type t
       val create: ?rich_format:bool ->
-                  ?negative_branches:Trees_Base.Newick.on_negative_branches_t ->
+                  ?negative_branches:Trees_Base.Newick.NegativeBranchesPolicy.t ->
                   unit -> t
       val is_rich_format: t -> bool
-      val negative_branches: t -> Trees_Base.Newick.on_negative_branches_t
+      val negative_branches: t -> Trees_Base.Newick.NegativeBranchesPolicy.t
       val incr_line: t -> unit
       val parse_error: t -> string -> 'a
     end
   = struct
       type t = {
         rich_format: bool;
-        negative_branches: Trees_Base.Newick.on_negative_branches_t;
+        negative_branches: Trees_Base.Newick.NegativeBranchesPolicy.t;
         mutable line: int
       }
       let create ?(rich_format = true)
-                 ?(negative_branches = Trees_Base.Newick.Error) () = {
+                 ?(negative_branches = Trees_Base.Newick.NegativeBranchesPolicy.Error) () = {
         rich_format;
         negative_branches;
         line = 1
@@ -97,9 +97,9 @@ rule newick state = parse
         Newick.parse_error state ("Invalid number '" ^ n ^ "'") in
     if v < 0. then
       match Newick.negative_branches state with
-      | Trees_Base.Newick.OK -> Newick_LENGTH v
-      | Trees_Base.Newick.Zero -> Newick_LENGTH 0.
-      | Trees_Base.Newick.Error ->
+      | Trees_Base.Newick.NegativeBranchesPolicy.OK -> Newick_LENGTH v
+      | Trees_Base.Newick.NegativeBranchesPolicy.Zero -> Newick_LENGTH 0.
+      | Trees_Base.Newick.NegativeBranchesPolicy.Error ->
         Newick.parse_error state ("Negative branch length '" ^ n ^ "'")
     else
       Newick_LENGTH v }

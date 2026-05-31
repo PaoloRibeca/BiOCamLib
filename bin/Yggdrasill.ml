@@ -25,8 +25,11 @@ type to_do_t =
   | Clear
   | Of_binary of string
   | Of_file of string
+  | Of_newick of string
   | Add_binary of string
   | Add_file of string
+  | Add_newick of string * float
+  | Drop_weak_splits of float
   | To_tree of string
   | To_binary of string
   | Set_precision of int
@@ -37,6 +40,7 @@ module Defaults =
     let precision = 10
     (*let threads = Processes.Parallel.get_nproc ()*)
     let verbose = false
+    let negative_branches = Newick.NegativeBranchesPolicy.OK
   end
 
 module Parameters =
@@ -44,6 +48,7 @@ module Parameters =
     let program = ref []
     (*let threads = ref Defaults.threads*)
     let verbose = ref Defaults.verbose
+    let negative_branches = ref Defaults.negative_branches
   end
 
 let info = {
@@ -89,6 +94,50 @@ let () =
         " (which must have extension '.PhyloSplits.txt' unless file is '/dev/*')" ],
       TA.Optional,
       (fun _ -> Add_file (TA.get_parameter ()) |> List.accum Parameters.program);
+    [ "--input-tree"; "--Of-tree" ],
+      Some "<newick_file>",
+      [ "load into the splits register the bipartitions of the specified Newick tree";
+        " (replaces the current register; for multi-tree files, every tree's";
+        "  bipartitions are added, each with weight 1.0 per occurrence)" ],
+      TA.Optional,
+      (fun _ -> Of_newick (TA.get_parameter ()) |> List.accum Parameters.program);
+    [ "--Add-tree" ],
+      Some "<newick_file>",
+      [ "add to the splits register the bipartitions of the specified Newick";
+        "tree, each with weight 1.0 (so a bipartition supported by k trees";
+        "accumulates to weight k).  Compose with multiple --Add-tree calls";
+        "for ensemble consensus, then feed to -t" ],
+      TA.Optional,
+      (fun _ -> Add_newick (TA.get_parameter (), 1.0) |> List.accum Parameters.program);
+    [ "--Add-tree-weighted" ],
+      Some "<newick_file> <weight>",
+      [ "as --Add-tree, but each bipartition gets the explicit weight given";
+        " (useful when different ensemble members should count differently)" ],
+      TA.Optional,
+      (fun _ ->
+        let file = TA.get_parameter () in
+        let w = TA.get_parameter_float () in
+        Add_newick (file, w) |> List.accum Parameters.program);
+    [ "--drop-weak-splits" ],
+      Some "<float>",
+      [ "drop every split in the register whose accumulated weight is";
+        "strictly less than the cutoff.  Apply between --Add-tree calls and";
+        "-t to implement majority-rule consensus at threshold p:";
+        " set cutoff = p * n_input_trees" ],
+      TA.Optional,
+      (fun _ -> Drop_weak_splits (TA.get_parameter_float_pos ())
+                |> List.accum Parameters.program);
+    [ "--negative-branches-policy" ],
+      Some "'error'|'ok'|'zero'",
+      [ "policy for handling negative branch lengths when reading Newick input";
+        " (via --input-tree, --Add-tree, --Add-tree-weighted).";
+        " 'error' rejects (raises a parse error); 'ok' accepts as-is;";
+        " 'zero' silently clamps to 0.  Set before the --Add-tree call(s)";
+        " it should apply to" ],
+      TA.Default (Newick.NegativeBranchesPolicy.to_string Defaults.negative_branches |> Fun.const),
+      (fun _ ->
+        Parameters.negative_branches :=
+          TA.get_parameter () |> Newick.NegativeBranchesPolicy.of_string);
     [ "-t"; "--tree" ],
       Some "<tree_file_prefix>",
       [ "generate a phylogenetic tree from the contents of the splits register.";
@@ -165,9 +214,31 @@ let () =
           Splits.of_binary ~verbose:!Parameters.verbose prefix |> Splits.add_splits !splits
         | Add_file prefix ->
           Splits.of_file prefix |> Splits.add_splits !splits
+        | Of_newick path ->
+          splits :=
+            Splits.of_newick_file
+              ~negative_branches:!Parameters.negative_branches path
+        | Add_newick (path, weight) ->
+          (* First call (empty register) initialises; subsequent calls
+             add to the existing register, accumulating weights.  The
+             negative-branches policy is read from Parameters at the
+             time the action runs, so a --negative-branches set later
+             in the CLI still applies before its first --Add-tree. *)
+          let neg = !Parameters.negative_branches in
+          if Array.length (Splits.get_names !splits) = 0 then
+            splits :=
+              Splits.of_newick_file
+                ~negative_branches:neg
+                ~weight_kind:(Splits.Constant weight) path
+          else
+            Splits.add_newick_file
+              ~negative_branches:neg
+              ~weight_kind:(Splits.Constant weight) !splits path
+        | Drop_weak_splits w ->
+          Splits.drop_weight_below !splits w
         | To_tree prefix ->
           let filename_tree = prefix ^ ".nwk" in
-          let splits_ok, tree, splits_ko = Trees.Splits.to_tree ~verbose:!Parameters.verbose !splits in
+          let splits_ok, tree, splits_ko = Trees.of_splits ~verbose:!Parameters.verbose !splits in
           Newick.to_file tree filename_tree;
           Splits.to_binary splits_ok prefix;
           (* Dropped-weight diagnostic: report how tree-like the input split set was.
