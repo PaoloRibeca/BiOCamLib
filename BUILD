@@ -2,6 +2,31 @@
 
 set -e
 
+# ──────────────────────────────────────────────────────────────────────
+# Special target: regenerate README.pdf from README.md
+#   ./BUILD README.pdf
+# Markdown -> self-contained HTML (pandoc, GitHub-flavoured, image + CSS
+# embedded) -> PDF (headless Chrome/Chromium, the same engine GitHub's
+# "print to PDF" uses).  Needs: pandoc and google-chrome/chromium.
+# ──────────────────────────────────────────────────────────────────────
+if [[ "${1:-}" == "README.pdf" ]]; then
+  cd "$(dirname "${BASH_SOURCE[0]}")"
+  command -v pandoc >/dev/null 2>&1 || { echo "BUILD: pandoc not found" >&2; exit 1; }
+  CHROME=""
+  for c in google-chrome google-chrome-stable chromium chromium-browser; do
+    if command -v "$c" >/dev/null 2>&1; then CHROME="$c"; break; fi
+  done
+  [[ -n "$CHROME" ]] || { echo "BUILD: no google-chrome/chromium found" >&2; exit 1; }
+  HTML="$(mktemp --suffix=.html)"
+  trap 'rm -f "$HTML"' EXIT
+  pandoc README.md -f gfm -t html5 --standalone --embed-resources \
+         --css docs/README.css --metadata title="BiOCamLib" -o "$HTML"
+  "$CHROME" --headless=new --no-sandbox --disable-gpu --no-pdf-header-footer \
+            --print-to-pdf=README.pdf "$HTML" 2>/dev/null
+  echo "BUILD: wrote README.pdf"
+  exit 0
+fi
+
 PROFILE="$1"
 if [[ "$PROFILE" == "" ]]; then
   PROFILE="dev"
