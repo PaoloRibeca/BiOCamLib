@@ -180,6 +180,10 @@ end):
     val ( .@() ): 'a t -> int -> 'a Array.elt_t (* Can fail *)
     val set: 'a t -> int -> 'a Array.elt_t -> unit (* Can fail *)
     val ( .@() <- ): 'a t -> int -> 'a Array.elt_t -> unit (* Can fail *)
+    val unsafe_get: 'a t -> int -> 'a Array.elt_t (* No bounds check; caller ensures 0 <= idx < length *)
+    val ( .@!() ): 'a t -> int -> 'a Array.elt_t (* Unsafe; see unsafe_get *)
+    val unsafe_set: 'a t -> int -> 'a Array.elt_t -> unit (* No bounds check; see unsafe_get *)
+    val ( .@!() <- ): 'a t -> int -> 'a Array.elt_t -> unit (* Unsafe; see unsafe_set *)
     val contents: 'a t -> 'a Array.t
     val rcontents: 'a t -> 'a Array.t
   end
@@ -191,6 +195,8 @@ end):
     let empty () = { data = Array.empty; size = 0 }
     let ( .@() ) = Array.get
     let ( .@()<- ) = Array.set
+    let ( .@!() ) = Array.unsafe_get
+    let ( .@!()<- ) = Array.unsafe_set
     let push s el =
       let aug_length = s.size + 1 in
       if Array.length s.data >= aug_length then begin
@@ -300,16 +306,23 @@ end):
       _fold start 0
     let fold_top = fold
     let fold_bottom = rfold
+    (* The [idx < s.size] guard already implies [idx < Array.length s.data]
+       (the backing array is never shorter than [size]), so the inner
+       access can safely skip its own bounds check. *)
     let get s idx =
       if idx < s.size then
-        s.data.@(idx)
+        s.data.@!(idx)
       else
         Exception.raise_index_out_of_range __FUNCTION__ idx "arraystack" s.size
     let set s idx el =
       if idx < s.size then
-        s.data.@(idx) <- el
+        s.data.@!(idx) <- el
       else
         Exception.raise_index_out_of_range __FUNCTION__ idx "arraystack" s.size
+    (* No bounds check at all: the caller vouches for [0 <= idx < size].
+       Intended for hot inner loops over indices already known valid. *)
+    let unsafe_get s idx = s.data.@!(idx)
+    let unsafe_set s idx el = s.data.@!(idx) <- el
     let contents s =
       Array.sub s.data 0 s.size
     let rcontents s =
@@ -317,6 +330,8 @@ end):
       Array.init s.size (fun i -> s.data.@(red_size - i))
     let ( .@() ) = get
     let ( .@() <- ) = set
+    let ( .@!() ) = unsafe_get
+    let ( .@!() <- ) = unsafe_set
   end
 module Array =
   struct
