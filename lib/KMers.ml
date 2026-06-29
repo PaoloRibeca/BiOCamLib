@@ -333,6 +333,14 @@ module Iterator:
                   Content.Flags.t -> int -> t -> (string array -> int -> float -> unit) ->
                   (?weight:float -> int array -> unit) * (unit -> unit)
       end
+    (* The inverse of the encoder and hasher: given the content and hasher used to
+        produce them, it turns each hash string back into the corresponding
+        (strand-canonical) sequence. The gap positions of gapped k-mers, which are
+        not hashed, are rendered using the gap character (a dash by default) *)
+    module Decoder:
+      sig
+        val make: ?verbose:bool -> ?gap:char -> Content.t -> Hasher.t -> (string -> string)
+      end
     (* The two functions are accumulator and finaliser *)
     type t = (?weight:float -> string -> unit) * (unit -> unit)
     (* The last argument is the iterator function *)
@@ -503,7 +511,9 @@ module Iterator:
           | Content.DNA (_, case_sensitivity, _) -> DNA case_sensitivity
           | Protein _ -> Protein
           | Text (case_sensitivity, _, path) -> Dictionary (case_sensitivity, path)
-        let make ?(verbose = false) flags e =
+        (* Builds the trie mapping dictionary tokens to consecutive integer ids;
+            it is shared by the encoder and its inverse *)
+        let make_trie ?(verbose = false) e =
           let dict =
             match e with
             | Test l ->
@@ -546,7 +556,9 @@ module Iterator:
             (fun s ->
               trie := Tools.Trie.add !trie s)
             dict;
-          let trie = !trie in
+          !trie
+        let make ?(verbose = false) flags e =
+          let trie = make_trie ~verbose e in
           let timer_id_encoder = Tools.Timer.of_string "KMers.Iterator.Encoder" in
           Tools.Trie.length trie,
           (fun s ->
@@ -590,6 +602,14 @@ module Iterator:
             Tools.Timer.stop timer_id_encoder;
             !res)
       end
+    (* Number of bits per symbol needed to encode an alphabet of the given size *)
+    let n_bits_of_n_symbols n_symbols =
+      assert (n_symbols > 0);
+      let res = ref 1 and rem = n_symbols - 1 |> ref in
+      while rem := !rem lsr 1; !rem > 0 do
+        incr res
+      done;
+      !res
     module Hasher =
       struct
         type t =
@@ -611,13 +631,7 @@ module Iterator:
             Printf.sprintf "gapped(%d,%d)" k g
         let make ?(verbose = false) flags n_symbols h f =
           let impl =
-            let n_bits =
-              assert (n_symbols > 0);
-              let res = ref 1 and rem = n_symbols - 1 |> ref in
-              while rem := !rem lsr 1; !rem > 0 do
-                incr res
-              done;
-              !res
+            let n_bits = n_bits_of_n_symbols n_symbols
             and k = match h with K_mers k | Gapped (k, _) -> k in
             try
               let res = (module IntHash (struct let n = n_bits end) (struct let n = k end): Hash_t) in
@@ -731,6 +745,54 @@ module Iterator:
                 res;
               (*Impl.Accumulator2.clear res;*)
               Tools.Timer.stop timer_id_finalizer)
+      end
+    module Decoder =
+      struct
+        let make ?(verbose = false) ?(gap = '-') content hasher =
+          let trie = Encoder.of_content content |> Encoder.make_trie ~verbose in
+          let n_symbols = Tools.Trie.length trie
+          and id_to_symbol = Tools.Trie.nth trie in
+          let fail message = Exception.raise __FUNCTION__ IO_Format message in
+          if n_symbols = 0 then
+            fail "Empty alphabet (the dictionary file contains no tokens)";
+          let n_bits = n_bits_of_n_symbols n_symbols
+          and k = match hasher with Hasher.K_mers k | Gapped (k, _) -> k in
+          let block_width = (n_bits * k + 3) / 4
+          and max_symbol = IntZ.(one lsl n_bits - one) in
+          let decode_block hex =
+            if String.length hex <> block_width then
+              Printf.sprintf "Invalid hash block '%s' (expected %d hex digits)" hex block_width
+                |> fail;
+            let h =
+              try
+                IntZ.of_string ("0x" ^ hex)
+              with _ ->
+                Printf.sprintf "Invalid hash block '%s'" hex |> fail in
+            let h = ref h and symbols = Array.make k "" in
+            for pos = k - 1 downto 0 do
+              let symbol = IntZ.(!h land max_symbol) |> IntZ.to_int in
+              if symbol >= n_symbols then
+                Printf.sprintf "Invalid hash block '%s' (symbol id %d not in %d-symbol alphabet)"
+                  hex symbol n_symbols |> fail;
+              symbols.(pos) <- id_to_symbol symbol;
+              h := IntZ.(!h asr n_bits)
+            done;
+            if IntZ.equal !h IntZ.zero |> not then
+              Printf.sprintf "Invalid hash block '%s' (extra high-order bits; do -k and -c match?)"
+                hex |> fail;
+            Array.to_list symbols |> String.concat "" in
+          match hasher with
+          | Hasher.K_mers _ ->
+            decode_block
+          | Gapped (_, g) ->
+            let gap_run = String.make g gap in
+            (fun hash ->
+              match String.Split.on_char_as_array '_' hash with
+              | [| hex1; hex2 |] ->
+                decode_block hex1 ^ gap_run ^ decode_block hex2
+              | _ ->
+                Printf.sprintf "Invalid gapped hash '%s' (expected two blocks separated by '_')"
+                  hash |> fail)
       end
     type t = (?weight:float -> string -> unit) * (unit -> unit)
     let make ?(verbose = false) content hasher f =
