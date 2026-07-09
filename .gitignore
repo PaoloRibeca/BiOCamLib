@@ -1,5 +1,8 @@
 lib/Info.ml
 _build
-build
-releases
+.build
 BiOCamLib.opam
+# Release archives and payload dirs are build artifacts; the release
+# source-of-truth (MANIFEST, CURRENT) stays tracked.
+releases/CURRENT~
+releases/BiOCamLib-*

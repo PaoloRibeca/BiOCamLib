@@ -1,0 +1,93 @@
+name: Build macOS binaries
+
+# Cross-build the macOS BiOCamLib binaries that cannot be produced on the Linux
+# development machine, and upload them as artifacts.  On the dev machine,
+# 'bash BUILD mac-end' downloads them and hands each directory to the BUILD
+# script's 'package' target to assemble the release archive locally:
+#
+#   PACKAGE_PLATFORM=Darwin-arm64 PACKAGE_BINDIR=./BiOCamLib-Darwin-arm64 \
+#     bash BUILD package 1.2.2
+#
+# BiOCamLib is pure OCaml, so the macOS binaries are built exactly like the
+# Linux ones (no C/C++ path, no dune patching) — the only system dependency is
+# GMP, for zarith.  Everything else in a release (LICENSE, README.pdf,
+# versioning, archive naming) is platform-independent and stays in the local
+# BUILD script.
+
+on:
+  # Manual runs and version tags only — never on every push, so the metered
+  # macOS runner minutes (10x multiplier on private repos) are spent sparingly.
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+# One run per ref; a newer push of the same ref cancels an in-flight build.
+concurrency:
+  group: build-binaries-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      # arm64 builds on macOS 14 (Apple Silicon).  Intel uses macos-15-intel
+      # because it is a STANDARD 4-core runner, eligible for the free plan's
+      # included minutes — unlike macos-14-large, a paid 12-core runner.
+      matrix:
+        include:
+          - runner: macos-14        # macOS 14, Apple Silicon (arm64)
+            arch: arm64
+          - runner: macos-15-intel  # macOS 15, Intel (x86_64)
+            arch: x86_64
+    steps:
+      - name: Check out (full history)
+        uses: actions/checkout@v5
+        with:
+          # Full history: BUILD derives the version string from the commit-file
+          # count, so a shallow clone would stamp the binaries with a bogus version.
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        # GMP for zarith; the rest of BiOCamLib is pure OCaml.
+        run: brew install gmp
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "4.14"
+
+      - name: Install OCaml dependencies
+        run: opam install --yes dune menhir zarith
+
+      - name: Build binaries
+        # Plain 'release', not 'release-static': macOS has no static libSystem,
+        # so -ccopt -static won't link.
+        run: opam exec -- bash BUILD release
+
+      - name: Stage binaries
+        run: |
+          mkdir -p dist
+          cp .build/Parallel .build/Octopus .build/RC .build/FASTools \
+             .build/AnnoTools .build/TREx .build/Cophenetic .build/Yggdrasill dist/
+
+      - name: Smoke-check binaries (non-blocking)
+        # Confirm each binary at least loads (dyld resolves its libraries).
+        # Informational only — never fails the job.
+        run: |
+          for b in Parallel Octopus RC FASTools AnnoTools TREx Cophenetic Yggdrasill; do
+            echo "=== otool -L dist/$b ==="; otool -L "dist/$b" || true
+            echo "=== dist/$b --help ==="; ./dist/"$b" --help 2>&1 | head -3 || true
+          done
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: BiOCamLib-Darwin-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
