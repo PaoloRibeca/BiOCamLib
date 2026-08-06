@@ -891,7 +891,7 @@ module Reference:
               try
                 StringMap.find !name tables
               with _ ->
-                Exception.raise __FUNCTION__ Algorithm
+                Exception.raise __FUNCTION__ IO_Format
                   (Printf.sprintf "Sequence '%s' has no associated translation table" !name) in
           let seq = Buffer.contents seq in
           res := StrandedStringMap.add (Types.Forward !name) (seq, table) !res;
@@ -923,7 +923,7 @@ module Reference:
         StrandedStringMap.find str_name obj
       with Not_found ->
         let _, name = Types.split_of_stranded str_name in
-        Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Sequence '%s' not found in reference" name)
+        Exception.raise __FUNCTION__ IO_Format (Printf.sprintf "Sequence '%s' not found in reference" name)
     let length obj str_name =
         let seq, _ = find obj str_name in
         String.length seq

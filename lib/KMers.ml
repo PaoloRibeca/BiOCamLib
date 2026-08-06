@@ -138,7 +138,7 @@ module IntHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t = 
       for i = idx to idx + k - 1 do
         let s = a.(i) in
         if s > max_symbol then
-          Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Invalid symbol '%d' in input" s);
+          Exception.raise __FUNCTION__ IO_Format (Printf.sprintf "Invalid symbol '%d' in input" s);
         res := (!res lsl bits) + s
       done;
       !res
@@ -217,7 +217,7 @@ module IntZHash (Bits: IntParameter_t) (K: IntParameter_t): Hash_t with type t =
       for i = idx to idx + k - 1 do
         let s = a.(i) in
         if s > max_symbol then
-          Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Invalid symbol '%d' in input" s);
+          Exception.raise __FUNCTION__ IO_Format (Printf.sprintf "Invalid symbol '%d' in input" s);
         res := IntZ.((!res lsl bits) + of_int s)
       done;
       !res

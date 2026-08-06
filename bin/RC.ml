@@ -42,39 +42,51 @@ let info = {
 
 let () =
   let module TA = Tools.Argv in
-  TA.set_header (info, authors, [ Info.info ]);
-  TA.set_synopsis "[OPTIONS]";
-  TA.parse [
-    TA.make_separator "Algorithm";
-    [ "-C"; "--no-complement" ],
-      None,
-      [ "do not base-complement the sequence" ],
-      TA.Default (Fun.const "base-complement"),
-      (fun _ -> Parameters.no_complement := true);
-    TA.make_separator "Miscellaneous";
-    [ "-V"; "--version" ],
-      None,
-      [ "print version and exit" ],
-      TA.Optional,
-      (fun _ -> Printf.printf "%s\n%!" info.version; exit 0);
-    (* Hidden option to emit help in markdown format *)
-    [ "--markdown" ], None, [], TA.Optional, (fun _ -> TA.markdown (); exit 0);
-    [ "-h"; "--help" ],
-      None,
-      [ "print syntax and exit" ],
-      TA.Optional,
-      (fun _ -> TA.usage (); exit 1)
-  ];
-  let f =
-    if !Parameters.no_complement then
-      String.rev
-    else
-      Sequences.Lint.rc in
   try
-    while true do
-      input_line stdin |> f |> Printf.printf "%s\n";
-      flush stdout
-    done
-  with End_of_file ->
-    ()
+    TA.set_header (info, authors, [ Info.info ]);
+    TA.set_synopsis "[OPTIONS]";
+    TA.parse [
+      TA.make_separator "Algorithm";
+      [ "-C"; "--no-complement" ],
+        None,
+        [ "do not base-complement the sequence" ],
+        TA.Default (Fun.const "base-complement"),
+        (fun _ -> Parameters.no_complement := true);
+      TA.make_separator "Miscellaneous";
+      [ "-V"; "--version" ],
+        None,
+        [ "print version and exit" ],
+        TA.Optional,
+        (fun _ -> Printf.printf "%s\n%!" info.version; exit 0);
+      (* Hidden option to emit help in markdown format *)
+      [ "--markdown" ], None, [], TA.Optional, (fun _ -> TA.markdown (); exit 0);
+      [ "-x"; "--print-exception-backtrace" ], None, [], TA.Optional,
+        (fun _ -> Printexc.record_backtrace true);
+      [ "-h"; "--help" ],
+        None,
+        [ "print syntax and exit" ],
+        TA.Optional,
+        (fun _ -> TA.usage (); exit 1)
+    ];
+    let f =
+      if !Parameters.no_complement then
+        String.rev
+      else
+        Sequences.Lint.rc in
+    try
+      while true do
+        input_line stdin |> f |> Printf.printf "%s\n";
+        flush stdout
+      done
+    with End_of_file ->
+      ()
+  with e ->
+    Exception.handle __FUNCTION__ TA.usage (fun () ->
+      Printf.peprintf
+        "(%s): This should not have happened - please contact <paolo.ribeca@gmail.com>\n%!"
+        __FUNCTION__;
+      Printf.peprintf
+        "(%s): You might also wish to rerun me with option -x to get a full backtrace.\n%!"
+        __FUNCTION__
+    ) e
 

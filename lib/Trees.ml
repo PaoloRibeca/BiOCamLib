@@ -28,6 +28,39 @@
 
 open Better
 
+module Exception =
+  struct
+    include Exception
+    (* The parsers signal a syntax error by raising an exception that carries no
+       information, and the lexer signals a token interrupted by the end of the input
+       with a message of its own: what the user needs -- where in the input the parse
+       stopped, and on what -- is read off the lexing buffer.
+       [shift] discounts the characters the reader prepends to the input, so that the
+       position is the one in the data the user provided; [path] is empty when the
+       input is a string rather than a file *)
+    let catch_malformed ?(shift = 0) ?(path = "") __FUNCTION__ kind lexbuf f =
+      let raise_malformed () =
+        let source =
+          if path = "" then
+            "input"
+          else
+            Printf.sprintf "file '%s'" path
+        and found =
+          match Lexing.lexeme lexbuf with
+          | "" -> "unexpected end of input"
+          | token -> Printf.sprintf "unexpected '%s'" token in
+        Exception.raise __FUNCTION__ IO_Format
+          (Printf.sprintf "At character %d: Malformed %s %s (%s)"
+            (Lexing.lexeme_start lexbuf - shift + 1) kind source found) in
+      try
+        f ()
+      with
+      | Trees_Parse.Error ->
+        raise_malformed ()
+      | Failure message when message = "lexing: empty token" ->
+        raise_malformed ()
+  end
+
 (* Complete modules including parser(s) and I/O *)
 
 module Newick:
@@ -62,7 +95,9 @@ module Newick:
       (* This adds an implicit unrooted token to the first tree *)
       let s = "\n" ^ s
       and state = Trees_Lex.Newick.create ~rich_format ~negative_branches () in
-      f (Trees_Lex.newick state) (Lexing.from_string ~with_positions:true s)
+      let lexbuf = Lexing.from_string ~with_positions:true s in
+      Exception.catch_malformed ~shift:1 __FUNCTION__ "Newick" lexbuf
+        (fun () -> f (Trees_Lex.newick state) lexbuf)
     let of_string ?(rich_format = true) ?(negative_branches = NegativeBranchesPolicy.Error) s =
       _of_string ~rich_format ~negative_branches Trees_Parse.newick_tree s
     let array_of_string ?(rich_format = true) ?(negative_branches = NegativeBranchesPolicy.Error) s =
@@ -94,7 +129,9 @@ module Newick:
         (*Printf.eprintf "RES(%d)='%s'\n%!" !res (String.escaped (String.sub payload 0 !res));*)
         !res
       and state = Trees_Lex.Newick.create ~rich_format ~negative_branches () in
-      f (Trees_Lex.newick state) (Lexing.from_function ~with_positions:true lexbuf)
+      let lexbuf = Lexing.from_function ~with_positions:true lexbuf in
+      Exception.catch_malformed ~shift:1 ~path:s __FUNCTION__ "Newick" lexbuf
+        (fun () -> f (Trees_Lex.newick state) lexbuf)
     let of_file ?(rich_format = true) ?(negative_branches = NegativeBranchesPolicy.Error) s =
       _of_file ~rich_format ~negative_branches Trees_Parse.newick_tree s
     let array_of_file ?(rich_format = true) ?(negative_branches = NegativeBranchesPolicy.Error) s =
@@ -216,7 +253,9 @@ module Splits:
     (* Input *)
     let _of_string f s =
       let state = Trees_Lex.Splits.create () in
-      f (Trees_Lex.splits state) (Lexing.from_string ~with_positions:true s)
+      let lexbuf = Lexing.from_string ~with_positions:true s in
+      Exception.catch_malformed __FUNCTION__ "splits" lexbuf
+        (fun () -> f (Trees_Lex.splits state) lexbuf)
     let of_string = _of_string Trees_Parse.split_set
     let array_of_string s = _of_string Trees_Parse.zero_or_more_split_sets s |> Array.of_list
     let make_filename_text = function
@@ -225,7 +264,10 @@ module Splits:
     let _of_file f prefix =
       let path = make_filename_text prefix in
       let input = open_in path and state = Trees_Lex.Splits.create () in
-      let res = f (Trees_Lex.splits state) (Lexing.from_channel ~with_positions:true input) in
+      let lexbuf = Lexing.from_channel ~with_positions:true input in
+      let res =
+        Exception.catch_malformed ~path __FUNCTION__ "splits" lexbuf
+          (fun () -> f (Trees_Lex.splits state) lexbuf) in
       close_in input;
       res
     let of_file = _of_file Trees_Parse.split_set
@@ -401,7 +443,7 @@ include (struct
               if !total <> card then begin
                 (* A root straddles the clade boundary: incompatible *)
                 if strict then
-                  Exception.raise __FUNCTION__ Algorithm
+                  Exception.raise __FUNCTION__ IO_Format
                     "Clade family is not laminar (an incompatible clade was found)"
                 else
                   List.accum dropped tag

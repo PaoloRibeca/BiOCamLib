@@ -160,73 +160,88 @@ let info = {
 
 let () =
   let module TA = Tools.Argv in
-  TA.set_header (info, authors, [ Info.info ]);
-  TA.set_synopsis "[OPTIONS]";
-  TA.parse [
-    TA.make_separator "Input/Output";
-    [ "-l"; "--linter" ],
-      Some "'none'|'DNA'|'dna'|'protein'",
-      [ "sets linter for sequence.";
-        "All non-base (for DNA) or non-AA (for protein) characters";
-        " are converted to unknowns" ],
-      TA.Default (Sequences.Lint.String.to_string Defaults.linter |> Fun.const),
-      (fun _ -> Parameters.linter := TA.get_parameter () |> Sequences.Lint.String.of_string);
-    [ "--linter-keep-lowercase" ],
-      Some "<bool>",
-      [ "sets whether the linter should keep lowercase DNA/protein characters";
-        " appearing in sequences rather than capitalise them" ],
-      TA.Default (string_of_bool Defaults.linter_keep_lowercase |> Fun.const),
-      (fun _ -> Parameters.linter_keep_lowercase := TA.get_parameter_boolean ());
-    [ "--linter-keep-dashes" ],
-      Some "<bool>",
-      [ "sets whether the linter should keep dashes appearing in sequences";
-        " rather than convert them to unknowns" ],
-      TA.Default (string_of_bool Defaults.linter_keep_dashes |> Fun.const),
-      (fun _ -> Parameters.linter_keep_dashes := TA.get_parameter_boolean ());
-    TA.make_separator "Algorithm";
-    [ "-M"; "--maximum_repeat_length" ],
-      Some "<non_negative_integer>",
-      [ "maximum unit length for a tandem repeat to be considered" ],
-      TA.Default (string_of_int Defaults.maximum_repeat_length |> Fun.const),
-      (fun _ -> Parameters.maximum_repeat_length := TA.get_parameter_int_non_neg ());
-    [ "-m"; "--minimum_locus_length" ],
-      Some "<non_negative_integer>",
-      [ "minimum locus length for a tandem repeat to be considered" ],
-      TA.Default (string_of_int Defaults.minimum_locus_length |> Fun.const),
-      (fun _ -> Parameters.minimum_locus_length := TA.get_parameter_int_non_neg ());
-    TA.make_separator "Miscellaneous";
-    [ "-v"; "--verbose" ],
-      None,
-      [ "set verbose execution (global option)" ],
-      TA.Default (Fun.const "quiet execution"),
-      (fun _ -> Parameters.verbose := true);
-    [ "-V"; "--version" ],
-      None,
-      [ "print version and exit" ],
-      TA.Optional,
-      (fun _ -> Printf.printf "%s\n%!" info.version; exit 0);
-    (* Hidden option to emit help in markdown format *)
-    [ "--markdown" ], None, [], TA.Optional, (fun _ -> TA.markdown (); exit 0);
-    [ "-h"; "--help" ],
-      None,
-      [ "print syntax and exit" ],
-      TA.Optional,
-      (fun _ -> TA.usage (); exit 1)
-  ];
-  if !Parameters.verbose then
-    TA.header ();
-  let linter_f =
-    Sequences.Lint.String.lint !Parameters.linter
-      ~keep_lowercase:!Parameters.linter_keep_lowercase ~keep_dashes:!Parameters.linter_keep_dashes in
-  Files.FASTA.iter ~linter:linter_f ~verbose:!Parameters.verbose
-    (fun (_, _, { tag; seq; _ }) ->
-      TandemRepeatExplorer.iter
-        ~maximum_repeat_length:!Parameters.maximum_repeat_length
-        ~minimum_locus_length:!Parameters.minimum_locus_length ~verbose:!Parameters.verbose
-        (fun k_mer lo hi ->
-          let len_locus = hi - lo + 1 and len_repeat = String.length k_mer in
-          let periods = float_of_int len_locus /. float_of_int len_repeat in
-          Printf.printf "%s\t%d\t%d\t%d\t%d\t%.6g\t%s\n%!" tag lo hi len_locus len_repeat periods k_mer)
-        seq)
-    "/dev/stdin"
+  try
+    TA.set_header (info, authors, [ Info.info ]);
+    TA.set_synopsis "[OPTIONS]";
+    TA.parse [
+      TA.make_separator "Input/Output";
+      [ "-l"; "--linter" ],
+        Some "'none'|'DNA'|'dna'|'protein'",
+        [ "sets linter for sequence.";
+          "All non-base (for DNA) or non-AA (for protein) characters";
+          " are converted to unknowns" ],
+        TA.Default (Sequences.Lint.String.to_string Defaults.linter |> Fun.const),
+        (fun _ -> Parameters.linter := TA.get_parameter () |> Sequences.Lint.String.of_string);
+      [ "--linter-keep-lowercase" ],
+        Some "<bool>",
+        [ "sets whether the linter should keep lowercase DNA/protein characters";
+          " appearing in sequences rather than capitalise them" ],
+        TA.Default (string_of_bool Defaults.linter_keep_lowercase |> Fun.const),
+        (fun _ -> Parameters.linter_keep_lowercase := TA.get_parameter_boolean ());
+      [ "--linter-keep-dashes" ],
+        Some "<bool>",
+        [ "sets whether the linter should keep dashes appearing in sequences";
+          " rather than convert them to unknowns" ],
+        TA.Default (string_of_bool Defaults.linter_keep_dashes |> Fun.const),
+        (fun _ -> Parameters.linter_keep_dashes := TA.get_parameter_boolean ());
+      TA.make_separator "Algorithm";
+      [ "-M"; "--maximum_repeat_length" ],
+        Some "<non_negative_integer>",
+        [ "maximum unit length for a tandem repeat to be considered" ],
+        TA.Default (string_of_int Defaults.maximum_repeat_length |> Fun.const),
+        (fun _ -> Parameters.maximum_repeat_length := TA.get_parameter_int_non_neg ());
+      [ "-m"; "--minimum_locus_length" ],
+        Some "<non_negative_integer>",
+        [ "minimum locus length for a tandem repeat to be considered" ],
+        TA.Default (string_of_int Defaults.minimum_locus_length |> Fun.const),
+        (fun _ -> Parameters.minimum_locus_length := TA.get_parameter_int_non_neg ());
+      TA.make_separator "Miscellaneous";
+      [ "-v"; "--verbose" ],
+        None,
+        [ "set verbose execution (global option)" ],
+        TA.Default (Fun.const "quiet execution"),
+        (fun _ -> Parameters.verbose := true);
+      [ "-V"; "--version" ],
+        None,
+        [ "print version and exit" ],
+        TA.Optional,
+        (fun _ -> Printf.printf "%s\n%!" info.version; exit 0);
+      (* Hidden option to emit help in markdown format *)
+      [ "--markdown" ], None, [], TA.Optional, (fun _ -> TA.markdown (); exit 0);
+      [ "-x"; "--print-exception-backtrace" ], None, [], TA.Optional,
+        (fun _ -> Printexc.record_backtrace true);
+      [ "-h"; "--help" ],
+        None,
+        [ "print syntax and exit" ],
+        TA.Optional,
+        (fun _ -> TA.usage (); exit 1)
+    ];
+    if !Parameters.verbose then
+      TA.header ();
+    let linter_f =
+      Sequences.Lint.String.lint !Parameters.linter
+        ~keep_lowercase:!Parameters.linter_keep_lowercase
+        ~keep_dashes:!Parameters.linter_keep_dashes in
+    Files.FASTA.iter ~linter:linter_f ~verbose:!Parameters.verbose
+      (fun (_, _, { tag; seq; _ }) ->
+        TandemRepeatExplorer.iter
+          ~maximum_repeat_length:!Parameters.maximum_repeat_length
+          ~minimum_locus_length:!Parameters.minimum_locus_length ~verbose:!Parameters.verbose
+          (fun k_mer lo hi ->
+            let len_locus = hi - lo + 1 and len_repeat = String.length k_mer in
+            let periods = float_of_int len_locus /. float_of_int len_repeat in
+            Printf.printf "%s\t%d\t%d\t%d\t%d\t%.6g\t%s\n%!"
+              tag lo hi len_locus len_repeat periods k_mer)
+          seq)
+      "/dev/stdin"
+  with
+  | e ->
+    Exception.handle __FUNCTION__ TA.usage (fun () ->
+      Printf.peprintf
+        "(%s): This should not have happened - please contact <paolo.ribeca@gmail.com>\n%!"
+        __FUNCTION__;
+      Printf.peprintf
+        "(%s): You might also wish to rerun me with option -x to get a full backtrace.\n%!"
+        __FUNCTION__
+    ) e
 

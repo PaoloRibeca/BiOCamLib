@@ -54,69 +54,71 @@ let info = {
 
 let () =
   let module TA = Tools.Argv in
-  TA.set_header (info, authors, [ Info.info ]);
-  TA.set_synopsis "[OPTIONS] -- [COMMAND TO PARALLELIZE AND ITS OPTIONS]";
-  TA.parse [
-    TA.make_separator "Command to parallelize";
-    [ "--" ],
-      None,
-      [ "consider all the subsequent parameters";
-        "as the command to be executed in parallel.";
-        "At least one command must be specified" ],
-      TA.Mandatory,
-      (fun _ ->
-        Parameters.command := TA.get_parameter ();
-        Parameters.args := Array.append [| !Parameters.command |] (TA.get_remaining_parameters ()));
-    TA.make_separator "Input/Output";
-    [ "-l"; "--lines-per-block" ],
-      Some "<positive_integer>",
-      [ "number of lines to be processed per block" ],
-      TA.Default (string_of_int Defaults.lines_per_block |> Fun.const),
-      (fun _ -> Parameters.lines_per_block := TA.get_parameter_int_pos ());
-    [ "-i"; "--input" ],
-      Some "<input_file>",
-      [ "name of input file" ],
-      TA.Default (Fun.const Defaults.input),
-      (fun _ -> Parameters.input := TA.get_parameter ());
-    [ "-o"; "--output" ],
-      Some "<output_file>",
-      [ "name of output file" ],
-      TA.Default (Fun.const Defaults.output),
-      (fun _ -> Parameters.output := TA.get_parameter ());
-    TA.make_separator "Miscellaneous";
-    [ "-t"; "--threads" ],
-      Some "<positive_integer>",
-      [ "number of concurrent computing threads to be spawned";
-        " (default automatically detected from your configuration)" ],
-      TA.Default (string_of_int Defaults.threads |> Fun.const),
-      (fun _ -> Parameters.threads := TA.get_parameter_int_pos ());
-    [ "-v"; "--verbose" ],
-      None,
-      [ "set verbose execution" ],
-      TA.Default (Fun.const "quiet execution"),
-      (fun _ -> Parameters.verbose := true);
-    [ "-d"; "--debug" ],
-      None,
-      [ "output debugging information" ],
-      TA.Default (string_of_bool Defaults.debug |> Fun.const),
-      (fun _ -> Parameters.debug := true);
-    [ "-V"; "--version" ],
-      None,
-      [ "print version and exit" ],
-      TA.Optional,
-      (fun _ -> Printf.printf "%s\n%!" info.version; exit 0);
-    (* Hidden option to emit help in markdown format *)
-    [ "--markdown" ], None, [], TA.Optional, (fun _ -> TA.markdown (); exit 0);
-    [ "-h"; "--help" ],
-      None,
-      [ "print syntax and exit" ],
-      TA.Optional,
-      (fun _ -> TA.usage (); exit 1)
-  ];
-  let verbose = !Parameters.verbose and debug = !Parameters.debug in
-  if verbose then
-    TA.header ();
   try
+    TA.set_header (info, authors, [ Info.info ]);
+    TA.set_synopsis "[OPTIONS] -- [COMMAND TO PARALLELIZE AND ITS OPTIONS]";
+    TA.parse [
+      TA.make_separator "Command to parallelize";
+      [ "--" ],
+        None,
+        [ "consider all the subsequent parameters";
+          "as the command to be executed in parallel.";
+          "At least one command must be specified" ],
+        TA.Mandatory,
+        (fun _ ->
+          Parameters.command := TA.get_parameter ();
+          Parameters.args := Array.append [| !Parameters.command |] (TA.get_remaining_parameters ()));
+      TA.make_separator "Input/Output";
+      [ "-l"; "--lines-per-block" ],
+        Some "<positive_integer>",
+        [ "number of lines to be processed per block" ],
+        TA.Default (string_of_int Defaults.lines_per_block |> Fun.const),
+        (fun _ -> Parameters.lines_per_block := TA.get_parameter_int_pos ());
+      [ "-i"; "--input" ],
+        Some "<input_file>",
+        [ "name of input file" ],
+        TA.Default (Fun.const Defaults.input),
+        (fun _ -> Parameters.input := TA.get_parameter ());
+      [ "-o"; "--output" ],
+        Some "<output_file>",
+        [ "name of output file" ],
+        TA.Default (Fun.const Defaults.output),
+        (fun _ -> Parameters.output := TA.get_parameter ());
+      TA.make_separator "Miscellaneous";
+      [ "-t"; "--threads" ],
+        Some "<positive_integer>",
+        [ "number of concurrent computing threads to be spawned";
+          " (default automatically detected from your configuration)" ],
+        TA.Default (string_of_int Defaults.threads |> Fun.const),
+        (fun _ -> Parameters.threads := TA.get_parameter_int_pos ());
+      [ "-v"; "--verbose" ],
+        None,
+        [ "set verbose execution" ],
+        TA.Default (Fun.const "quiet execution"),
+        (fun _ -> Parameters.verbose := true);
+      [ "-d"; "--debug" ],
+        None,
+        [ "output debugging information" ],
+        TA.Default (string_of_bool Defaults.debug |> Fun.const),
+        (fun _ -> Parameters.debug := true);
+      [ "-V"; "--version" ],
+        None,
+        [ "print version and exit" ],
+        TA.Optional,
+        (fun _ -> Printf.printf "%s\n%!" info.version; exit 0);
+      (* Hidden option to emit help in markdown format *)
+      [ "--markdown" ], None, [], TA.Optional, (fun _ -> TA.markdown (); exit 0);
+      [ "-x"; "--print-exception-backtrace" ], None, [], TA.Optional,
+        (fun _ -> Printexc.record_backtrace true);
+      [ "-h"; "--help" ],
+        None,
+        [ "print syntax and exit" ],
+        TA.Optional,
+        (fun _ -> TA.usage (); exit 1)
+    ];
+    let verbose = !Parameters.verbose and debug = !Parameters.debug in
+    if verbose then
+      TA.header ();
     let input = open_in !Parameters.input and output = open_out !Parameters.output
     and input_line_num = ref 0 in
     let print_num_lines what =
@@ -243,7 +245,13 @@ let () =
     (* Cleanup actions *)
     close_in input;
     close_out output
-  with exc ->
-    Printf.peprintf "(%s): %s\n%!" __FUNCTION__
-      ("FATAL: Uncaught exception: " ^ Printexc.to_string exc |> String.TermIO.red)
+  with e ->
+    Exception.handle __FUNCTION__ TA.usage (fun () ->
+      Printf.peprintf
+        "(%s): This should not have happened - please contact <paolo.ribeca@gmail.com>\n%!"
+        __FUNCTION__;
+      Printf.peprintf
+        "(%s): You might also wish to rerun me with option -x to get a full backtrace.\n%!"
+        __FUNCTION__
+    ) e
 

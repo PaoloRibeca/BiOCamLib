@@ -46,46 +46,58 @@ let info = {
 
 let () =
   let module TA = Tools.Argv in
-  TA.set_header (info, authors, [ Info.info ]);
-  TA.set_synopsis "[OPTIONS]";
-  TA.parse [
-    TA.make_separator "Algorithm";
-    [ "-M"; "--max-distances"; "--maximum-distances"; "--longest-path-distances" ],
-      None,
-      [ "compute longest- rather than shortest-path distances" ],
-      TA.Default (Fun.const "compute shortest-path distances"),
-      (fun _ -> Parameters.max_distances := true);
-    TA.make_separator "Miscellaneous";
-    [ "-t"; "-T"; "--threads" ],
-      Some "<computing_threads>",
-      [ "number of concurrent computing threads to be spawned";
-        " (default automatically detected from your configuration)" ],
-      TA.Default (string_of_int Defaults.threads |> Fun.const),
-      (fun _ -> Parameters.threads := TA.get_parameter_int_pos ());
-    [ "-v"; "--verbose" ],
-      None,
-      [ "set verbose execution (global option)" ],
-      TA.Default (string_of_bool Defaults.verbose |> Fun.const),
-      (fun _ -> Parameters.verbose := true);
-    [ "-V"; "--version" ],
-      None,
-      [ "print version and exit" ],
-      TA.Optional,
-      (fun _ -> Printf.printf "%s\n%!" info.version; exit 0);
-    (* Hidden option to emit help in markdown format *)
-    [ "--markdown" ], None, [], TA.Optional, (fun _ -> TA.markdown (); exit 0);
-    [ "-h"; "--help" ],
-      None,
-      [ "print syntax and exit" ],
-      TA.Optional,
-      (fun _ -> TA.usage (); exit 1)
-  ];
-  let t = Trees.Newick.of_file "/dev/stdin" in
-  let m = begin
-    if !Parameters.max_distances then
-      Trees.Newick.get_max_distance_matrix
-    else
-      Trees.Newick.get_min_distance_matrix
-  end ~threads:!Parameters.threads ~verbose:!Parameters.verbose t in
-  Matrix.to_file ~threads:!Parameters.threads ~verbose:!Parameters.verbose m "/dev/stdout"
+  try
+    TA.set_header (info, authors, [ Info.info ]);
+    TA.set_synopsis "[OPTIONS]";
+    TA.parse [
+      TA.make_separator "Algorithm";
+      [ "-M"; "--max-distances"; "--maximum-distances"; "--longest-path-distances" ],
+        None,
+        [ "compute longest- rather than shortest-path distances" ],
+        TA.Default (Fun.const "compute shortest-path distances"),
+        (fun _ -> Parameters.max_distances := true);
+      TA.make_separator "Miscellaneous";
+      [ "-t"; "-T"; "--threads" ],
+        Some "<computing_threads>",
+        [ "number of concurrent computing threads to be spawned";
+          " (default automatically detected from your configuration)" ],
+        TA.Default (string_of_int Defaults.threads |> Fun.const),
+        (fun _ -> Parameters.threads := TA.get_parameter_int_pos ());
+      [ "-v"; "--verbose" ],
+        None,
+        [ "set verbose execution (global option)" ],
+        TA.Default (string_of_bool Defaults.verbose |> Fun.const),
+        (fun _ -> Parameters.verbose := true);
+      [ "-V"; "--version" ],
+        None,
+        [ "print version and exit" ],
+        TA.Optional,
+        (fun _ -> Printf.printf "%s\n%!" info.version; exit 0);
+      (* Hidden option to emit help in markdown format *)
+      [ "--markdown" ], None, [], TA.Optional, (fun _ -> TA.markdown (); exit 0);
+      [ "-x"; "--print-exception-backtrace" ], None, [], TA.Optional,
+        (fun _ -> Printexc.record_backtrace true);
+      [ "-h"; "--help" ],
+        None,
+        [ "print syntax and exit" ],
+        TA.Optional,
+        (fun _ -> TA.usage (); exit 1)
+    ];
+    let t = Trees.Newick.of_file "/dev/stdin" in
+    let m = begin
+      if !Parameters.max_distances then
+        Trees.Newick.get_max_distance_matrix
+      else
+        Trees.Newick.get_min_distance_matrix
+    end ~threads:!Parameters.threads ~verbose:!Parameters.verbose t in
+    Matrix.to_file ~threads:!Parameters.threads ~verbose:!Parameters.verbose m "/dev/stdout"
+  with e ->
+    Exception.handle __FUNCTION__ TA.usage (fun () ->
+      Printf.peprintf
+        "(%s): This should not have happened - please contact <paolo.ribeca@gmail.com>\n%!"
+        __FUNCTION__;
+      Printf.peprintf
+        "(%s): You might also wish to rerun me with option -x to get a full backtrace.\n%!"
+        __FUNCTION__
+    ) e
 

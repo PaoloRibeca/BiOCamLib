@@ -343,6 +343,12 @@ module Exception =
   struct
     module Kind =
       struct
+        (* THIS TYPE AND handle() BELOW MUST BE KEPT IN STEP, IN BOTH DIRECTIONS.
+           Every constructor here needs its own branch in handle(), and handle() must carry a
+            branch for no kind that does not appear here. The catch-all at the end of handle() is
+            for exceptions that are NOT E; a kind reaching it would be reported to the user as an
+            internal fault, with a stack trace, whatever it actually was.
+           Adding a constructor here is therefore not finished until handle() has a branch for it. *)
         type t =
           (* Exceptions signaling bad parameters given to initialisers *)
           | Initialize
@@ -352,8 +358,13 @@ module Exception =
               for instance incompatible lengths *)
           | IO_Format
           (* Exceptions signaling that the invariant for some algorithm is violated,
-              for instance some index is out of range *)
+              for instance some index is out of range.
+             This one, and only this one, means WE have a bug *)
           | Algorithm
+          (* Exceptions signaling that an external command we depend upon has failed.
+             It carries the command, so that a caller can tell which one without parsing the
+              message, and so that the message and the classification cannot drift apart *)
+          | Subprocess of string
           (* Exceptions signaling that output has been truncated,
               for instance due to a closed pipe downstream *)
           | End_of_output
@@ -411,23 +422,55 @@ module Exception =
         f ()
       with End_of_file ->
         raise_unexpected_end_of_output __FUNCTION__
+    (* EVERY CONSTRUCTOR OF Kind.t MUST HAVE A BRANCH HERE - see the note on the type.
+       The branches differ in what they show, because the three audiences differ:
+        the user misused the program (show the usage), the user's environment let us down
+        (do not - the usage says nothing about a missing gzip), or we are at fault
+        (a backtrace is then the useful thing rather than noise). *)
     let handle __FUNCTION__ usage unexpected = function
     | E (End_of_output, _, _) as e ->
-      (* We prevent all processes from generating error messages here *)
+      (* The only branch that does NOT exit non-zero: a closed pipe downstream is how a
+          well-behaved filter ends when its reader has had enough, and every process in a
+          parallel run would otherwise report it *)
       if Unix.getppid () = 1 then
-        to_string e |> String.TermIO.red |> Printf.eprintf "(%s): FATAL: %s\n%!" __FUNCTION__
+        to_string e |> String.TermIO.red |> Printf.peprintf "(%s): FATAL: %s\n%!" __FUNCTION__
     | E (Initialize, _, _) | E (No_such_input, _, _) | E (IO_Format, _, _) as e ->
+      (* The invocation or the input is wrong, and the usage is what the user needs next *)
       usage ();
-      to_string e |> String.TermIO.red |> Printf.eprintf "(%s): FATAL: %s\n%!" __FUNCTION__
+      to_string e |> String.TermIO.red |> Printf.peprintf "(%s): FATAL: %s\n%!" __FUNCTION__;
+      exit 1
+    | E (Subprocess command, _, _) as e ->
+      (* Something we shelled out to failed. Deliberately no usage - the invocation was fine -
+          and deliberately no backtrace: the fault is outside this program, and a stack trace
+          would send the reader looking for it in the wrong place *)
+      to_string e |> String.TermIO.red |> Printf.peprintf "(%s): FATAL: %s\n%!" __FUNCTION__;
+      Printf.peprintf "(%s): The failing command was '%s'\n%!" __FUNCTION__ command;
+      exit 1
+    | E (Algorithm, _, _) as e ->
+      (* An invariant of ours was violated: a bug in this program rather than a fault of the
+          user or of their environment, which is why this is the one branch that prints a
+          backtrace. What to do about it is the program's to say, not ours - how to reach its
+          author, and how to record a backtrace, are properties of the program - so that is left
+          to [unexpected] *)
+      to_string e |> String.TermIO.red
+        |> Printf.peprintf "(%s): FATAL: Internal error: %s\n%!" __FUNCTION__;
+      unexpected ();
+      Printexc.print_backtrace stderr;
+      exit 1
     | End_of_file as e ->
       usage ();
       (* We cannot use to_string() here *)
-      Printexc.to_string e |> String.TermIO.red |> Printf.eprintf "(%s): FATAL: %s\n%!" __FUNCTION__
+      Printexc.to_string e |> String.TermIO.red
+        |> Printf.peprintf "(%s): FATAL: %s\n%!" __FUNCTION__;
+      exit 1
     | exc ->
+      (* NOT an E at all - a genuine escapee. Everything raised through Exception.raise is
+          classified above, so anything arriving here is unclassified by construction *)
       Printf.peprintf "(%s): %s\n%!" __FUNCTION__
         ("FATAL: Uncaught exception: " ^ Printexc.to_string exc |> String.TermIO.red);
       unexpected ();
-      Printexc.print_backtrace stderr
+      Printexc.print_backtrace stderr;
+      exit 1
   end
 
 (* We redefine Stdlib.open_in so that it emits an understandable exception if no input is found *)

@@ -30,6 +30,17 @@ open Better
 (* Simple wrapper around Unix sub-processes *)
 module Subprocess:
   sig
+    (* Turn the termination status of a subprocess into either unit or an exception naming the
+        command and what went wrong. Exposed because a process spawned elsewhere - Files.Compressed
+        hands its channel to the caller and is reaped much later - still has to classify its exit
+        the same way, and two ways of deciding that a helper failed would eventually disagree.
+       ~kind is mandatory, and deliberately has no default: no single kind is right for every
+        caller, so each states what a failure there means - Subprocess for a command that simply
+        did not work, IO_Format where its failure says something about the data.
+       stderr_contents, when not empty, is echoed before raising, so the helper's own diagnosis
+        ("unexpected end of file") reaches the user ahead of ours *)
+    val handle_termination_status:
+      kind:Exception.Kind.t -> string -> string -> Unix.process_status -> unit
     (* It is possible for all these functions to fail *)
     (* Execute a simple command - the executables do not need to be a fully qualified path *)
     val spawn: ?verbose:bool -> string -> unit
@@ -43,10 +54,10 @@ module Subprocess:
       (unit -> unit) -> (int -> string -> unit) -> (unit -> unit) -> string -> string array -> unit
   end
 = struct
-    (* PRIVATE *)
-    let handle_termination_status command stderr_contents status =
+    (* PUBLIC, although the functions below are its main users *)
+    let handle_termination_status ~kind command stderr_contents status =
       let raise_command_failed problem =
-        Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Command '%s' failed (%s)" command problem) in
+        Exception.raise __FUNCTION__ kind (Printf.sprintf "Command '%s' failed (%s)" command problem) in
       match status with
       | Unix.WEXITED 0 -> ()
       | e ->
@@ -62,7 +73,7 @@ module Subprocess:
     let spawn ?(verbose = false) command =
       if verbose then
         Printf.eprintf "Subprocess.spawn: Executing command '%s'...\n%!" command;
-      Unix.system command |> handle_termination_status command ""
+      Unix.system command |> handle_termination_status ~kind:(Subprocess command) command ""
     let spawn_and_read_single_line ?(verbose = false) command =
       if verbose then
         Printf.eprintf "Subprocess.spawn_and_read_single_line: Executing command '%s'...\n%!" command;
@@ -71,7 +82,7 @@ module Subprocess:
         try
           input_line process_out
         with End_of_file -> "" in
-      Unix.close_process_in process_out |> handle_termination_status command "";
+      Unix.close_process_in process_out |> handle_termination_status ~kind:(Subprocess command) command "";
       res
     let spawn_with_args_and_process_output ?(verbose = false) pre f post command args =
       if verbose then begin
@@ -112,7 +123,7 @@ module Subprocess:
       close_in process_out;
       close_in process_err;
       Unix.close_process_full (process_out, process_in, process_err) |>
-        handle_termination_status command (Buffer.contents stderr_contents)
+        handle_termination_status ~kind:(Subprocess command) command (Buffer.contents stderr_contents)
     let spawn_and_process_output ?(verbose = false) pre f post command =
       spawn_with_args_and_process_output ~verbose pre f post command [||]
   end

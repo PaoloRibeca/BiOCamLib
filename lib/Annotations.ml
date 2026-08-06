@@ -1385,7 +1385,7 @@ module Format = struct
     | "gtf" -> GTF
     | "genbank" | "gb" -> GenBank
     | _ ->
-      Exception.raise __FUNCTION__ Algorithm
+      Exception.raise __FUNCTION__ Initialize
         (Printf.sprintf "Unknown annotation format %S (have: %s)"
            s (String.concat ", " (List.map to_string all)))
   (* Resolve a dialect name against the format's
@@ -1400,7 +1400,7 @@ module Format = struct
       (fun (k, _) -> String.lowercase_ascii k = q) F.dialects with
     | Some (_, h) -> h
     | None ->
-      Exception.raise __FUNCTION__ Algorithm
+      Exception.raise __FUNCTION__ Initialize
         (Printf.sprintf "Unknown dialect %S for format %s (have: %s)"
            name (to_string f)
            (String.concat ", " (List.map fst F.dialects)))

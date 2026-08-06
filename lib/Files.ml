@@ -104,6 +104,177 @@ module QuotedPath:
     let get_in_directory directory basename extension = append_to (concat_to directory basename) extension
   end
 
+(* Transparent decompression of gzip- and bzip2-compressed files.
+   Compression is detected from the initial bytes of the file rather than from its name,
+    as a compressed file is routinely handed over with the wrong extension *)
+module Compressed:
+  sig
+    (* Returns the channel the (possibly decompressed) contents can be read from, and the
+        function needed to close it - which is not always close_in(), as decompressed contents
+        arrive through a helper process which has to be reaped.
+       When compression is false, the file is assumed to be plain and nothing is spawned *)
+    val open_input: ?compression:bool -> string -> in_channel * (unit -> unit)
+  end
+= struct
+    (* PRIVATE *)
+    (* Magic numbers of the formats we recognise, and the number of bytes needed to tell
+        them apart *)
+    let gzip_magic = "\031\139"
+    let bzip2_magic = "BZh"
+    let magic_length = 3
+    (* Size of the buffer used to replay the contents of a stream *)
+    let buffer_length = 65536
+    (* The file might be shorter than magic_length bytes, or even empty.
+       We read bytes rather than lines, as the contents can be binary *)
+    let read_magic channel =
+      let res = Bytes.create magic_length in
+      let rec read_more so_far =
+        if so_far = magic_length then
+          so_far
+        else
+          let read = input channel res so_far (magic_length - so_far) in
+          if read = 0 then so_far else read_more (so_far + read) in
+      Bytes.sub_string res 0 (read_more 0)
+    (* The command decompressing the magic number found, if any *)
+    let decompressor magic =
+      if String.starts_with ~prefix:gzip_magic magic then
+        Some [| "gzip"; "-cd" |]
+      else if String.starts_with ~prefix:bzip2_magic magic then
+        Some [| "bzip2"; "-cd" |]
+      else
+        None
+    (* The read ends of the pipes of every helper still open. The replayer forked below never
+        execs, so it inherits the whole descriptor table - including these - and an inherited
+        reader would keep an earlier decompressor from ever seeing EPIPE, leaving a reap of it
+        blocked for good. cloexec cannot help where there is no exec, so the child closes them by
+        hand and this is the list of what to close *)
+    let live_read_ends = ref []
+    (* Waits for a helper process, and decides whether its exit was legitimate.
+       Two outcomes are expected and mean opposite things:
+        - the contents were consumed to the end, and the helper exited by itself. Anything other
+           than 0 is then a real failure - a truncated or corrupt archive exits 1 - and silently
+           accepting it is how a short read becomes a short DATASET, with every downstream ratio
+           computed over whatever happened to arrive;
+        - the caller stopped reading early and closed the channel, so the helper died of SIGPIPE.
+           That is not a failure and must not raise.
+       The status alone separates them, which is why this stays local to reap: only a closed pipe
+        produces SIGPIPE, and a helper reaped after a complete read cannot have received one *)
+    let reap command pid =
+      match Unix.waitpid [] pid with
+      | _, Unix.WSIGNALED n when n = Sys.sigpipe -> ()
+      | _, status ->
+        let cmd = String.concat " " (Array.to_list command) in
+        Processes.Subprocess.handle_termination_status
+          ~kind:(Exception.Kind.Subprocess cmd) cmd "" status
+      | exception Unix.Unix_error (Unix.ECHILD, _, _) -> () (* Already reaped, which is not an error *)
+    (* Spawns command with descr as its standard input (of which we relinquish ownership).
+       Returns the channel the output of the command can be read from, and the function
+        closing it and reaping the process.
+       The returned closure is idempotent: KPopCount calls delete on an iterator that has already
+        deleted itself at EOF, so a second close is a live path rather than a hypothetical one *)
+    let spawn command descr =
+      let pipe_in, pipe_out = Unix.pipe ~cloexec:true () in
+      let pid =
+        try Unix.create_process command.(0) command descr pipe_out Unix.stderr with
+        | Unix.Unix_error (Unix.ENOENT, _, _) ->
+          (* Without this the failure escapes as a raw Unix_error, which Better.Exception.handle
+              cannot classify and therefore reports as an uncaught exception plus a backtrace *)
+          Exception.raise __FUNCTION__ Initialize
+            (Printf.sprintf "Cannot decompress: '%s' not found in PATH" command.(0)) in
+      Unix.close pipe_out;
+      Unix.close descr;
+      let channel = Unix.in_channel_of_descr pipe_in in
+      live_read_ends := pipe_in :: !live_read_ends;
+      let closed = ref false in
+      channel,
+      (fun () ->
+        if not !closed then begin
+          closed := true;
+          live_read_ends := List.filter (fun fd -> fd <> pipe_in) !live_read_ends;
+          close_in channel;
+          reap command pid
+        end)
+    (* PUBLIC *)
+    let open_input ?(compression = true) path =
+      if not compression then begin
+        (* The caller knows the contents to be plain, and we spawn nothing *)
+        let channel = open_in path in
+        channel, (fun () -> close_in channel)
+      end else begin
+        (* A failing stat() is not an error here - we just consider the path not to be a
+            regular file, and let the open() which follows emit a better error message *)
+        let is_regular = try (Unix.stat path).st_kind = Unix.S_REG with _ -> false in
+        let channel = open_in path in
+        let magic = read_magic channel in
+        if is_regular then begin
+          (* A regular file can be rewound by reopening it *)
+          close_in channel;
+          match decompressor magic with
+          | None ->
+            let channel = open_in path in
+            channel, (fun () -> close_in channel)
+          | Some command ->
+            Unix.openfile path [ Unix.O_RDONLY ] 0 |> spawn command
+        end else begin
+          (* A stream cannot be rewound, so the bytes we have just read must be replayed by a
+              forked writer feeding the standard input of the command.
+             That has to happen for plain contents too, which is what cat is for - and the
+              reason why ~compression:false is worth having *)
+          let command =
+            match decompressor magic with
+            | Some command -> command
+            | None -> [| "cat" |] in
+          let pipe_in, pipe_out = Unix.pipe ~cloexec:true () in
+          (* Sampled BEFORE the fork, so the child closes the helpers that existed when it was
+              made and not, through a shared ref it does not have, any made afterwards *)
+          let inherited = !live_read_ends in
+          match Unix.fork () with
+          | 0 -> (* I am the writer *)
+            Unix.close pipe_in;
+            (* Everything this child does not need: it never execs, so it holds the read end of
+                every earlier decompressor's pipe, and while it does so that decompressor cannot
+                receive EPIPE *)
+            List.iter (fun fd -> try Unix.close fd with Unix.Unix_error _ -> ()) inherited;
+            let out = Unix.out_channel_of_descr pipe_out and buf = Bytes.create buffer_length in
+            begin try
+              output_string out magic;
+              (* We copy bytes rather than lines, as the contents can be binary.
+                 We flush before each read, as the latter blocks - were we not to do so,
+                  what we have replayed so far would sit in the buffer, and a stream
+                  delivering its contents slowly would stall until 64 KB had accumulated *)
+              let rec copy () =
+                flush out;
+                let read = input channel buf 0 buffer_length in
+                if read > 0 then begin
+                  output out buf 0 read;
+                  copy ()
+                end in
+              copy ();
+              close_out out
+            with e ->
+              Printf.eprintf "(%s): While replaying stream '%s': %s\n%!"
+                __FUNCTION__ path (Printexc.to_string e);
+              Unix._exit 1 (* Do not flush buffers or do anything else *)
+            end;
+            Unix._exit 0 (* Do not flush buffers or do anything else *)
+          | pid -> (* I am the reader *)
+            Unix.close pipe_out;
+            close_in channel;
+            let channel, close = spawn command pipe_in in
+            (* Two processes to account for, and in this order: the decompressor first, because
+                its status is the one that says whether the CONTENTS were whole, and then our own
+                replayer, whose non-zero exit means the replay itself broke down (it reports the
+                reason on stderr before exiting 1). The replayer is named rather than described,
+                since a message about "gzip -cd" failing would send the reader to the wrong
+                process entirely *)
+            channel,
+            (fun () ->
+              close ();
+              reap [| Printf.sprintf "<stream replayer for '%s'>" path |] pid)
+        end
+      end
+  end
+
 module Base =
   struct
     module Read =
@@ -123,9 +294,19 @@ module Base =
         type init_t = linter_t * string
         (* Return type is read ID, segment ID, and (tag, sequence, qualities) *)
         type ret_t = int * int * Read.t
+        (* The same as Better's Iterator_t, except that create() also accepts the optional
+            flag which enables transparent decompression *)
         module type Type_t =
           sig
-            include Iterator_t with type init_t := init_t and type ret_t := ret_t
+            type t
+            val empty: unit -> t
+            val is_empty: t -> bool
+            val create: ?compression:bool -> init_t -> t
+            (* The get() functions apply the function argument to one or more elements *)
+            val get: t -> (ret_t -> unit) -> unit
+            val get_and_incr: t -> (ret_t -> unit) -> unit
+            val incr: t -> unit
+            val delete: t -> unit (* I am Ozymandias *)
             (* Returns file path and number of parsed lines *)
             val info: t -> string * int
             (* Same as get(), but applies different functions to SE and PE records.
@@ -134,8 +315,9 @@ module Base =
             val get_se_pe_and_incr: t -> (ret_t -> unit) -> (ret_t -> ret_t -> unit) -> unit
           end
         (* Here type 'a could be a string (path) or a format abstraction *)
-        type 'a t = ?linter:linter_t -> ?verbose:bool -> (ret_t -> unit) -> 'a -> unit
-        type 'a se_pe_t = ?linter:linter_t -> ?verbose:bool ->
+        type 'a t = ?linter:linter_t -> ?compression:bool -> ?verbose:bool ->
+                    (ret_t -> unit) -> 'a -> unit
+        type 'a se_pe_t = ?linter:linter_t -> ?compression:bool -> ?verbose:bool ->
                           (ret_t -> unit) -> (ret_t -> ret_t -> unit) -> 'a -> unit
       end
   end
@@ -147,8 +329,8 @@ module FASTA:
     (* OCaml-style iterator *)
     val iter: string Base.Iterator.t
     (* This file format also has a specialised parallelised high-throughput implementation *)
-    val parallel_iter: ?linter:Base.linter_t -> ?buffered_chunks_per_thread:int ->
-                       ?max_memory:int -> ?verbose:bool ->
+    val parallel_iter: ?linter:Base.linter_t -> ?compression:bool ->
+                       ?buffered_chunks_per_thread:int -> ?max_memory:int -> ?verbose:bool ->
                        string -> (int -> (string * string) list -> 'a) -> ('a -> unit) -> int -> unit
   end
 = struct
@@ -158,6 +340,7 @@ module FASTA:
           linter: string -> string;
           path: string;
           input: in_channel;
+          close: unit -> unit; (* Closing the input might imply reaping a decompressor *)
           mutable lines: int; (* Number of lines read so far *)
           mutable eof_reached: bool;
           (* *)
@@ -171,6 +354,7 @@ module FASTA:
           linter = Fun.id;
           path = "";
           input = stdin;
+          close = (fun () -> ());
           lines = 0;
           eof_reached = true;
           progr = -1;
@@ -185,7 +369,7 @@ module FASTA:
               _after_ the stream has ended *)
           it.eof_reached && it.tag = ""
         let delete it =
-          close_in it.input;
+          it.close ();
           it.eof_reached <- true;
           Buffer.reset it.buf
           [@@inline]
@@ -208,17 +392,24 @@ module FASTA:
               while line := input_line it.input; it.lines <- it.lines + 1; !line = "" || !line.[0] <> '>' do
                 it.linter !line |> Buffer.add_string it.buf
               done;
+              (* An empty tag already means that no record is currently in hand - it is what
+                  incr() leaves behind once the last record has been consumed - so a nameless
+                  record would be indistinguishable from it, and its sequence would vanish *)
+              if String.length !line = 1 then
+                Exception.raise_malformed __FUNCTION__ it.lines "FASTA" it.path
+                  ~comment:"header has an empty name";
               it.next <- String.sub !line 1 (String.length !line - 1);
               it.seq <- Buffer.contents it.buf;
-              Buffer.clear it.buf              
+              Buffer.clear it.buf
             with End_of_file ->
               it.next <- "";
               it.seq <- Buffer.contents it.buf;
               delete it
           end
           [@@inline]
-        let create (linter, path) =
-          let res = { (empty ()) with linter; path; input = open_in path; eof_reached = false } in
+        let create ?(compression = true) (linter, path) =
+          let input, close = Compressed.open_input ~compression path in
+          let res = { (empty ()) with linter; path; input; close; eof_reached = false } in
           begin try
             (* The invariant is to have the label of the new sequence loaded in it.next
                 and an empty buffer *)
@@ -227,6 +418,11 @@ module FASTA:
               if !line <> "" then
                 Exception.raise_malformed __FUNCTION__ res.lines "FASTA" path ~comment:"header expected"
             done;
+            (* As in incr(), a nameless record would be indistinguishable from the absence
+                of one *)
+            if String.length !line = 1 then
+              Exception.raise_malformed __FUNCTION__ res.lines "FASTA" path
+                ~comment:"header has an empty name";
             res.next <- String.sub !line 1 (String.length !line - 1);
             (* Now that we've got the header, we parse the sequence and the next header *)
             incr res
@@ -248,21 +444,24 @@ module FASTA:
           [@@inline]
         let get_se_pe_and_incr it f _ = get_and_incr it f [@@inline]
       end
-    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false) f path =
+    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
+             ?(compression = true) ?(verbose = false) f path =
       if verbose then
         Printf.eprintf "(%s): Reading FASTA file '%s': Begin\n%!" __FUNCTION__ path;
-      let it = Iterator.create (linter, path) in
+      let it = Iterator.create ~compression (linter, path) in
       while Iterator.is_empty it |> not do
         Iterator.get_and_incr it f (* This also calls Iterator.delete() *)
       done;
       if verbose then
         Printf.eprintf "(%s): Reading FASTA file '%s': End\n%!" __FUNCTION__ path
     let parallel_iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
-                      ?(buffered_chunks_per_thread = 10) ?(max_memory = 1000000000) ?(verbose = false)
+                      ?(compression = true) ?(buffered_chunks_per_thread = 10)
+                      ?(max_memory = 1000000000) ?(verbose = false)
                       path (f:int -> (string * string) list -> 'a) (g:'a -> unit) threads =
       let max_block_bytes = max_memory / (buffered_chunks_per_thread * threads) in
       (* Parallel section *)
-      let input = open_in path and current = ref "" and seq = Buffer.create 1048576
+      let input, close = Compressed.open_input ~compression path in
+      let current = ref "" and seq = Buffer.create 1048576
       and read = ref 0 and seqs = ref 0 and eof_reached = ref false in
       let read_up_to_next_sequence_name () =
         let res = ref "" in
@@ -272,14 +471,21 @@ module FASTA:
             let line = input_line input in
             incr read;
             if line <> "" then begin
-              if line.[0] = '>' then
+              if line.[0] = '>' then begin
+                (* A bare '>' is fatal here exactly as it is in Iterator. An empty name would
+                    otherwise leave [res] empty, so that the loop kept reading while [seq] -
+                    cleared once on entry and not again - accumulated the nameless record's bases
+                    on top of the previous record's, handing the caller a single record whose
+                    sequence is two concatenated *)
+                if String.length line = 1 then
+                  Exception.raise_malformed __FUNCTION__ !read "FASTA" path
+                    ~comment:"header has an empty name";
                 res := String.sub line 1 (String.length line - 1)
-              else
+              end else
                 linter line |> Buffer.add_string seq
             end
           with End_of_file ->
-            eof_reached := true;
-            close_in input
+            eof_reached := true
         done;
         current := !res in
       if verbose then
@@ -318,7 +524,14 @@ module FASTA:
               Printf.teprintf "%d more %s processed%!\n" seqs (String.pluralize_int "sequence" seqs)
             end;
             res)
-          g threads
+          g threads;
+      (* Closed HERE, in the parent, and not where EOF is met: the reader closure above runs
+          inside the input child Processes.Parallel forks, while the decompressor was created by
+          the parent, so a close from there reaps nothing (waitpid answers ECHILD) and the
+          exit-status check close performs would not run at all.
+         Reached on every path - an empty or immediately-EOF file skips the parallel section and
+          still arrives here - and close is idempotent *)
+      close ()
   end
 
 (* At this level we do not care whether the FASTQ is SE, PE or interleaved *)
@@ -338,6 +551,7 @@ module FASTQ:
           linter: string -> string;
           path: string;
           input: in_channel;
+          close: unit -> unit; (* Closing the input might imply reaping a decompressor *)
           mutable lines: int; (* Number of lines read so far *)
           mutable eof_reached: bool;
           (* *)
@@ -348,6 +562,7 @@ module FASTQ:
           linter = Fun.id;
           path = "";
           input = stdin;
+          close = (fun () -> ());
           lines = 0;
           eof_reached = true;
           progr = -1;
@@ -356,11 +571,12 @@ module FASTQ:
         let info it = it.path, it.lines
         let is_empty it = it.eof_reached
         let delete it =
-          close_in it.input;
+          it.close ();
           it.eof_reached <- true
           [@@inline]
-        let create (linter, path) =
-          { (empty ()) with linter; path; input = open_in path; eof_reached = false }
+        let create ?(compression = true) (linter, path) =
+          let input, close = Compressed.open_input ~compression path in
+          { (empty ()) with linter; path; input; close; eof_reached = false }
         let incr it =
           if it.eof_reached then
             ()
@@ -374,6 +590,11 @@ module FASTQ:
               it.lines <- it.lines + 4;
               if tag = "" || tag.[0] <> '@' || tmp = "" || tmp.[0] <> '+' then
                 Exception.raise_malformed __FUNCTION__ it.lines "FASTQ" it.path;
+              (* An empty tag already means that no record is currently in hand - it is what
+                  get() tests - so a nameless record would silently vanish *)
+              if String.length tag = 1 then
+                Exception.raise_malformed __FUNCTION__ it.lines "FASTQ" it.path
+                  ~comment:"header has an empty name";
               it.read <- { tag = String.sub tag 1 (String.length tag - 1); seq; qua }
             with End_of_file ->
               if it.lines <> (4 * (it.progr + 1)) then
@@ -399,10 +620,11 @@ module FASTQ:
           [@@inline]
         let get_se_pe_and_incr it f _ = get_and_incr it f [@@inline]
       end
-    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false) f path =
+    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
+             ?(compression = true) ?(verbose = false) f path =
       if verbose then
         Printf.eprintf "(%s): Reading FASTQ file '%s': Begin\n%!" __FUNCTION__ path;
-      let it = Iterator.create (linter, path) in
+      let it = Iterator.create ~compression (linter, path) in
       while Iterator.is_empty it |> not do (* This also calls Iterator.delete() *)
         Iterator.get_and_incr it f
       done;
@@ -426,6 +648,7 @@ module Tabular:
           linter: string -> string;
           path: string;
           input: in_channel;
+          close: unit -> unit; (* Closing the input might imply reaping a decompressor *)
           mutable eof_reached: bool;
           (* *)
           mutable progr: int; (* Sequence progressive (from 0) *)
@@ -435,6 +658,7 @@ module Tabular:
           linter = Fun.id;
           path = "";
           input = stdin;
+          close = (fun () -> ());
           eof_reached = true;
           progr = -1;
           line = [||]
@@ -442,11 +666,12 @@ module Tabular:
         let info it = it.path, it.progr + 1
         let is_empty it = it.eof_reached
         let delete it =
-          close_in it.input;
+          it.close ();
           it.eof_reached <- true
           [@@inline]
-        let create (linter, path) =
-          { (empty ()) with linter; path; input = open_in path; eof_reached = false }
+        let create ?(compression = true) (linter, path) =
+          let input, close = Compressed.open_input ~compression path in
+          { (empty ()) with linter; path; input; close; eof_reached = false }
         let incr it =
           if it.eof_reached then
             ()
@@ -489,18 +714,19 @@ module Tabular:
           [@@inline]
         let get_and_incr it f = get_se_pe_and_incr it f (fun one two -> f one; f two) [@@inline]
       end
-    let iter_se_pe ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
-                   f g path =
+    let iter_se_pe ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
+                   ?(compression = true) ?(verbose = false) f g path =
       if verbose then
         Printf.eprintf "(%s): Reading tabular file '%s': Begin\n%!" __FUNCTION__ path;
-      let it = Iterator.create (linter, path) in
+      let it = Iterator.create ~compression (linter, path) in
       while Iterator.is_empty it |> not do (* This also calls Iterator.delete() *)
         Iterator.get_se_pe_and_incr it f g
       done;
       if verbose then
         Printf.eprintf "(%s): Reading tabular file '%s': End\n%!" __FUNCTION__ path
-    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false) f =
-      iter_se_pe ~linter ~verbose f (fun one two -> f one; f two) [@@inline]
+    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
+             ?(compression = true) ?(verbose = false) f =
+      iter_se_pe ~linter ~compression ~verbose f (fun one two -> f one; f two) [@@inline]
   end
 
 (* An abstraction of FAST* and tabular files.
@@ -520,7 +746,17 @@ module Reads:
         type init_t = Base.linter_t * t
         (* Return type is read ID, segment ID, and (tag, sequence, qualities) *)
         type ret_t = int * int * Base.Read.t
-        include Iterator_t with type init_t := init_t and type ret_t := ret_t
+        (* The same as Better's Iterator_t, except that create() also accepts the optional
+            flag which enables transparent decompression *)
+        type t
+        val empty: unit -> t
+        val is_empty: t -> bool
+        val create: ?compression:bool -> init_t -> t
+        (* The get() functions apply the function argument to one or more elements *)
+        val get: t -> (ret_t -> unit) -> unit
+        val get_and_incr: t -> (ret_t -> unit) -> unit
+        val incr: t -> unit
+        val delete: t -> unit (* I am Ozymandias *)
       end
     (* OCaml-style iterators *)
     val iter: t Base.Iterator.t
@@ -571,19 +807,20 @@ module Reads:
             FASTQ.Iterator.delete it2
           | ItTabular it ->
             Tabular.Iterator.delete it
-        let create (linter, t) =
+        let create ?(compression = true) (linter, t) =
           match t with
           | FASTA path ->
-            ItFASTA (FASTA.Iterator.create (linter, path))
+            ItFASTA (FASTA.Iterator.create ~compression (linter, path))
           | SingleEndFASTQ path ->
-            ItSingleEndFASTQ (FASTQ.Iterator.create (linter, path))
+            ItSingleEndFASTQ (FASTQ.Iterator.create ~compression (linter, path))
           | PairedEndFASTQ (path1, path2) ->
-            ItPairedEndFASTQ (FASTQ.Iterator.create (linter, path1),
-                              FASTQ.Iterator.create (linter, path2))
+            ItPairedEndFASTQ (FASTQ.Iterator.create ~compression (linter, path1),
+                              FASTQ.Iterator.create ~compression (linter, path2))
           | InterleavedFASTQ path ->
-            ItInterleavedFASTQ (ref Base.Read.empty, FASTQ.Iterator.create (linter, path))
+            ItInterleavedFASTQ (ref Base.Read.empty,
+                                FASTQ.Iterator.create ~compression (linter, path))
           | Tabular path ->
-            ItTabular (Tabular.Iterator.create (linter, path))
+            ItTabular (Tabular.Iterator.create ~compression (linter, path))
         let incr = function
           | ItEmpty -> ()
           | ItFASTA it -> FASTA.Iterator.incr it
@@ -627,8 +864,8 @@ module Reads:
           [@@inline]
         let get_and_incr it f = get_se_pe_and_incr it f (fun one two -> f one; f two) [@@inline]
       end
-    let iter_se_pe ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
-                   f g file =
+    let iter_se_pe ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
+                   ?(compression = true) ?(verbose = false) f g file =
       let what =
         match file with
         | FASTA path ->
@@ -643,14 +880,15 @@ module Reads:
           Printf.sprintf "tabular file '%s'" path in
       if verbose then
         Printf.eprintf "(%s): Reading %s: Begin\n%!" __FUNCTION__ what;
-      let it = Iterator.create (linter, file) in
+      let it = Iterator.create ~compression (linter, file) in
       while Iterator.is_empty it |> not do
         Iterator.get_se_pe_and_incr it f g (* This also calls Iterator.delete() *)
       done;
       if verbose then
         Printf.eprintf "(%s): Reading %s: End\n%!" __FUNCTION__ what
-    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false) f =
-      iter_se_pe ~linter ~verbose f (fun one two -> f one; f two) [@@inline]
+    let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
+             ?(compression = true) ?(verbose = false) f =
+      iter_se_pe ~linter ~compression ~verbose f (fun one two -> f one; f two) [@@inline]
     module [@warning "-32"] Store:
       sig
         type reads_t := t
@@ -662,7 +900,8 @@ module Reads:
         type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
         val empty: t
         val length: t -> int
-        val add_from_file: ?linter:Base.linter_t -> ?verbose:bool -> t -> reads_t -> unit
+        val add_from_file: ?linter:Base.linter_t -> ?compression:bool -> ?verbose:bool ->
+                           t -> reads_t -> unit
         (* Arguments to the function are store, optional filter (can be empty), name of output prefix
             (output reads can be FASTA and/or FASTQ SE and/or FASTQ PE) *)
         val to_fast: ?verbose:bool -> t -> filter_t -> string -> unit
@@ -694,9 +933,9 @@ module Reads:
           let res = ref 0 in
           iter (fun (_, _, segm) -> res := !res + String.length segm.seq) store;
           !res
-        let add_from_file ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(verbose = false)
-                          store file =
-          iter_se_pe ~linter ~verbose
+        let add_from_file ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
+                          ?(compression = true) ?(verbose = false) store file =
+          iter_se_pe ~linter ~compression ~verbose
             (fun (_, _, read) ->
               SingleEndRead read |> Tools.ArrayStack.push store)
             (fun (_, _, read1) (_, _, read2) ->

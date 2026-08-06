@@ -607,7 +607,7 @@ module Annotation:
           List.accum acc (Buffer.contents buf);
           List.rev !acc
     let raise_invalid_path hierarchy path =
-      Exception.raise __FUNCTION__ Algorithm
+      Exception.raise __FUNCTION__ IO_Format
         (Printf.sprintf
            "Path %S is not valid against hierarchy {%s}"
            (path_to_string path) (Hierarchy.to_string hierarchy))
@@ -626,7 +626,7 @@ module Annotation:
             let prefix_id = Path.intern t.paths prefix in
             let rec patch_last = function
               | [] ->
-                Exception.raise __FUNCTION__ Algorithm
+                Exception.raise __FUNCTION__ IO_Format
                   (Printf.sprintf
                      "No parent of category %S to attach feature at %s"
                      cat (path_to_string path))
@@ -637,7 +637,7 @@ module Annotation:
         let root_prefix = [ Hierarchy.name t.hierarchy ] in
         { t with forest = drill root_prefix t.forest rest }
       | _ ->
-        Exception.raise __FUNCTION__ Algorithm
+        Exception.raise __FUNCTION__ IO_Format
           (Printf.sprintf
              "Cannot attach a feature directly at the hierarchy \
               root %S" (path_to_string path))

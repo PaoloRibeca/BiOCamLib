@@ -61,147 +61,149 @@ let info = {
 
 let () =
   let module TA = Tools.Argv in
-  TA.set_header (info, authors, [ Info.info ]);
-  TA.set_synopsis "[OPTIONS]";
-  TA.parse [
-    TA.make_separator_multiline [ "Actions."; "They are executed delayed and in order of specification." ];
-    [ "-c"; "--clear" ],
-      None,
-      [ "clear the splits register (keep names, discard existing splits)" ],
-      TA.Optional,
-      (fun _ -> Clear |> List.accum Parameters.program);
-    [ "-i"; "--input" ],
-      Some "<binary_file_prefix>",
-      [ "load into the splits register the specified binary database";
-        " (which must have extension '.PhyloSplits' unless file is '/dev/*')" ],
-      TA.Optional,
-      (fun _ -> Of_binary (TA.get_parameter ()) |> List.accum Parameters.program);
-    [ "-I"; "--Input" ],
-      Some "<splits_file_prefix>",
-      [ "load into the splits register the specified plain text database";
-        " (which must have extension '.PhyloSplits.txt' unless file is '/dev/*')" ],
-      TA.Optional,
-      (fun _ -> Of_file (TA.get_parameter ()) |> List.accum Parameters.program);
-    [ "-a"; "--add" ],
-      Some "<binary_file_prefix>",
-      [ "add to the contents of the splits register the specified binary database";
-        " (which must have extension '.PhyloSplits' unless file is '/dev/*')" ],
-      TA.Optional,
-      (fun _ -> Add_binary (TA.get_parameter ()) |> List.accum Parameters.program);
-    [ "-A"; "--Add" ],
-      Some "<splits_file_prefix>",
-      [ "add to the contents of the splits register the specified plain text database";
-        " (which must have extension '.PhyloSplits.txt' unless file is '/dev/*')" ],
-      TA.Optional,
-      (fun _ -> Add_file (TA.get_parameter ()) |> List.accum Parameters.program);
-    [ "--input-tree"; "--Of-tree" ],
-      Some "<newick_file>",
-      [ "load into the splits register the bipartitions of the specified Newick tree";
-        " (replaces the current register; for multi-tree files, every tree's";
-        "  bipartitions are added, each with weight 1.0 per occurrence)" ],
-      TA.Optional,
-      (fun _ -> Of_newick (TA.get_parameter ()) |> List.accum Parameters.program);
-    [ "--Add-tree" ],
-      Some "<newick_file>",
-      [ "add to the splits register the bipartitions of the specified Newick";
-        "tree, each with weight 1.0 (so a bipartition supported by k trees";
-        "accumulates to weight k).  Compose with multiple --Add-tree calls";
-        "for ensemble consensus, then feed to -t" ],
-      TA.Optional,
-      (fun _ -> Add_newick (TA.get_parameter (), 1.0) |> List.accum Parameters.program);
-    [ "--Add-tree-weighted" ],
-      Some "<newick_file> <weight>",
-      [ "as --Add-tree, but each bipartition gets the explicit weight given";
-        " (useful when different ensemble members should count differently)" ],
-      TA.Optional,
-      (fun _ ->
-        let file = TA.get_parameter () in
-        let w = TA.get_parameter_float () in
-        Add_newick (file, w) |> List.accum Parameters.program);
-    [ "--drop-weak-splits" ],
-      Some "<float>",
-      [ "drop every split in the register whose accumulated weight is";
-        "strictly less than the cutoff.  Apply between --Add-tree calls and";
-        "-t to implement majority-rule consensus at threshold p:";
-        " set cutoff = p * n_input_trees" ],
-      TA.Optional,
-      (fun _ -> Drop_weak_splits (TA.get_parameter_float_pos ())
-                |> List.accum Parameters.program);
-    [ "--negative-branches-policy" ],
-      Some "'error'|'ok'|'zero'",
-      [ "policy for handling negative branch lengths when reading Newick input";
-        " (via --input-tree, --Add-tree, --Add-tree-weighted).";
-        " 'error' rejects (raises a parse error); 'ok' accepts as-is;";
-        " 'zero' silently clamps to 0.  Set before the --Add-tree call(s)";
-        " it should apply to" ],
-      TA.Default (Newick.NegativeBranchesPolicy.to_string Defaults.negative_branches |> Fun.const),
-      (fun _ ->
-        Parameters.negative_branches :=
-          TA.get_parameter () |> Newick.NegativeBranchesPolicy.of_string);
-    [ "-t"; "--tree" ],
-      Some "<tree_file_prefix>",
-      [ "generate a phylogenetic tree from the contents of the splits register.";
-        "The results will be a Newick file";
-        " (which will be given extension '.nwk' unless file is '/dev/*')";
-        "and the database of compatible splits used to build the tree";
-        " (which will be given extension '.PhyloSplits.txt' unless file is '/dev/*').";
-        "The residual incompatible splits will be moved back to the splits register" ],
-      TA.Optional,
-      (fun _ -> To_tree (TA.get_parameter ()) |> List.accum Parameters.program);
-    [ "-o"; "--output" ],
-      Some "<binary_file_prefix>",
-      [ "dump the contents of the splits register to the specified binary file";
-        " (which will be given extension '.PhyloSplits' unless file is '/dev/*')" ],
-      TA.Optional,
-      (fun _ -> To_binary (TA.get_parameter ()) |> List.accum Parameters.program);
-    [ "--precision" ],
-      Some "<positive_integer>",
-      [ "set the number of precision digits to be used when outputting numbers" ],
-      TA.Default (string_of_int Defaults.precision |> Fun.const),
-      (fun _ -> Set_precision (TA.get_parameter_int_pos ()) |> List.accum Parameters.program);
-    [ "-O"; "--Output" ],
-      Some "<splits_file_prefix>",
-      [ "dump the contents of the splits register to the specified plain text file";
-        " (which will be given extension '.PhyloSplits.txt' unless file is '/dev/*')" ],
-      TA.Optional,
-      (fun _ -> To_file (TA.get_parameter ()) |> List.accum Parameters.program);
-    TA.make_separator_multiline [ "Miscellaneous options."; "They are set immediately." ];
-(*
-    [ "-T"; "--threads" ],
-      Some "<computing_threads>",
-      [ "number of concurrent computing threads to be spawned";
-        " (default automatically detected from your configuration)" ],
-      TA.Default (string_of_int Defaults.threads |> Fun.const),
-      (fun _ -> Parameters.threads := TA.get_parameter_int_pos ());
-*)
-    [ "-v"; "--verbose" ],
-      None,
-      [ "set verbose execution (global option)" ],
-      TA.Default (Fun.const "quiet execution"),
-      (fun _ -> Parameters.verbose := true);
-    [ "-V"; "--version" ],
-      None,
-      [ "print version and exit" ],
-      TA.Optional,
-      (fun _ -> Printf.printf "%s\n%!" info.version; exit 0);
-    (* Hidden option to emit help in markdown format *)
-    [ "--markdown" ], None, [], TA.Optional, (fun _ -> TA.markdown (); exit 0);
-    [ "-h"; "--help" ],
-      None,
-      [ "print syntax and exit" ],
-      TA.Optional,
-      (fun _ -> TA.usage (); exit 1)
-  ];
-  let program = List.rev !Parameters.program in
-  if program = [] then begin
-    TA.usage ();
-    exit 0
-  end;
-  if !Parameters.verbose then
-    TA.header ();
-  (* These are the registers available to the program *)
-  let splits = Splits.create [| |] |> ref and precision = ref Defaults.precision in
   try
+    TA.set_header (info, authors, [ Info.info ]);
+    TA.set_synopsis "[OPTIONS]";
+    TA.parse [
+      TA.make_separator_multiline [ "Actions."; "They are executed delayed and in order of specification." ];
+      [ "-c"; "--clear" ],
+        None,
+        [ "clear the splits register (keep names, discard existing splits)" ],
+        TA.Optional,
+        (fun _ -> Clear |> List.accum Parameters.program);
+      [ "-i"; "--input" ],
+        Some "<binary_file_prefix>",
+        [ "load into the splits register the specified binary database";
+          " (which must have extension '.PhyloSplits' unless file is '/dev/*')" ],
+        TA.Optional,
+        (fun _ -> Of_binary (TA.get_parameter ()) |> List.accum Parameters.program);
+      [ "-I"; "--Input" ],
+        Some "<splits_file_prefix>",
+        [ "load into the splits register the specified plain text database";
+          " (which must have extension '.PhyloSplits.txt' unless file is '/dev/*')" ],
+        TA.Optional,
+        (fun _ -> Of_file (TA.get_parameter ()) |> List.accum Parameters.program);
+      [ "-a"; "--add" ],
+        Some "<binary_file_prefix>",
+        [ "add to the contents of the splits register the specified binary database";
+          " (which must have extension '.PhyloSplits' unless file is '/dev/*')" ],
+        TA.Optional,
+        (fun _ -> Add_binary (TA.get_parameter ()) |> List.accum Parameters.program);
+      [ "-A"; "--Add" ],
+        Some "<splits_file_prefix>",
+        [ "add to the contents of the splits register the specified plain text database";
+          " (which must have extension '.PhyloSplits.txt' unless file is '/dev/*')" ],
+        TA.Optional,
+        (fun _ -> Add_file (TA.get_parameter ()) |> List.accum Parameters.program);
+      [ "--input-tree"; "--Of-tree" ],
+        Some "<newick_file>",
+        [ "load into the splits register the bipartitions of the specified Newick tree";
+          " (replaces the current register; for multi-tree files, every tree's";
+          "  bipartitions are added, each with weight 1.0 per occurrence)" ],
+        TA.Optional,
+        (fun _ -> Of_newick (TA.get_parameter ()) |> List.accum Parameters.program);
+      [ "--Add-tree" ],
+        Some "<newick_file>",
+        [ "add to the splits register the bipartitions of the specified Newick";
+          "tree, each with weight 1.0 (so a bipartition supported by k trees";
+          "accumulates to weight k).  Compose with multiple --Add-tree calls";
+          "for ensemble consensus, then feed to -t" ],
+        TA.Optional,
+        (fun _ -> Add_newick (TA.get_parameter (), 1.0) |> List.accum Parameters.program);
+      [ "--Add-tree-weighted" ],
+        Some "<newick_file> <weight>",
+        [ "as --Add-tree, but each bipartition gets the explicit weight given";
+          " (useful when different ensemble members should count differently)" ],
+        TA.Optional,
+        (fun _ ->
+          let file = TA.get_parameter () in
+          let w = TA.get_parameter_float () in
+          Add_newick (file, w) |> List.accum Parameters.program);
+      [ "--drop-weak-splits" ],
+        Some "<float>",
+        [ "drop every split in the register whose accumulated weight is";
+          "strictly less than the cutoff.  Apply between --Add-tree calls and";
+          "-t to implement majority-rule consensus at threshold p:";
+          " set cutoff = p * n_input_trees" ],
+        TA.Optional,
+        (fun _ -> Drop_weak_splits (TA.get_parameter_float_pos ())
+                  |> List.accum Parameters.program);
+      [ "--negative-branches-policy" ],
+        Some "'error'|'ok'|'zero'",
+        [ "policy for handling negative branch lengths when reading Newick input";
+          " (via --input-tree, --Add-tree, --Add-tree-weighted).";
+          " 'error' rejects (raises a parse error); 'ok' accepts as-is;";
+          " 'zero' silently clamps to 0.  Set before the --Add-tree call(s)";
+          " it should apply to" ],
+        TA.Default (Newick.NegativeBranchesPolicy.to_string Defaults.negative_branches |> Fun.const),
+        (fun _ ->
+          Parameters.negative_branches :=
+            TA.get_parameter () |> Newick.NegativeBranchesPolicy.of_string);
+      [ "-t"; "--tree" ],
+        Some "<tree_file_prefix>",
+        [ "generate a phylogenetic tree from the contents of the splits register.";
+          "The results will be a Newick file";
+          " (which will be given extension '.nwk' unless file is '/dev/*')";
+          "and the database of compatible splits used to build the tree";
+          " (which will be given extension '.PhyloSplits.txt' unless file is '/dev/*').";
+          "The residual incompatible splits will be moved back to the splits register" ],
+        TA.Optional,
+        (fun _ -> To_tree (TA.get_parameter ()) |> List.accum Parameters.program);
+      [ "-o"; "--output" ],
+        Some "<binary_file_prefix>",
+        [ "dump the contents of the splits register to the specified binary file";
+          " (which will be given extension '.PhyloSplits' unless file is '/dev/*')" ],
+        TA.Optional,
+        (fun _ -> To_binary (TA.get_parameter ()) |> List.accum Parameters.program);
+      [ "--precision" ],
+        Some "<positive_integer>",
+        [ "set the number of precision digits to be used when outputting numbers" ],
+        TA.Default (string_of_int Defaults.precision |> Fun.const),
+        (fun _ -> Set_precision (TA.get_parameter_int_pos ()) |> List.accum Parameters.program);
+      [ "-O"; "--Output" ],
+        Some "<splits_file_prefix>",
+        [ "dump the contents of the splits register to the specified plain text file";
+          " (which will be given extension '.PhyloSplits.txt' unless file is '/dev/*')" ],
+        TA.Optional,
+        (fun _ -> To_file (TA.get_parameter ()) |> List.accum Parameters.program);
+      TA.make_separator_multiline [ "Miscellaneous options."; "They are set immediately." ];
+  (*
+      [ "-T"; "--threads" ],
+        Some "<computing_threads>",
+        [ "number of concurrent computing threads to be spawned";
+          " (default automatically detected from your configuration)" ],
+        TA.Default (string_of_int Defaults.threads |> Fun.const),
+        (fun _ -> Parameters.threads := TA.get_parameter_int_pos ());
+  *)
+      [ "-v"; "--verbose" ],
+        None,
+        [ "set verbose execution (global option)" ],
+        TA.Default (Fun.const "quiet execution"),
+        (fun _ -> Parameters.verbose := true);
+      [ "-V"; "--version" ],
+        None,
+        [ "print version and exit" ],
+        TA.Optional,
+        (fun _ -> Printf.printf "%s\n%!" info.version; exit 0);
+      (* Hidden option to emit help in markdown format *)
+      [ "--markdown" ], None, [], TA.Optional, (fun _ -> TA.markdown (); exit 0);
+      [ "-x"; "--print-exception-backtrace" ], None, [], TA.Optional,
+        (fun _ -> Printexc.record_backtrace true);
+      [ "-h"; "--help" ],
+        None,
+        [ "print syntax and exit" ],
+        TA.Optional,
+        (fun _ -> TA.usage (); exit 1)
+    ];
+    let program = List.rev !Parameters.program in
+    if program = [] then begin
+      TA.usage ();
+      exit 0
+    end;
+    if !Parameters.verbose then
+      TA.header ();
+    (* These are the registers available to the program *)
+    let splits = Splits.create [| |] |> ref and precision = ref Defaults.precision in
     List.iter
       (function
         | Clear ->
@@ -266,7 +268,13 @@ let () =
         | To_file prefix ->
           Splits.to_file ~precision:!precision !splits prefix)
       program
-  with exc ->
-    Printf.eprintf "[#%s]: (%s): %s\n%!" (Unix.getpid () |> string_of_int |> String.TermIO.blue) __FUNCTION__
-      ("FATAL: Uncaught exception: " ^ Printexc.to_string exc |> String.TermIO.red)
+  with e ->
+    Exception.handle __FUNCTION__ TA.usage (fun () ->
+      Printf.peprintf
+        "(%s): This should not have happened - please contact <paolo.ribeca@gmail.com>\n%!"
+        __FUNCTION__;
+      Printf.peprintf
+        "(%s): You might also wish to rerun me with option -x to get a full backtrace.\n%!"
+        __FUNCTION__
+    ) e
 
