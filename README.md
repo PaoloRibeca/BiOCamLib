@@ -630,7 +630,7 @@ Long form: action mode + format + path. Short forms `--from-gff3`, `--from-gtf`,
 | `--from-gff3` | _file_ |  shorthand for `--annotation replace gff3 <file>` |  |
 | `--from-gtf` | _file_ |  shorthand for `--annotation replace gtf <file>` |  |
 | `--from-genbank` | _file_ |  shorthand for `--annotation replace genbank <file>` |  |
-| `--from-tsv`<br>`--from-tabular` | _file\_or\_prefix_ |  shorthand for `--annotation replace tsv <file_or_prefix>`; reads the three `.Annotation*.txt` tables written from the given prefix |  |
+| `--from-tsv`<br>`--from-tabular` | _prefix_ |  shorthand for `--annotation replace tsv <prefix>`; reads the `.Annotation*.txt` tables written from that prefix, and the `.AnnotationReference.fasta` beside them when there is one. A path under `/dev/*`, or an ordinary file that turns out to be a whole tabular document, is read as one document instead |  |
 
 *Reference (multi-FASTA) input.*
 Long form takes the same mode keyword as `--annotation`. Short form `--from-fasta` defaults to `replace`.
@@ -680,7 +680,7 @@ Emit the sequence denoted by each selected feature as FASTA. A feature's interva
 | `--to-gff3` | _file_ |  shorthand for `--to gff3 <file>` |  |
 | `--to-gtf` | _file_ |  shorthand for `--to gtf <file>` |  |
 | `--to-genbank` | _file_ |  shorthand for `--to genbank <file>` |  |
-| `--to-tsv`<br>`--to-tabular` | _file\_or\_prefix_ |  shorthand for `--to tsv <file_or_prefix>`; writes the three `.Annotation*.txt` tables from the given prefix |  |
+| `--to-tsv`<br>`--to-tabular` | _prefix_ |  shorthand for `--to tsv <prefix>`; writes a *collection* of files &mdash; the `.Annotation*.txt` tables, plus `.AnnotationReference.fasta` when the register carries a sequence. A prefix under `/dev/*` writes all of it to that one path instead, as a single document |  |
 | `--to-tbl`<br>`--to-feature-table` | _file_ |  shorthand for `--to tbl <file>`; writes an NCBI submission feature table |  |
 
 **Miscellaneous options.**

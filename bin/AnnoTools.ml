@@ -190,10 +190,12 @@ let () =
           "default to 'replace'." ];
       [ "-a"; "--annotation" ],
         Some "<replace|add> <gff3|gtf|genbank|tsv> <file_or_prefix>",
-        [ "merge or replace the register from <file> in the named";
-          " format.  When the format is GenBank and the input";
-          " carries an ORIGIN section, the reference sequence is";
-          " replaced as well." ],
+        [ "merge or replace the register from the named format.";
+          "Every format but 'tsv' takes a FILE; 'tsv' takes a";
+          "PREFIX, since it is a collection of files.";
+          "When the format is GenBank and the input carries an";
+          "ORIGIN section, or GFF3 and it carries a '##FASTA'";
+          "section, the reference sequence is replaced as well." ],
         TA.Optional,
         (fun _ ->
           let mode = TA.get_parameter () |> Mode.of_string in
@@ -215,8 +217,15 @@ let () =
           Annotation_op (Mode.Replace, A.Format.GTF, TA.get_parameter ())
           |> List.accum Parameters.program);
       [ "--from-tsv"; "--from-tabular" ],
-        Some "<file_or_prefix>",
-        [ "shorthand for '--annotation replace tsv <file_or_prefix>'" ],
+        Some "<prefix>",
+        [ "shorthand for '--annotation replace tsv <prefix>'.";
+          "Reads the '.AnnotationFeatures.txt',";
+          "'.AnnotationAttributes.txt' and '.AnnotationMetadata.txt'";
+          "tables written from that prefix, together with";
+          "'.AnnotationReference.fasta' when one is beside them.";
+          "A path under '/dev/*', or an ordinary file that turns";
+          "out to be a whole tabular document, is read as one";
+          "document instead" ],
         TA.Optional,
         (fun _ ->
           Annotation_op (Mode.Replace, A.Format.Tabular, TA.get_parameter ())
@@ -432,10 +441,12 @@ let () =
           "Annotation output." ];
       [ "--to" ],
         Some "<gff3|gtf|genbank|tsv|tbl> <file_or_prefix>",
-        [ "write the register to <file_or_prefix> in the named format.";
-          " 'tbl' is NCBI's submission feature table, which is";
-          " write-only: it encodes no hierarchy and no metadata, so";
-          " nothing can be read back from it" ],
+        [ "write the register in the named format.  Every format but";
+          "'tsv' takes a FILE; 'tsv' takes a PREFIX, since it writes";
+          "a collection of files.";
+          "'tbl' is NCBI's submission feature table, which is";
+          "write-only: it encodes no hierarchy and no metadata, so";
+          "nothing can be read back from it" ],
         TA.Optional,
         (fun _ ->
           let fmt = TA.get_parameter () |> A.Writer.of_string in
@@ -456,8 +467,14 @@ let () =
           To_format (A.Writer.Format A.Format.GTF, TA.get_parameter ())
           |> List.accum Parameters.program);
       [ "--to-tsv"; "--to-tabular" ],
-        Some "<file_or_prefix>",
-        [ "shorthand for '--to tsv <file_or_prefix>'" ],
+        Some "<prefix>",
+        [ "shorthand for '--to tsv <prefix>'.  Writes a COLLECTION";
+          "of files: the '.AnnotationFeatures.txt',";
+          "'.AnnotationAttributes.txt' and '.AnnotationMetadata.txt'";
+          "tables, plus '.AnnotationReference.fasta' when the";
+          "register carries a sequence.";
+          "A prefix under '/dev/*' writes all of it to that one path";
+          "instead, as a single document" ],
         TA.Optional,
         (fun _ ->
           To_format (A.Writer.Format A.Format.Tabular, TA.get_parameter ())
