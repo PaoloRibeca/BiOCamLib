@@ -649,6 +649,18 @@ let test_tabular () =
     Testing.check_string "the hierarchy travels with the data"
       ~expected:(A.Hierarchy.to_string (A.Annotation.hierarchy gb))
       (A.Hierarchy.to_string (A.Annotation.hierarchy (round_trip gb)));
+    (* The format reserves a [!] namespace for its own metadata keys and uses
+       [#!] section banners in the one-document form, so an annotation's own key
+       must not be able to impersonate either.  [add_metadata] accepts any key
+       and GFF3 pragmas reach it, so both are constructible. *)
+    List.iter (fun hostile_key ->
+      Testing.check_string
+        (Printf.sprintf "a metadata key of %S cannot impersonate the format's own" hostile_key)
+        ~expected:"trap"
+        (let hostile = A.Annotation.add_metadata gb ~key:hostile_key ~value:"trap" in
+         match A.Annotation.get_metadata (round_trip hostile) hostile_key with
+         | v :: _ -> v
+         | [] -> "(absent)")) [ "#!features"; "!hierarchy"; "!format-version" ];
     Testing.check_string "annotation metadata travels with the data"
       ~expected:"Synthetic test entry."
       (match A.Annotation.get_metadata (round_trip gb) "DEFINITION" with
@@ -696,6 +708,38 @@ let test_tabular () =
       (fun () ->
         A.Tabular.of_string
           "#!metadata\nkey\tvalue\n#!features\nwrong\theader\n#!attributes\nid\tkey\tvalue\n");
+    (* A row the walk never arrives at, and an attributes row attaching to
+       nothing, would both be dropped without a word.  The house rule is that a
+       defined format never fails silently. *)
+    let doc_with rows attrs =
+      String.concat "\n"
+        ([ "#!annotation-tabular 1"; "#!metadata"; "key\tvalue"; "!format-version\t1";
+           "!hierarchy\t(source (gene, CDS))"; "#!features";
+           "id\tparent\tseq\tpath\tfeature_id\tsource\tscore\tstrand\tphase\tintervals" ]
+         @ rows @ [ "#!attributes"; "id\tkey\tvalue" ] @ attrs @ [ "" ]) in
+    Testing.check_raises ~re:".*unreachable.*"
+      "a feature whose parent is not in the table is refused"
+      (fun () ->
+        A.Tabular.of_string
+          (doc_with
+             [ "aaaaaaaaaaaaaaaa\t.\tdemo01\tsource\t.\t.\t.\t.\t.\t1..30";
+               "bbbbbbbbbbbbbbbb\tnosuchparent\tdemo01\tsource->gene\t.\t.\t.\t.\t.\t1..15" ] []));
+    (* A two-cycle has no root, so neither node is ever reached: the
+       completeness check is what catches it, not the reached-twice guard. *)
+    Testing.check_raises ~re:".*unreachable.*"
+      "a cycle in the parent links is refused"
+      (fun () ->
+        A.Tabular.of_string
+          (doc_with
+             [ "aaaaaaaaaaaaaaaa\tbbbbbbbbbbbbbbbb\tdemo01\tsource\t.\t.\t.\t.\t.\t1..30";
+               "bbbbbbbbbbbbbbbb\taaaaaaaaaaaaaaaa\tdemo01\tsource\t.\t.\t.\t.\t.\t1..30" ] []));
+    Testing.check_raises ~re:".*attributes table names feature.*"
+      "an attributes row attaching to no feature is refused"
+      (fun () ->
+        A.Tabular.of_string
+          (doc_with
+             [ "aaaaaaaaaaaaaaaa\t.\tdemo01\tsource\t.\t.\t.\t.\t.\t1..30" ]
+             [ "cccccccccccccccc\tnote\torphan" ]));
     Testing.check_raises ~re:".*has no .* section.*"
       "a document missing a section is refused"
       (fun () -> A.Tabular.of_string "#!metadata\nkey\tvalue\n");

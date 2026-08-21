@@ -1628,9 +1628,18 @@ module Tabular: Format_t = struct
      collide with an annotation's; a real key that happens to start with [!] is
      encoded on the way out. *)
   let own_key k = "!" ^ k
+  (* A leading [!] would collide with that namespace, and a leading [#] would
+     let a metadata row impersonate a section banner in the one-document form --
+     a key of [#!features] would end the metadata table and start a second
+     features one.  Both are escaped; [url_decode] restores them. *)
   let encode_metadata_key k =
-    if String.length k > 0 && k.[0] = '!' then "%21" ^ encode (String.sub k 1 (String.length k - 1))
-    else encode k
+    if k = "" then ""
+    else
+      let rest = encode (String.sub k 1 (String.length k - 1)) in
+      match k.[0] with
+      | '!' -> "%21" ^ rest
+      | '#' -> "%23" ^ rest
+      | _ -> encode k
   (* [id] is the content hash and the join key; [feature_id] is the feature's
      OWN identifier, which is not always derivable from an attribute -- the
      GenBank reader names a record's source feature after its LOCUS -- and so
@@ -1847,12 +1856,27 @@ module Tabular: Format_t = struct
         let prev = try Hashtbl.find children parent with Not_found -> [] in
         Hashtbl.replace children parent (id :: prev)
       end) rows;
+    (* An attributes row naming a feature that is not in the features table
+       would attach to nothing and be dropped without a word. *)
+    Hashtbl.iter (fun id _ ->
+      if not (Hashtbl.mem by_id id) then
+        Exception.raise __FUNCTION__ IO_Format
+          (Printf.sprintf
+             "The attributes table names feature %S, which the features table does not contain" id))
+      attrs_of;
     (* Reconstruct DFS pre-order from the parent links.  Annotation.add wants
        each internal path segment to be the most recent node at the previous
        level, which is exactly what a depth-first walk of this forest gives it,
        whatever order the rows arrived in. *)
-    let ordered = ref [] in
+    let ordered = ref [] and reached = Hashtbl.create 64 in
     let rec walk id =
+      (* A feature reached twice means the parent links are not a forest.  The
+         completeness check below would not catch it on its own, since the count
+         could still come out right. *)
+      if Hashtbl.mem reached id then
+        Exception.raise __FUNCTION__ IO_Format
+          (Printf.sprintf "Feature %S is reachable twice: the parent links are not a forest" id);
+      Hashtbl.replace reached id ();
       let row = Hashtbl.find by_id id in
       let path = path_of_field (field row 3 "features" 10) in
       let attrs =
@@ -1881,6 +1905,16 @@ module Tabular: Format_t = struct
       | None -> ()
       | Some kids -> List.iter walk (List.rev kids) in
     List.iter walk (List.rev !roots);
+    (* Every row has to have been reached.  A row whose parent column names an
+       id that is not in the table, and a cycle among the parent links, are both
+       invisible to the walk -- it simply never arrives -- so without this check
+       such a feature would be dropped in silence. *)
+    Hashtbl.iter (fun id _ ->
+      if not (Hashtbl.mem reached id) then
+        Exception.raise __FUNCTION__ IO_Format
+          (Printf.sprintf
+             "Feature %S is unreachable: its parent is not in the features table, or the \
+              parent links contain a cycle" id)) by_id;
     add_dfs_with_seq_bloom ann (List.rev !ordered);
     List.iter (fun (k, v) -> ann := add_metadata !ann ~key:k ~value:v) (List.rev !plain_metadata);
     cleanup_values !ann;
