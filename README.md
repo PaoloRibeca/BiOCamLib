@@ -5,20 +5,20 @@ BiOCamLib is the [OCaml](https://ocaml.org) foundation upon which a number of th
 It mostly consists of a library &mdash; you'll need to clone this repository if you want to manually compile other programs I've developed, notably [SiNPle](https://github.com/PaoloRibeca/SiNPle) or [KPop](https://github.com/PaoloRibeca/KPop). You might also use the library for your own programs, if you are familiar with OCaml and patient enough to read the code.
 
 As a bonus, BiOCamLib comes bundled with a few programs:
-* `RC`, which can efficiently compute the reverse complement of (possibly very long) sequences. Each sequence should be input on a separate line &mdash; lines are processed one by one and not buffered. I use this program in many of my workflows.
-* `Octopus`, which is a high-throughput program to compute the transitive closure of strings. This is useful to cluster things.
+* `RC`, which can efficiently compute the reverse complement of (possibly very long) sequences. Each sequence should be input on a separate line &mdash; lines are processed one by one and not buffered.
+* `Octopus`, which is a high-throughput program to compute the transitive closure of strings. This is useful to cluster things by agglomeration schemes.
 * `Parallel`, which allows you to split and process an input file chunk-wise using the reader/workers/writer model implemented in `BiOCamLib.Tools.Parallel`. You can see it as a demonstration of the capabilities of the library, but I also often use it as a useful tool to solve real-life problems, be they bioinformatics or not. A number of high-throughput real-life examples can be found in the [KPop README](https://github.com/PaoloRibeca/KPop/).
 * `FASTools`, which is a Swiss-knife tool for the manipulation of FASTA/FASTQ files. It supports all formats (FASTA, single- and paired-end FASTQ, interleaved FASTQ) and a simpler tabular format whereby FASTA/FASTQ records are represented as tab-separated lines. It facilitates format interconversions and other manipulations.
 * `TREx`, which finds exact tandem repeats in all the sequences of a FASTA file. The output is a tab-separated table of repeats with their position, length, and unit, suitable for downstream filtering or annotation.
 * `Cophenetic`, which reads a Newick tree on standard input and writes the cophenetic-distance matrix between every pair of labelled nodes (leaves and internal alike) to standard output. By default the matrix carries shortest-path distances along branch lengths; an option switches to longest-path distances, which is the right convention when branch lengths encode partial quantities (e.g. allele frequencies).
 * `Yggdrasill`, which builds a phylogenetic tree from a register of weighted splits. It loads a `.PhyloSplits` file (binary or tabular), greedy-filters the splits for pairwise compatibility in order of decreasing weight, and emits a Newick tree assembled via the Buneman construction. The incompatible residual is retained for further inspection or iterative refinement, and a dropped-weight ratio is emitted to stderr as a measure of how tree-like the input split system is. This is the natural downstream tool for [KPop](https://github.com/PaoloRibeca/KPop/)'s `KPopTwistDB --splits` output.
-* `AnnoTools`, which manipulates a single in-memory genome-annotation register through a CLI-driven action stream. It can read and write GFF3, GTF, and GenBank files (round-tripping each), attach a multi-FASTA reference, validate that an annotation is consistent with the reference, select features and extract their DNA or protein sequences, and serialise the register either to a compact binary `.Annotation` archive that loads orders of magnitude faster than reparsing the source, or to a lossless set of tab-separated tables you can `diff`, `sort` and `join` with the rest of a Unix pipeline.
+* `AnnoTools`, which ia a Swiss-knife tool for the manipulation of annotation files. It can read and write GFF3, GTF, and GenBank files, attach a multi-FASTA reference, validate that an annotation is consistent with the reference, select features and extract their DNA or protein sequences. Native lossless formats (either a compact binary archive that loads orders of magnitude faster than reparsing the source, or a lossless set of tab-separated tables you can `diff` or manipulate with regular Unix tools) are also supported.
 
 ## Installing `RC`, `Octopus`, `Parallel`, `FASTools`, `TREx`, `Cophenetic`, `Yggdrasill`, and `AnnoTools`
 
 :warning: Note that the only operating systems we officially support are Linux and MacOS. :warning:
 
-There are several possible ways of installing the software on your machine: through `conda`; by downloading pre-compiled binaries (Linux and MacOS x86_64 only); or manually.
+There are several possible ways of installing the software on your machine: through `conda`; by downloading pre-compiled binaries (Linux x86_64 and MacOS only); or manually.
 
 ### Conda channel
 
