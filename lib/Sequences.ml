@@ -90,11 +90,28 @@ module Lint:
       iteri
         (fun i c ->
           b.@(i) <- begin
+            (* The full IUPAC nucleotide table, not just ACGT: complementing an
+               ambiguity code has to map it to the code for the complementary
+               set, so R = A/G must become Y = C/T.  Leaving it alone would be
+               worse than mapping it to N, since the base silently stays on the
+               wrong strand.  U complements to A, as in DNA.  The
+               self-complementary codes (S = G/C, W = A/T, N) and every
+               non-nucleotide byte (gaps, dots, anything else) are deliberately
+               left as they are by the last arm. *)
             match c with
             | 'A' -> 'T' | 'a' -> 't'
             | 'C' -> 'G' | 'c' -> 'g'
             | 'G' -> 'C' | 'g' -> 'c'
             | 'T' -> 'A' | 't' -> 'a'
+            | 'U' -> 'A' | 'u' -> 'a'
+            | 'R' -> 'Y' | 'r' -> 'y'
+            | 'Y' -> 'R' | 'y' -> 'r'
+            | 'K' -> 'M' | 'k' -> 'm'
+            | 'M' -> 'K' | 'm' -> 'k'
+            | 'B' -> 'V' | 'b' -> 'v'
+            | 'V' -> 'B' | 'v' -> 'b'
+            | 'D' -> 'H' | 'd' -> 'h'
+            | 'H' -> 'D' | 'h' -> 'd'
             | c -> c
           end)
         b
@@ -377,6 +394,7 @@ module Translation:
       | Table_25 | Table_26 | Table_27 | Table_28 | Table_29 | Table_30
       | Table_31 | Table_33
     val of_string: string -> t
+    val to_string: t -> string
     val stops: ?frames:int list -> t -> string -> IntSet.t
     val starts:
           ?frames:int list -> ?get_alternative_start_codons:bool -> t -> string -> IntSet.t
@@ -441,6 +459,38 @@ module Translation:
       | "33" | "Table33" | "Table_33" -> Table_33
       | s ->
         Exception.raise_unrecognized_initializer __FUNCTION__ "table" s
+    (* The canonical form is the bare NCBI table number: it is what
+       /transl_table carries in a GenBank file and what a CLI argument spells,
+       and [of_string] accepts it, so the pair round-trips.  The decorated
+       Table_N and TableN spellings [of_string] also tolerates are inputs
+       only. *)
+    let to_string = function
+      | Table_1 -> "1"
+      | Table_2 -> "2"
+      | Table_3 -> "3"
+      | Table_4 -> "4"
+      | Table_5 -> "5"
+      | Table_6 -> "6"
+      | Table_9 -> "9"
+      | Table_10 -> "10"
+      | Table_11 -> "11"
+      | Table_12 -> "12"
+      | Table_13 -> "13"
+      | Table_14 -> "14"
+      | Table_15 -> "15"
+      | Table_16 -> "16"
+      | Table_21 -> "21"
+      | Table_22 -> "22"
+      | Table_23 -> "23"
+      | Table_24 -> "24"
+      | Table_25 -> "25"
+      | Table_26 -> "26"
+      | Table_27 -> "27"
+      | Table_28 -> "28"
+      | Table_29 -> "29"
+      | Table_30 -> "30"
+      | Table_31 -> "31"
+      | Table_33 -> "33"
     let describe = function
       | Table_1 -> "Standard"
       | Table_2 -> "VertebrateMitochondrial"

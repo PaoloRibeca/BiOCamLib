@@ -61,7 +61,7 @@ This should generate the executables `RC`, `Octopus`, `Parallel`, `FASTools`, `T
 ```bash
 echo GAtTaCA | RC
 ```
-would produce `TGtAaTC`. Note that non-`[ACGTacgt]` characters are output unmodified, so sequence validation and linting must be performed elsewhere whenever they are necessary.
+would produce `TGtAaTC`. The whole IUPAC nucleotide alphabet is complemented, not just `[ACGTacgt]` &mdash; an ambiguity code is mapped to the code for the complementary set, so `R` (`A`/`G`) becomes `Y` (`C`/`T`), `B` becomes `V`, and the self-complementary `S`, `W` and `N` are left alone. `U` complements to `A`. Case is always preserved. Characters outside the nucleotide alphabet, gaps included, are output unmodified, so sequence validation and linting must still be performed elsewhere whenever they are necessary.
 
 ### Command line options
 

@@ -104,6 +104,20 @@ module Annotation:
     val of_binary: ?verbose:bool -> string -> t
     val to_channel: out_channel -> t -> unit
     val of_channel: in_channel -> t
+    (* Feature sequence.  [feature_dna] stitches a feature's
+       intervals in the order they are stored, reading each one
+       on the forward strand and reverse-complementing the
+       whole result once when the feature is on the minus
+       strand.  [feature_table] is the /transl_table qualifier
+       when the feature carries one, and the reference's
+       per-sequence default otherwise.  [feature_protein] drops
+       the phase bases from the 5' end of [feature_dna] and
+       translates that with [feature_table].  All three require
+       a reference to be attached and raise when there is
+       none. *)
+    val feature_dna: t -> feature_t -> string
+    val feature_table: t -> feature_t -> Sequences.Translation.t
+    val feature_protein: t -> feature_t -> string
     (* Validation.  Each [validate_*] iterates over the
        annotation register; on every violation it calls the
        supplied [?on_violation] callback with the violating
@@ -170,6 +184,50 @@ module Annotation:
         Exception.raise __FUNCTION__ Algorithm
           (Printf.sprintf "%s: no reference set on the annotation"
              who)
+    (* Read each interval on the FORWARD strand and complement the stitched
+       result once at the end, rather than reading a minus-strand feature's
+       intervals as Reverse.  [Sequences.Reference] keeps the reverse strand in
+       its own coordinate frame, so a per-interval Reverse lookup would have to
+       flip every position as well; doing it this way keeps the coordinate
+       arithmetic in one frame throughout. *)
+    let feature_dna ann feature =
+      let r = require_reference ann "feature_dna" in
+      let name = seq_name ann feature in
+      let stitched =
+        List.map (fun (i: Sequences.Types.simple_interval_t) ->
+          let str_iv: Sequences.Types.stranded_interval_t = {
+            low = { name = Sequences.Types.Forward name; position = i.low };
+            length = i.length
+          } in
+          Sequences.Reference.get_sequence r str_iv) feature.intervals
+        |> String.concat "" in
+      match feature.strand with
+      | Some (Sequences.Types.Reverse _) -> Sequences.Lint.rc stitched
+      | _ -> stitched
+    let feature_table ann feature =
+      let r = require_reference ann "feature_table" in
+      let name = seq_name ann feature in
+      (* The reference records one table per sequence, keyed by a one-base
+         interval at the origin; a feature-level /transl_table overrides it. *)
+      let per_sequence () =
+        try
+          Sequences.Reference.get_table r {
+            low = { name = Sequences.Types.Forward name; position = 0 };
+            length = 1
+          }
+        with _ -> Sequences.Translation.Table_1 in
+      match attr_get ann feature "transl_table" with
+      | Some (n :: _) -> (try Sequences.Translation.of_string n with _ -> per_sequence ())
+      | _ -> per_sequence ()
+    let feature_protein ann feature =
+      let dna = feature_dna ann feature in
+      let phase = Option.value ~default:0 feature.phase in
+      let coding =
+        if phase >= String.length dna then ""
+        else String.sub dna phase (String.length dna - phase) in
+      Sequences.Translation.translate
+        ~replace_alternative_start_codons_with_methionine:true ~stop_on_first_stop:true
+        (feature_table ann feature) coding
     exception Validation_failed of {
       path: string;
       feature_id: string;
@@ -222,80 +280,31 @@ module Annotation:
       ) ann
     let validate_translation
         ?(on_violation = default_on_violation) ann =
-      let r = require_reference ann "validate_translation" in
+      (* Resolve the reference here rather than at the first CDS, so that an
+         annotation carrying none is reported the same way whether or not it
+         happens to contain one. *)
+      let _ = require_reference ann "validate_translation" in
+      (* GenBank carries the terminating stop in /translation for some entries
+         and omits it in others, so compare without it either way. *)
       let strip_trailing_stop s =
         let n = String.length s in
-        if n > 0 && s.[n - 1] = '*'
-        then String.sub s 0 (n - 1) else s in
+        if n > 0 && s.[n - 1] = '*' then String.sub s 0 (n - 1) else s in
       iter (fun ~path feature ->
-        let leaf = Path.leaf_category (paths ann) path in
-        if leaf = "CDS" then
+        if Path.leaf_category (paths ann) path = "CDS" then
           match attr_get ann feature "translation" with
           | None | Some [] -> ()
           | Some (claimed :: _) ->
-            let name = seq_name ann feature in
-            (* Stitch joined intervals on the forward strand,
-               reverse-complement if the feature is on the
-               minus strand, then drop [phase] bases at the
-               5' end before translating. *)
-            let stitched =
-              List.map (fun (i : Sequences.Types.simple_interval_t) ->
-                let str_iv : Sequences.Types.stranded_interval_t = {
-                  low = {
-                    name = Sequences.Types.Forward name;
-                    position = i.low
-                  };
-                  length = i.length
-                } in
-                Sequences.Reference.get_sequence r str_iv
-              ) feature.intervals
-              |> String.concat "" in
-            let stitched =
-              match feature.strand with
-              | Some Sequences.Types.Reverse _ ->
-                Sequences.Lint.rc stitched
-              | _ -> stitched in
-            let phase =
-              match feature.phase with Some n -> n | None -> 0 in
-            let coding =
-              if phase >= String.length stitched then ""
-              else String.sub stitched phase
-                     (String.length stitched - phase) in
-            (* Pick the per-feature translation table from the
-               GenBank /transl_table qualifier when present;
-               fall back to the per-sequence default. *)
-            let table =
-              match attr_get ann feature "transl_table" with
-              | Some (n :: _) ->
-                (try Sequences.Translation.of_string n
-                 with _ ->
-                   try Sequences.Reference.get_table r {
-                     low = {
-                       name = Sequences.Types.Forward name;
-                       position = 0 };
-                     length = 1 }
-                   with _ -> Sequences.Translation.Table_1)
-              | _ ->
-                try Sequences.Reference.get_table r {
-                  low = {
-                    name = Sequences.Types.Forward name;
-                    position = 0 };
-                  length = 1 }
-                with _ -> Sequences.Translation.Table_1 in
-            let computed =
-              Sequences.Translation.translate
-                ~replace_alternative_start_codons_with_methionine:true
-                ~stop_on_first_stop:true
-                table coding in
-            let claimed = strip_trailing_stop claimed in
-            if computed <> claimed then
+            let computed = feature_protein ann feature
+            and expected = strip_trailing_stop claimed in
+            if computed <> expected then
               on_violation
                 ~path:(Path.to_string (paths ann) path)
                 ~feature_id:(feature_id_of feature)
                 ~message:(Printf.sprintf
                   "CDS on %s [phase=%d, intervals=%d]: claimed translation \
                    does not match computed"
-                  name phase (List.length feature.intervals))
+                  (seq_name ann feature) (Option.value ~default:0 feature.phase)
+                  (List.length feature.intervals))
       ) ann
   end
 

@@ -175,6 +175,61 @@ let test_genbank_records () =
        | Some (_, f) -> f.A.Annotation.phase
        | None -> None))
 
+(* Feature sequence extraction.  The demo ORIGIN is
+   atgcccgggtaagcgactagcgcatcgtca, 30 bases, and the reference the GenBank
+   reader builds from it is upper-cased by the default linter. *)
+
+let test_feature_sequence () =
+  Testing.section "Feature sequence extraction" (fun () ->
+    let cds location extra =
+      genbank ([ Printf.sprintf "     CDS             %s" location ] @ extra)
+      |> A.GenBank.of_string in
+    let dna ann =
+      match feature_at ann "CDS" with
+      | Some (_, f) -> A.Annotation.feature_dna ann f
+      | None -> "(no CDS)"
+    and protein ann =
+      match feature_at ann "CDS" with
+      | Some (_, f) -> A.Annotation.feature_protein ann f
+      | None -> "(no CDS)" in
+    Testing.check_string "a forward feature yields its own bases"
+      ~expected:"ATGCCCGGGTAAGCG" (dna (cds "1..15" []));
+    (* rc is checked independently below, so using it here keeps this check
+       about the strand handling rather than about the complement table. *)
+    Testing.check_string "a reverse feature is reverse-complemented"
+      ~expected:(Sequences.Lint.rc "ACTAGCGCATCGTCA") (dna (cds "complement(16..30)" []));
+    Testing.check_string "a joined feature is stitched in interval order"
+      ~expected:"ATGCCCGGGGCGCATCGT" (dna (cds "join(1..9,20..28)" []));
+    Testing.check_string "translation stops at the first in-frame stop"
+      ~expected:"MPG" (protein (cds "1..15" []));
+    Testing.check_string "a joined CDS translates across the junction"
+      ~expected:"MPGAHR" (protein (cds "join(1..9,20..28)" []));
+    (* The table is the feature's /transl_table when it carries one.  Table 2
+       reads AGA/AGG as stops, which Table 1 does not, so the two disagree on a
+       sequence containing one. *)
+    Testing.check_string "the translation table defaults to the standard code"
+      ~expected:"1"
+      (Sequences.Translation.to_string
+         (match feature_at (cds "1..15" []) "CDS" with
+          | Some (_, f) -> A.Annotation.feature_table (cds "1..15" []) f
+          | None -> Sequences.Translation.Table_1));
+    Testing.check_string "/transl_table overrides the default"
+      ~expected:"11"
+      (let ann = cds "1..15" [ "                     /transl_table=\"11\"" ] in
+       Sequences.Translation.to_string
+         (match feature_at ann "CDS" with
+          | Some (_, f) -> A.Annotation.feature_table ann f
+          | None -> Sequences.Translation.Table_1));
+    (* Extraction needs a reference; asking without one is a programmer error,
+       not a data error, so it raises rather than returning "". *)
+    Testing.check_raises ~re:".*no reference set.*"
+      "extracting without a reference raises"
+      (fun () ->
+        let ann = A.GFF3.of_string (gff3 [ "chr1\tdemo\tgene\t1\t9\t.\t+\t.\tID=g1" ]) in
+        match feature_at ann "gene" with
+        | Some (_, f) -> A.Annotation.feature_dna ann f
+        | None -> ""))
+
 (* Attribute handling. *)
 
 let test_attributes () =
@@ -318,18 +373,35 @@ let test_extraction_prerequisites () =
     Testing.check_string "the default linter folds IUPAC codes to N"
       ~expected:"ACGTNNNN"
       (Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false "acgtrykm");
-    (* ... and rc passes non-ACGT bytes through unchanged, so simply relaxing the
-       linter is not enough: R (A/G) must become Y (C/T), not stay R.  Fixing
-       only the linter would turn honest Ns into WRONG bases on the minus
-       strand, so the two have to be fixed together. *)
-    Testing.check_string
-      ~known_bug:"Sequences.ml:87 rc_bytes complements only ACGT"
-      "reverse complement handles IUPAC ambiguity codes"
-      ~expected:"YR" (Sequences.Lint.rc "YR"))
+    (* ... and rc must complement the ambiguity codes too, or relaxing the linter
+       would turn honest Ns into WRONG bases on the minus strand: R (A/G) has to
+       become Y (C/T), not stay R.  The two therefore had to be fixed together. *)
+    Testing.check_string "reverse complement handles IUPAC ambiguity codes"
+      ~expected:"YR" (Sequences.Lint.rc "YR");
+    (* Reversed, then complemented pairwise: N D H V B K M R Y W S U T G C A
+       becomes N H D B V M K Y R W S A A C G T.  U complements to A, which is
+       why it is excluded from the involution check below. *)
+    Testing.check_string "every IUPAC code has a complement"
+      ~expected:"NHDBVMKYRWSAACGT"
+      (Sequences.Lint.rc "ACGTUSWYRMKBVHDN");
+    (* Complementing is an involution, so rc . rc is the identity.  This is the
+       check that would catch a table entry that maps two codes to the same
+       complement. *)
+    let iupac = "ACGTSWYRMKBVHDNacgtswyrmkbvhdn" in
+    Testing.check_string "reverse complement is an involution"
+      ~expected:iupac (Sequences.Lint.rc (Sequences.Lint.rc iupac));
+    Testing.check_string "case is preserved by reverse complement"
+      ~expected:"yrYR" (Sequences.Lint.rc "YRyr");
+    (* Gaps and anything outside the nucleotide alphabet are carried through, so
+       an aligned sequence can be reverse-complemented without losing its
+       columns. *)
+    Testing.check_string "gaps survive reverse complement"
+      ~expected:"C-G" (Sequences.Lint.rc "C-G"))
 
 let run () =
   test_locations ();
   test_genbank_records ();
+  test_feature_sequence ();
   test_attributes ();
   test_gff3_fidelity ();
   test_attribute_order ();
