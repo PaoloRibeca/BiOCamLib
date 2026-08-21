@@ -65,6 +65,22 @@ let to_string_via_buffer to_buffer ann =
   let buf = Buffer.create 256 in
   to_buffer buf ann;
   Buffer.contents buf
+(* Render a reference as FASTA, wrapped at the width every FASTA is wrapped at.
+   Shared by the tabular writer, which keeps the sequence in a sidecar, and by
+   the GFF3 writer, whose [##FASTA] directive appends it to the annotation. *)
+let fasta_width = 60
+let write_fasta buf reference =
+  Sequences.Reference.iter (fun ~name ~seq ~table:_ ->
+    Printf.bprintf buf ">%s\n" name;
+    let n = String.length seq in
+    let i = ref 0 in
+    while !i < n do
+      let w = min fasta_width (n - !i) in
+      Buffer.add_string buf (String.sub seq !i w);
+      Buffer.add_char buf '\n';
+      i := !i + w
+    done) reference
+
 (* Build a [to_file] from a [to_buffer]: ditto. *)
 let to_file_via_buffer to_buffer ann path =
   let oc = open_out path in
@@ -547,23 +563,32 @@ module GenBankLocation:
    * ["#"] comment lines are skipped silently;
    * everything else is a data row -- [data] is called with the
      1-based line number and the array of tab-separated fields. *)
-let iter_tsv_lines ?(pragma = fun _ -> ()) ~data s =
+let iter_tsv_lines ?(pragma = fun _ -> ()) ?(fasta = fun _ -> ()) ~data s =
   let lines = String.split_on_char '\n' s |> Array.of_list in
-  Array.iteri (fun i raw ->
-    let lnum = i + 1 in
-    let line =
-      let n = String.length raw in
-      if n > 0 && raw.[n - 1] = '\r'
-      then String.sub raw 0 (n - 1) else raw in
+  let n = Array.length lines in
+  let strip raw =
+    let m = String.length raw in
+    if m > 0 && raw.[m - 1] = '\r' then String.sub raw 0 (m - 1) else raw in
+  (* [##FASTA] is a standard GFF3 directive: it ends the annotation and says
+     the rest of the file is sequence.  So the walk stops there and hands the
+     remainder over whole, rather than trying to read FASTA as rows. *)
+  let i = ref 0 and sequence_from = ref (-1) in
+  while !i < n && !sequence_from < 0 do
+    let line = strip lines.(!i) in
+    let lnum = !i + 1 in
     if line = "" then ()
-    else if String.length line >= 2 && String.sub line 0 2 = "##"
-    then pragma (String.sub line 2 (String.length line - 2))
+    else if String.length line >= 2 && String.sub line 0 2 = "##" then begin
+      let body = String.sub line 2 (String.length line - 2) in
+      if String.trim body = "FASTA" then sequence_from := !i + 1 else pragma body
+    end
     else if line.[0] = '#' then ()
-    else
-      let fields =
-        String.split_on_char '\t' line |> Array.of_list in
-      data lnum fields
-  ) lines
+    else data lnum (String.split_on_char '\t' line |> Array.of_list);
+    incr i
+  done;
+  if !sequence_from >= 0 then
+    fasta
+      (Array.sub lines !sequence_from (n - !sequence_from)
+       |> Array.to_list |> List.map strip |> String.concat "\n")
 
 (* Add features to an annotation in DFS order, dropping the
    [ValueTable] Bloom filter every time the sequence column
@@ -744,13 +769,14 @@ module GFF3:
     } in
     { row_id = id; row_parent = parent; row_type = ftype; row_feature = feature }
   let read_rows ~seqs ~attr_keys ~values s =
-    let pragmas = ref [] and rows = ref [] in
+    let pragmas = ref [] and rows = ref [] and sequence = ref "" in
     iter_tsv_lines s
       ~pragma:(fun body -> List.accum pragmas body)
+      ~fasta:(fun body -> sequence := body)
       ~data:(fun lnum fields ->
         List.accum rows
           (lnum, parse_row ~seqs ~attr_keys ~values lnum fields));
-    List.rev !pragmas, List.rev !rows
+    List.rev !pragmas, List.rev !rows, !sequence
   (* Walk the parent-ID DAG, computing each row's full path
      from root and emitting (path, feature) pairs in DFS
      pre-order suitable for [Annotation.add].  Rows without a
@@ -822,7 +848,7 @@ module GFF3:
   let read ann_in s =
     let ann = ref ann_in in
     let hierarchy = Annotation.hierarchy !ann in
-    let pragmas, rows =
+    let pragmas, rows, sequence =
       read_rows
         ~seqs:(seqs !ann) ~attr_keys:(attr_keys !ann)
         ~values:(values !ann) s in
@@ -835,6 +861,18 @@ module GFF3:
         and v = String.sub pragma (i + 1) (String.length pragma - i - 1) in
         ann := add_metadata !ann ~key:k ~value:v
     ) pragmas;
+    (* A [##FASTA] section is the annotation's own reference.  Read it with the
+       identity linter: what the file says is what it means, and folding an
+       IUPAC code to N here would quietly change the sequence. *)
+    if sequence <> "" then begin
+      let base =
+        match Annotation.reference !ann with
+        | Some r -> r
+        | None -> Sequences.Reference.empty in
+      ann :=
+        Annotation.set_reference !ann
+          (Sequences.Reference.add_from_fasta_string ~linter:Fun.id base sequence)
+    end;
     cleanup_values !ann;
     !ann
   let read_from_file ann path = read ann (read_file path)
@@ -912,7 +950,16 @@ module GFF3:
         Buffer.add_string buf r;
         Buffer.add_char buf '\n'
       ) rows
-    ) ann
+    ) ann;
+    (* [##FASTA] is a standard GFF3 directive saying the rest of the file is
+       sequence, so a register that has a reference can carry it here rather
+       than leaving it to be supplied separately -- which is what makes a
+       GenBank record survive a trip through GFF3 whole. *)
+    (match reference ann with
+     | None -> ()
+     | Some r ->
+       Buffer.add_string buf "##FASTA\n";
+       write_fasta buf r)
   let to_string = to_string_via_buffer to_buffer
   let to_file = to_file_via_buffer to_buffer
 end
@@ -1540,11 +1587,28 @@ module GenBank:
         ) 0 feats in
       Printf.bprintf buf "LOCUS       %-16s%d bp    DNA\n"
         seq total_len;
-      StringMap.iter (fun k vs ->
-        List.iter (fun v ->
-          Printf.bprintf buf "%-12s%s\n" k v
-        ) vs
-      ) (all_metadata ann);
+      (* A sub-keyword sits in column 3 with its value in column 13, and has to
+         follow the keyword it belongs to.  The metadata map is ordered by key,
+         so ORGANISM would otherwise come out at column 1 and in alphabetical
+         position -- which is not GenBank, and is not what was read in. *)
+      let subs_of = function
+        | "SOURCE" -> [ "ORGANISM" ]
+        | "REFERENCE" -> [ "AUTHORS"; "CONSRTM"; "TITLE"; "JOURNAL"; "PUBMED"; "REMARK" ]
+        | _ -> [] in
+      let metadata = all_metadata ann in
+      let every_sub = List.concat_map subs_of [ "SOURCE"; "REFERENCE" ] in
+      let emit ~indented k =
+        match StringMap.find_opt k metadata with
+        | None -> ()
+        | Some vs ->
+          List.iter (fun v ->
+            if indented then Printf.bprintf buf "  %-10s%s\n" k v
+            else Printf.bprintf buf "%-12s%s\n" k v) vs in
+      StringMap.iter (fun k _ ->
+        if not (List.mem k every_sub) then begin
+          emit ~indented:false k;
+          List.iter (emit ~indented:true) (subs_of k)
+        end) metadata;
       Buffer.add_string buf
         "FEATURES             Location/Qualifiers\n";
       List.iter (fun (leaf, f) ->
@@ -1747,8 +1811,6 @@ module Tabular: Format_t = struct
   let attributes_suffix = ".AnnotationAttributes.txt"
   let metadata_suffix = ".AnnotationMetadata.txt"
   let reference_suffix = ".AnnotationReference.fasta"
-  (* Wrapped at the width every FASTA is wrapped at. *)
-  let fasta_width = 60
   let single_document prefix = String.length prefix >= 5 && String.sub prefix 0 5 = "/dev/"
   (* A prefix under [/dev/*] selects the one-document form, as it does for the
      binary writers.  So does an ordinary path that turns out to BE a document:
@@ -1811,19 +1873,11 @@ module Tabular: Format_t = struct
     (match reference ann with
      | None -> ()
      | Some reference ->
-       Sequences.Reference.iter (fun ~name ~seq ~table ->
+       Sequences.Reference.iter (fun ~name ~seq:_ ~table ->
          if table <> Sequences.Translation.Table_1 then
            Printf.bprintf r.r_metadata "%s\t%s\n" (table_key name)
-             (Sequences.Translation.to_string table);
-         Printf.bprintf r.r_reference ">%s\n" name;
-         let n = String.length seq in
-         let i = ref 0 in
-         while !i < n do
-           let w = min fasta_width (n - !i) in
-           Buffer.add_string r.r_reference (String.sub seq !i w);
-           Buffer.add_char r.r_reference '\n';
-           i := !i + w
-         done) reference);
+             (Sequences.Translation.to_string table)) reference;
+       write_fasta r.r_reference reference);
     Printf.bprintf r.r_metadata "%s\t%s\n" (own_key "format-version") format_version;
     Printf.bprintf r.r_metadata "%s\t%s\n" (own_key "hash-recipe") hash_recipe;
     Printf.bprintf r.r_metadata "%s\t%s\n" (own_key "hierarchy")

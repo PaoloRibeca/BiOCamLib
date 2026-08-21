@@ -90,6 +90,19 @@
     ) s;
     Buffer.contents buf
 
+  (* A GenBank SUB-keyword: ORGANISM under SOURCE, and AUTHORS, TITLE,
+     JOURNAL, PUBMED and friends under REFERENCE.  The format puts keywords in
+     column 1, sub-keywords in column 3 and continuation lines in column 13, so
+     a short indent followed by an all-capitals word is a sub-keyword and
+     anything else continues the line above.  A continuation can begin with an
+     all-capitals word too ("DNA polymerase ..."), which is why the indent has
+     to be part of the test. *)
+  let is_sub_keyword s =
+    s <> ""
+    && (let ok = ref true in
+        String.iter (fun c -> if not ((c >= 'A' && c <= 'Z') || c = '_') then ok := false) s;
+        !ok)
+
   (* Classify a non-blank line and emit the matching
      [Annotations_Parse] token.  Centralising the dispatch here
      keeps the lex rule's action a single function call. *)
@@ -111,7 +124,16 @@
         | _ -> Annotations_Parse.Gb_HEADER_LINE (key, value)
     end else
       match !genbank_mode with
-      | Gb_Headers -> Annotations_Parse.Gb_HEADER_CONT_LINE rest
+      | Gb_Headers ->
+        (* Treating EVERY indented line as a continuation folded ORGANISM into
+           SOURCE's value, and a REFERENCE's AUTHORS and TITLE into its, so a
+           record's organism came back as a run-on sentence rather than as a
+           field of its own. *)
+        let key, value = split_first_space rest in
+        if indent < 12 && is_sub_keyword key then
+          Annotations_Parse.Gb_HEADER_LINE (key, value)
+        else
+          Annotations_Parse.Gb_HEADER_CONT_LINE rest
       | Gb_Origin -> Annotations_Parse.Gb_ORIGIN_LINE (extract_origin_chars rest)
       | Gb_Features ->
         if indent <= 5 then

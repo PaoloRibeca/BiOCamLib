@@ -248,6 +248,95 @@ let test_genbank_round_trip () =
     Testing.check "a /codon_start survives the writer"
       (fun () -> count_substring "/codon_start=\"2\"" with_phase = 1))
 
+(* GenBank header structure. *)
+
+let test_genbank_headers () =
+  Testing.section "GenBank headers" (fun () ->
+    (* GenBank has three levels: a keyword in column 1, a SUB-keyword in column
+       3, and continuation lines in column 13.  Treating every indented line as
+       a continuation folded ORGANISM into SOURCE's value, so a record's
+       organism came back as part of a run-on sentence rather than as a field of
+       its own. *)
+    let ann =
+      lines [
+        "LOCUS       demo01     30 bp    DNA              circular UNK";
+        "DEFINITION  Synthetic test entry.";
+        "SOURCE      synthetic construct";
+        "  ORGANISM  synthetic construct";
+        "            other sequences; artificial sequences.";
+        "FEATURES             Location/Qualifiers";
+        "     source          1..30";
+        "//";
+        "" ]
+      |> A.GenBank.of_string in
+    Testing.check_string "SOURCE keeps only its own value"
+      ~expected:"synthetic construct"
+      (match A.Annotation.get_metadata ann "SOURCE" with v :: _ -> v | [] -> "(absent)");
+    (* The sub-keyword becomes a field in its own right.  Its own continuation
+       lines still fold into it, which is ordinary continuation behaviour --
+       GenBank's distinction between the organism name and the lineage below it
+       is not modelled by a flat metadata map. *)
+    Testing.check_string "ORGANISM becomes a field of its own"
+      ~expected:"synthetic construct other sequences; artificial sequences."
+      (match A.Annotation.get_metadata ann "ORGANISM" with v :: _ -> v | [] -> "(absent)");
+    (* Written back, a sub-keyword sits in column 3 and follows the keyword it
+       belongs to -- the metadata map is ordered by key, so without that it
+       would come out at column 1 and in alphabetical position. *)
+    let written = A.GenBank.to_string ann in
+    Testing.check "ORGANISM is written back indented, under SOURCE"
+      (fun () ->
+        let ls = String.Split.on_char_as_list '\n' written in
+        let rec after_source = function
+          | a :: b :: _ when String.length a >= 6 && String.sub a 0 6 = "SOURCE" ->
+            String.length b >= 10 && String.sub b 0 10 = "  ORGANISM"
+          | _ :: rest -> after_source rest
+          | [] -> false in
+        after_source ls);
+    Testing.check_string "the header structure is stable on a second pass"
+      ~expected:written (A.GenBank.to_string (A.GenBank.of_string written)))
+
+(* GFF3 and the sequence it can carry. *)
+
+let test_gff3_fasta () =
+  Testing.section "GFF3 ##FASTA" (fun () ->
+    (* ##FASTA is a standard GFF3 directive: it ends the annotation and says the
+       rest of the file is sequence.  Without it a GenBank record -- which is
+       self-contained -- lost its ORIGIN on the way through GFF3. *)
+    let with_seq =
+      gff3 [ "chr1\tdemo\tgene\t1\t9\t.\t+\t.\tID=g1";
+             "##FASTA";
+             ">chr1";
+             "ATGCCCGGGTAAGCG" ]
+      |> A.GFF3.of_string in
+    Testing.check_string "a ##FASTA section becomes the annotation's reference"
+      ~expected:"ATGCCCGGGTAAGCG"
+      (match A.Annotation.reference with_seq with
+       | None -> "(no reference)"
+       | Some r -> Sequences.Reference.find r (T.Forward "chr1") |> fst);
+    (* Which means extraction works straight off a GFF3 file, with no separate
+       --from-fasta. *)
+    Testing.check_string "a feature's DNA can be extracted from it"
+      ~expected:"ATGCCCGGG"
+      (match feature_at with_seq "gene" with
+       | Some (_, f) -> A.Annotation.feature_dna with_seq f
+       | None -> "(no gene)");
+    Testing.check "the writer emits ##FASTA when a reference is attached"
+      (fun () -> count_substring "##FASTA" (A.GFF3.to_string with_seq) = 1);
+    Testing.check "a register with no reference emits no ##FASTA"
+      (fun () ->
+        let plain = gff3 [ "chr1\tdemo\tgene\t1\t9\t.\t+\t.\tID=g1" ] |> A.GFF3.of_string in
+        count_substring "##FASTA" (A.GFF3.to_string plain) = 0);
+    Testing.check_string "the sequence survives a GFF3 round trip"
+      ~expected:"ATGCCCGGGTAAGCG"
+      (let back = A.GFF3.to_string with_seq |> A.GFF3.of_string in
+       match A.Annotation.reference back with
+       | None -> "(no reference)"
+       | Some r -> Sequences.Reference.find r (T.Forward "chr1") |> fst);
+    (* A row after the directive is sequence, not a feature: the walk stops
+       there rather than trying to read FASTA as tab-separated rows. *)
+    Testing.check_int "nothing after ##FASTA is read as a feature"
+      ~expected:1 (List.length (features with_seq)))
+
 (* Feature sequence extraction.  The demo ORIGIN is
    atgcccgggtaagcgactagcgcatcgtca, 30 bases, and the reference the GenBank
    reader builds from it is upper-cased by the default linter. *)
@@ -1139,6 +1228,8 @@ let run () =
   test_locations ();
   test_genbank_records ();
   test_genbank_round_trip ();
+  test_genbank_headers ();
+  test_gff3_fasta ();
   test_feature_sequence ();
   test_selection ();
   test_attributes ();
