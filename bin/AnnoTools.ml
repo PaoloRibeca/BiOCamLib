@@ -87,8 +87,8 @@ end
 
 let info = {
   Tools.Argv.name = "AnnoTools";
-  version = "1";
-  date = "09-May-2026"
+  version = "2";
+  date = "21-Aug-2026"
 } and authors = [
   "2026", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
@@ -302,11 +302,41 @@ let () =
           "'--to-*' writers and '-o' always write the whole register,";
           "because a feature whose parent is not selected would be";
           "emitted without it.  The selection is sticky, and starts";
-          "out matching everything." ];
+          "out matching everything.";
+          "";
+          "To pull every mature peptide out of a GenBank record:";
+          "  AnnoTools --from-genbank in.gb \\";
+          "            -R 'type~^mat_peptide$' \\";
+          "            --extract-protein peptides.faa";
+          "Add '-v' to see how many features each selection matched." ];
       [ "-L"; "--labels"; "--selection-from-labels" ],
         Some "<feature_id>[','...','<feature_id>]",
         [ "put into the selection register the features carrying the";
-          " specified ids" ],
+          "given identifiers.  The match is EXACT, not a regexp: for";
+          "patterns use '-R' with the 'id' field.";
+          "";
+          "A feature's identifier comes from its source format:";
+          "  GFF3     the 'ID=' attribute";
+          "  GenBank  '/locus_tag', or '/gene' when there is none";
+          "  GTF      only the gene and transcript levels, from";
+          "           'gene_id' and 'transcript_id'";
+          "";
+          "Many features have NO identifier -- a GenBank mat_peptide,";
+          "and every row of a GTF file, since there only the";
+          "synthesised gene and transcript parents get one.  '-L'";
+          "can never match those; select them with '-R' on 'type' or";
+          "'path' instead.";
+          "";
+          "'--selection-print' lists them, which is how to find out";
+          "what to pass.  Its first column is the identifier when the";
+          "feature has one and a positional stand-in of the form";
+          "'<seq>:<type>:<location>' when it does not -- the latter is";
+          "a label, not an identifier, and '-L' will not match it.";
+          "";
+          "Examples:";
+          "  -L b0011              one feature, by locus tag";
+          "  -L b0011,b0012,b0013  three of them";
+          "  -L ENSG00000141510    a GFF3 feature by its ID=" ],
         TA.Optional,
         (fun _ ->
           Selection_from_labels
@@ -314,13 +344,32 @@ let () =
           |> List.accum Parameters.program);
       [ "-R"; "--regexps"; "--selection-from-regexps" ],
         Some "<field>'~'<regexp>[','...','<field>'~'<regexp>]",
-        [ "put into the selection register the features whose fields";
-          " match the specified regexps.  All criteria must match.";
-          " A field is one of 'seq', 'path', 'type', 'source',";
-          " 'strand' or 'id', or else the name of an attribute, in";
-          " which case the criterion matches when any one of that";
-          " attribute's values does.";
-          " An empty field name makes the regexp match feature ids" ],
+        [ "put into the selection register the features whose named";
+          "fields match the given regexps.  Criteria separated by ','";
+          "must ALL match.";
+          "";
+          "<field> is one of:";
+          "  type    the feature's own category, e.g. CDS, mat_peptide";
+          "  path    its whole category chain, e.g. source->CDS";
+          "  seq     the sequence it lies on";
+          "  strand  '+', '-' or '.'";
+          "  id      its identifier ('label', and the empty field";
+          "          name, are synonyms)";
+          "  source  the provenance in GFF3 column 2";
+          "Any other name is read as an ATTRIBUTE, matching when any";
+          "one of that attribute's values does -- so 'gene~dnaA'";
+          "selects on the /gene qualifier.  Those seven names are";
+          "therefore reserved: an attribute sharing one of them";
+          "cannot be selected on.";
+          "";
+          "<regexp> is UNANCHORED, so 'type~gene' also matches";
+          "'pseudogene'.  Anchor it with '^...$' when that matters.";
+          "";
+          "Examples:";
+          "  -R 'type~^mat_peptide$'    every mature peptide";
+          "  -R 'type~^CDS$,gene~^thr'  CDSs whose /gene starts 'thr'";
+          "  -R 'seq~^chr1$'            everything on chr1";
+          "  -R '~b0011'                the feature whose id is b0011" ],
         TA.Optional,
         (fun _ ->
           Selection_from_regexps (TA.get_parameter () |> parse_regexp_selector "-R")
@@ -531,6 +580,19 @@ let () =
           (match List.rev path with leaf :: _ -> leaf | [] -> "")
           (location_of feature) in
     let iter_selected f = A.Selection.iter !current !selection f in
+    (* Under -v, say what the selection register now holds every time it
+       changes.  A selector is easy to get subtly wrong -- an unanchored regexp,
+       a field name that is silently read as an attribute -- and the first sign
+       is usually an output that is empty or far too large, by which point the
+       action that produced it has already run. *)
+    let report_selection () =
+      if !Parameters.verbose then begin
+        let matched = A.Selection.count !current !selection
+        and total = A.Selection.count !current A.Selection.All in
+        Printf.eprintf "(%s): selection matches %d of %d %s (%s)\n%!" info.Tools.Argv.name
+          matched total (String.pluralize_int "feature" total)
+          (A.Selection.to_string !selection)
+      end in
     List.iter (function
       | Empty ->
         current := A.Annotation.create A.GFF3.default_hierarchy
@@ -541,7 +603,10 @@ let () =
           (fun () ->
             A.Annotation.to_binary ~verbose:!Parameters.verbose !current prefix)
       | Annotation_op (mode, fmt, path) ->
-        read_format mode fmt path
+        read_format mode fmt path;
+        (* The selection is a criterion, not a fixed set, so what it matches
+           moves when the register does. *)
+        if !selection <> A.Selection.All then report_selection ()
       | Reference_op (mode, path) ->
         read_reference mode path
       | Set_hierarchy (fmt, s) ->
@@ -591,10 +656,10 @@ let () =
             info.Tools.Argv.name !total path;
           exit 1
         end
-      | Selection_from_labels s -> selection := A.Selection.Labels s
-      | Selection_from_regexps l -> selection := A.Selection.Regexps l
-      | Selection_negate -> selection := A.Selection.Not !selection
-      | Selection_clear -> selection := A.Selection.All
+      | Selection_from_labels s -> selection := A.Selection.Labels s; report_selection ()
+      | Selection_from_regexps l -> selection := A.Selection.Regexps l; report_selection ()
+      | Selection_negate -> selection := A.Selection.Not !selection; report_selection ()
+      | Selection_clear -> selection := A.Selection.All; report_selection ()
       | Selection_print ->
         Exception.catch_unexpected_end_of_output __FUNCTION__
           (fun () ->

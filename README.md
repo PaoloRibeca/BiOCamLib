@@ -407,7 +407,46 @@ A *selection register* sits beside the annotation register and restricts `--sele
 ```bash
 AnnoTools --from-genbank NC_000913.gb -R 'type~CDS' --selection-print
 ```
-A field is one of `seq`, `path`, `type`, `source`, `strand`, `id` or `label`; anything else is read as an attribute name, so `-R 'gene~dnaA'` selects on the `/gene` qualifier. An empty field name matches the feature's own id. Note that those names are reserved: an attribute that happens to share one of them cannot be selected on. The selection is sticky, starts out matching everything, and can be inverted with `--selection-negate` or reset with `--selection-clear`.
+A field is one of:
+
+| Field | Matches |
+|-|-|
+| `type` | the feature's own category, e.g. `CDS` or `mat_peptide` |
+| `path` | its whole category chain, e.g. `source->CDS` |
+| `seq` | the sequence it lies on |
+| `strand` | `+`, `-` or `.` |
+| `id` | its identifier (`label`, and the empty field name, are synonyms) |
+| `source` | the provenance in GFF3 column 2 |
+
+Any other name is read as an *attribute*, matching when any one of that attribute's values does &mdash; so `-R 'gene~dnaA'` selects on the `/gene` qualifier. Those names are therefore reserved: an attribute that happens to share one cannot be selected on.
+
+The regexp is **unanchored**, which is the one thing worth remembering: `type~gene` also matches `pseudogene`. Anchor it with `^...$` when that matters.
+
+So to pull every mature peptide out of a viral GenBank record:
+```bash
+AnnoTools --from-genbank NC_045512.gb -R 'type~^mat_peptide$' --extract-protein peptides.faa
+```
+and some further shapes:
+```bash
+AnnoTools ... -R 'type~^CDS$,gene~^thr'   # CDSs whose /gene starts with "thr" (criteria are ANDed)
+AnnoTools ... -R 'seq~^chr1$'             # everything on one sequence
+AnnoTools ... -R '~b0011'                 # the feature whose id is b0011
+AnnoTools ... -R 'type~^CDS$' --selection-negate   # everything that is not a CDS
+```
+
+The sibling switch `-L` selects by a feature's **identifier** instead, matching exactly rather than by pattern:
+```bash
+AnnoTools --from-genbank NC_000913.gb -L b0011,b0012 --extract-dna genes.fasta
+```
+Where that identifier comes from depends on the source format &mdash; GFF3 takes it from `ID=`, GenBank from `/locus_tag` or else `/gene`, and GTF only gives one to the gene and transcript levels, from `gene_id` and `transcript_id`. The consequence is worth knowing: **many features have no identifier at all**, including every row of a GTF file and a GenBank `mat_peptide`, and `-L` can never match those. Select them with `-R` on `type` or `path`.
+
+`--selection-print` is how you find out what to pass. Its first column is the identifier when the feature has one, and a positional stand-in of the form `<seq>:<type>:<location>` when it does not &mdash; that stand-in is a label, not an identifier, and feeding it back to `-L` matches nothing.
+
+Under `-v`, every change to the selection reports what it now matches:
+```
+(AnnoTools): selection matches 1 of 4 features (regexps {type})
+```
+which is worth having because a selector is easy to get subtly wrong &mdash; an unanchored regexp, or a field name silently read as an attribute &mdash; and the first symptom is otherwise an output that is empty or far too large, by which point the action that produced it has already run. The same line is printed after an `--annotation` read, since a selection is a criterion rather than a fixed set and what it matches moves when the register does. The selection is sticky, starts out matching everything, and can be inverted with `--selection-negate` or reset with `--selection-clear`.
 
 Given a reference, the selected features' sequences can then be written out as FASTA:
 ```bash
@@ -554,8 +593,8 @@ AnnoTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is AnnoTools version 1 [09-May-2026]
- compiled against: BiOCamLib version 506 [09-May-2026]
+This is AnnoTools version 2 [21-Aug-2026]
+ compiled against: BiOCamLib version 638 [21-Aug-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -618,8 +657,8 @@ The selection restricts `--selection-print` and the `--extract-*` actions to the
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-L`<br>`--labels`<br>`--selection-from-labels` | _feature\_id_\[`,`...`,`_feature\_id_\] |  put into the selection register the features carrying the specified ids |  |
-| `-R`<br>`--regexps`<br>`--selection-from-regexps` | _field_`~`_regexp_\[`,`...`,`_field_`~`_regexp_\] |  put into the selection register the features whose fields match the specified regexps. All criteria must match. A field is one of `seq`, `path`, `type`, `source`, `strand` or `id`, or else the name of an attribute, in which case the criterion matches when any one of that attribute's values does. An empty field name makes the regexp match feature ids |  |
+| `-L`<br>`--labels`<br>`--selection-from-labels` | _feature\_id_\[`,`...`,`_feature\_id_\] |  put into the selection register the features carrying the given identifiers, matched exactly rather than as patterns. A feature's identifier comes from `ID=` \(GFF3\), `/locus_tag` or `/gene` \(GenBank\), or `gene_id`/`transcript_id` \(GTF, gene and transcript levels only\); features with none cannot be matched this way. See above for worked examples |  |
+| `-R`<br>`--regexps`<br>`--selection-from-regexps` | _field_`~`_regexp_\[`,`...`,`_field_`~`_regexp_\] |  put into the selection register the features whose named fields match the given regexps; criteria separated by `,` must all match. A field is one of `type`, `path`, `seq`, `strand`, `id` or `source`, and any other name is read as an attribute. The regexp is unanchored, so `type~gene` also matches `pseudogene`. See above for worked examples |  |
 | `--selection-negate` |  |  negate the current selection |  |
 | `--selection-print` |  |  print the features currently selected, one per line, to standard output |  |
 | `--selection-clear` |  |  reset the selection register so that it matches everything |  |
