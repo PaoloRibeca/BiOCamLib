@@ -12,7 +12,7 @@ As a bonus, BiOCamLib comes bundled with a few programs:
 * `TREx`, which finds exact tandem repeats in all the sequences of a FASTA file. The output is a tab-separated table of repeats with their position, length, and unit, suitable for downstream filtering or annotation.
 * `Cophenetic`, which reads a Newick tree on standard input and writes the cophenetic-distance matrix between every pair of labelled nodes (leaves and internal alike) to standard output. By default the matrix carries shortest-path distances along branch lengths; an option switches to longest-path distances, which is the right convention when branch lengths encode partial quantities (e.g. allele frequencies).
 * `Yggdrasill`, which builds a phylogenetic tree from a register of weighted splits. It loads a `.PhyloSplits` file (binary or tabular), greedy-filters the splits for pairwise compatibility in order of decreasing weight, and emits a Newick tree assembled via the Buneman construction. The incompatible residual is retained for further inspection or iterative refinement, and a dropped-weight ratio is emitted to stderr as a measure of how tree-like the input split system is. This is the natural downstream tool for [KPop](https://github.com/PaoloRibeca/KPop/)'s `KPopTwistDB --splits` output.
-* `AnnoTools`, which manipulates a single in-memory genome-annotation register through a CLI-driven action stream. It can read and write GFF3, GTF, and GenBank files (round-tripping each), attach a multi-FASTA reference, validate that an annotation is consistent with the reference, and serialise the register to a compact binary `.Annotation` archive that loads orders of magnitude faster than reparsing the source.
+* `AnnoTools`, which manipulates a single in-memory genome-annotation register through a CLI-driven action stream. It can read and write GFF3, GTF, and GenBank files (round-tripping each), attach a multi-FASTA reference, validate that an annotation is consistent with the reference, select features and extract their DNA or protein sequences, and serialise the register either to a compact binary `.Annotation` archive that loads orders of magnitude faster than reparsing the source, or to a lossless set of tab-separated tables you can `diff`, `sort` and `join` with the rest of a Unix pipeline.
 
 ## Installing `RC`, `Octopus`, `Parallel`, `FASTools`, `TREx`, `Cophenetic`, `Yggdrasill`, and `AnnoTools`
 
@@ -361,6 +361,41 @@ loads the annotation, attaches the matching reference, and runs every consistenc
 
 Switch `--validate` is the catch-all that runs all three; the individual `--validate-...` switches let you run them selectively. Each of these stops at the first violation, prints a two-line message pointing the user at `--validate-report`, and exits non-zero. For a complete enumeration, use the sibling `--validate-report <file>` action: it walks the whole register, writes one tab-separated row per violation (`check`, `path`, `feature_id`, `message`) to `<file>`, and exits non-zero only if at least one violation was found.
 
+### The tabular format
+
+Alongside GFF3, GTF and GenBank, `AnnoTools` reads and writes a tabular format that is the register's *text twin*: it holds everything the binary `.Annotation` archive holds, but as plain tab-separated tables you can `diff`, `grep`, `sort` and `join`. It exists because GFF3 &mdash; the obvious candidate, being already a TSV &mdash; provably cannot round-trip a register: it splits a joined feature across rows and never writes the identity that would let you rejoin them, it has no way to spell a valueless qualifier such as GenBank's `/pseudo`, and its column-9 mini-syntax has to be re-parsed before you can `cut` anything out of it.
+
+Writing takes a *prefix* and produces three tables:
+```bash
+AnnoTools --from-genbank NC_000913.gb --to-tsv NC_000913
+```
+```
+NC_000913.AnnotationFeatures.txt     id parent seq path feature_id source score strand phase intervals
+NC_000913.AnnotationAttributes.txt   id key value
+NC_000913.AnnotationMetadata.txt     key value
+```
+None of them contains a nested syntax, and every one has a fixed number of columns, so `cat`ting two together is meaningful and adding a feature with a novel attribute key does not reshape any other row. Attributes live in their own relation rather than packed into a column, which is what lets a multi-valued attribute be several rows and a valueless one be a row with an empty third field. The metadata table carries the hierarchy the annotation was read under, plus any file-level pragmas, so a register written this way can be read back without being told its schema again.
+
+A feature's `id` is a content hash &mdash; 64-bit FNV-1a over its identity, chained through its parent &mdash; not a row number. It is therefore stable when features are inserted, and independent of row order: the `parent` column is what rebuilds the forest, so either table can be sorted and still `join`ed on the `id`. Chaining through the parent is what keeps the identical exons that alternative transcripts share distinguishable.
+
+Reading takes the same prefix:
+```bash
+AnnoTools --from-tsv NC_000913 --to-genbank round-tripped.gb
+```
+For pipelines, a prefix under `/dev/*` &mdash; or a plain file that turns out to be one &mdash; selects a single-document form in which the three tables are introduced by `#!features`, `#!attributes` and `#!metadata` banners, so `--to-tsv /dev/stdout` composes with the rest of a shell pipeline. Note that the reference sequence is *not* part of the format, exactly as it is not part of GFF3: supply it with `--from-fasta` when you need one.
+
+### Submitting an annotation
+
+`--to tbl` writes an [NCBI submission feature table](https://www.ncbi.nlm.nih.gov/genbank/feature_table/), the `.tbl` that `table2asn` consumes:
+```bash
+AnnoTools --from-genbank NC_000913.gb --to-tbl NC_000913.tbl
+```
+This format is *write-only*, and deliberately so rather than by omission: it has no slot for GFF3's source column, no parent link and no annotation metadata, and `table2asn` **infers** the gene/mRNA/CDS relations from coordinate overlap and shared identifiers instead of reading them. Inference is not encoding, so nothing can be recovered from one &mdash; which is why there is no `--from-tbl`, and why the type system rather than a runtime error is what tells you so.
+
+It is also not a substitute for the tabular format above: a `.tbl` is a stanza format wearing a TSV costume &mdash; a block header, coordinate lines, and tab-indented qualifier continuation lines &mdash; so a feature's `locus_tag` sits several lines away from its coordinates and `awk` cannot operate on it per record. The two formats exist for different jobs.
+
+One limitation worth stating plainly: a *filtered* tabular table does not read back. `Annotation.add` requires a feature's parent to be present, so `grep CDS` over the features table produces a file whose parents are missing and which is refused. Sorting is fine; filtering is not.
+
 ### Selecting features and extracting their sequences
 
 A *selection register* sits beside the annotation register and restricts every subsequent output action to the features it matches &mdash; the same pattern, and the same switch names, that [`KPopCountDB`](https://github.com/PaoloRibeca/KPop/) uses to select spectra. A selection is expressed as a comma-separated list of `<field>~<regexp>` criteria, all of which must match:
@@ -551,6 +586,7 @@ Long form: action mode + format + path. Short forms `--from-gff3`, `--from-gtf`,
 | `--from-gff3` | _file_ |  shorthand for `--annotation replace gff3 <file>` |  |
 | `--from-gtf` | _file_ |  shorthand for `--annotation replace gtf <file>` |  |
 | `--from-genbank` | _file_ |  shorthand for `--annotation replace genbank <file>` |  |
+| `--from-tsv`<br>`--from-tabular` | _file\_or\_prefix_ |  shorthand for `--annotation replace tsv <file_or_prefix>`; reads the three `.Annotation*.txt` tables written from the given prefix |  |
 
 *Reference (multi-FASTA) input.*
 Long form takes the same mode keyword as `--annotation`. Short form `--from-fasta` defaults to `replace`.
@@ -596,10 +632,12 @@ Emit the sequence denoted by each selected feature as FASTA. A feature's interva
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `--to` | `gff3`&#124;`gtf`&#124;`genbank` _file_ |  write the register to _file_ in the named format |  |
+| `--to` | `gff3`&#124;`gtf`&#124;`genbank`&#124;`tsv`&#124;`tbl` _file\_or\_prefix_ |  write the register to _file\_or\_prefix_ in the named format. `tbl` is NCBI's submission feature table, which is write\-only |  |
 | `--to-gff3` | _file_ |  shorthand for `--to gff3 <file>` |  |
 | `--to-gtf` | _file_ |  shorthand for `--to gtf <file>` |  |
 | `--to-genbank` | _file_ |  shorthand for `--to genbank <file>` |  |
+| `--to-tsv`<br>`--to-tabular` | _file\_or\_prefix_ |  shorthand for `--to tsv <file_or_prefix>`; writes the three `.Annotation*.txt` tables from the given prefix |  |
+| `--to-tbl`<br>`--to-feature-table` | _file_ |  shorthand for `--to tbl <file>`; writes an NCBI submission feature table |  |
 
 **Miscellaneous options.**
 They are set immediately.

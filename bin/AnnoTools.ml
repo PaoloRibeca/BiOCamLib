@@ -62,7 +62,7 @@ type to_do_t =
   | Annotation_op of Mode.t * A.Format.t * string
   | Reference_op of Mode.t * string
   | Set_hierarchy of A.Format.t * string
-  | To_format of A.Format.t * string
+  | To_format of A.Writer.t * string
   | Validate_sequences_present
   | Validate_feature_bounds
   | Validate_translation
@@ -113,6 +113,19 @@ let () =
         end;
         List.nth res 0, List.nth res 1 |> Str.regexp)
         (String.Split.on_char_as_list ',' s) in
+    (* The tabular format carries the hierarchy it was written under, so pinning
+       one for it would either be ignored or would install a default over a file
+       that brought its own.  Refuse rather than accept a switch that does
+       nothing. *)
+    let overridable option fmt =
+      if fmt = A.Format.Tabular then begin
+        TA.usage ();
+        Printf.sprintf
+          "Option '%s': format '%s' carries its own hierarchy, so an override is meaningless"
+          option (A.Format.to_string fmt)
+        |> TA.parse_error
+      end;
+      fmt in
     TA.parse [
       TA.make_separator_multiline
         [ "Actions.";
@@ -154,7 +167,7 @@ let () =
           " in the named format" ],
         TA.Optional,
         (fun _ ->
-          let fmt = TA.get_parameter () |> A.Format.of_string in
+          let fmt = TA.get_parameter () |> A.Format.of_string |> overridable "--hierarchy" in
           let s = TA.get_parameter () in
           Set_hierarchy (fmt, s) |> List.accum Parameters.program);
       [ "--dialect" ],
@@ -165,7 +178,7 @@ let () =
           " 'gencode')." ],
         TA.Optional,
         (fun _ ->
-          let fmt = TA.get_parameter () |> A.Format.of_string in
+          let fmt = TA.get_parameter () |> A.Format.of_string |> overridable "--dialect" in
           let h = TA.get_parameter () |> A.Format.dialect_of fmt in
           Set_hierarchy (fmt, A.Hierarchy.to_string h)
           |> List.accum Parameters.program);
@@ -176,7 +189,7 @@ let () =
           "Short forms: '--from-gff3', '--from-gtf', '--from-genbank'";
           "default to 'replace'." ];
       [ "-a"; "--annotation" ],
-        Some "<replace|add> <gff3|gtf|genbank> <file>",
+        Some "<replace|add> <gff3|gtf|genbank|tsv> <file_or_prefix>",
         [ "merge or replace the register from <file> in the named";
           " format.  When the format is GenBank and the input";
           " carries an ORIGIN section, the reference sequence is";
@@ -200,6 +213,13 @@ let () =
         TA.Optional,
         (fun _ ->
           Annotation_op (Mode.Replace, A.Format.GTF, TA.get_parameter ())
+          |> List.accum Parameters.program);
+      [ "--from-tsv"; "--from-tabular" ],
+        Some "<file_or_prefix>",
+        [ "shorthand for '--annotation replace tsv <file_or_prefix>'" ],
+        TA.Optional,
+        (fun _ ->
+          Annotation_op (Mode.Replace, A.Format.Tabular, TA.get_parameter ())
           |> List.accum Parameters.program);
       [ "--from-genbank" ],
         Some "<file>",
@@ -359,11 +379,14 @@ let () =
         [ "";
           "Annotation output." ];
       [ "--to" ],
-        Some "<gff3|gtf|genbank> <file>",
-        [ "write the register to <file> in the named format" ],
+        Some "<gff3|gtf|genbank|tsv|tbl> <file_or_prefix>",
+        [ "write the register to <file_or_prefix> in the named format.";
+          " 'tbl' is NCBI's submission feature table, which is";
+          " write-only: it encodes no hierarchy and no metadata, so";
+          " nothing can be read back from it" ],
         TA.Optional,
         (fun _ ->
-          let fmt = TA.get_parameter () |> A.Format.of_string in
+          let fmt = TA.get_parameter () |> A.Writer.of_string in
           let p = TA.get_parameter () in
           To_format (fmt, p) |> List.accum Parameters.program);
       [ "--to-gff3" ],
@@ -371,21 +394,35 @@ let () =
         [ "shorthand for '--to gff3 <file>'" ],
         TA.Optional,
         (fun _ ->
-          To_format (A.Format.GFF3, TA.get_parameter ())
+          To_format (A.Writer.Format A.Format.GFF3, TA.get_parameter ())
           |> List.accum Parameters.program);
       [ "--to-gtf" ],
         Some "<file>",
         [ "shorthand for '--to gtf <file>'" ],
         TA.Optional,
         (fun _ ->
-          To_format (A.Format.GTF, TA.get_parameter ())
+          To_format (A.Writer.Format A.Format.GTF, TA.get_parameter ())
+          |> List.accum Parameters.program);
+      [ "--to-tsv"; "--to-tabular" ],
+        Some "<file_or_prefix>",
+        [ "shorthand for '--to tsv <file_or_prefix>'" ],
+        TA.Optional,
+        (fun _ ->
+          To_format (A.Writer.Format A.Format.Tabular, TA.get_parameter ())
+          |> List.accum Parameters.program);
+      [ "--to-tbl"; "--to-feature-table" ],
+        Some "<file>",
+        [ "shorthand for '--to tbl <file>'" ],
+        TA.Optional,
+        (fun _ ->
+          To_format (A.Writer.Tbl, TA.get_parameter ())
           |> List.accum Parameters.program);
       [ "--to-genbank" ],
         Some "<file>",
         [ "shorthand for '--to genbank <file>'" ],
         TA.Optional,
         (fun _ ->
-          To_format (A.Format.GenBank, TA.get_parameter ())
+          To_format (A.Writer.Format A.Format.GenBank, TA.get_parameter ())
           |> List.accum Parameters.program);
       TA.make_separator_multiline
         [ "Miscellaneous options."; "They are set immediately." ];
@@ -510,7 +547,7 @@ let () =
       | To_format (fmt, path) ->
         Exception.catch_unexpected_end_of_output __FUNCTION__
           (fun () ->
-            let module F = (val A.Format.module_of fmt) in
+            let module F = (val A.Writer.module_of fmt) in
             F.to_file !current path)
       | Validate_sequences_present ->
         A.Annotation.validate_sequences_present !current

@@ -537,6 +537,243 @@ let test_attribute_order () =
           |> A.GenBank.of_string in
         keys_of (build ()) = keys_of (build ())))
 
+(* The tabular format. *)
+
+(* Reverse the DATA rows of one [#!] section of a tabular document, leaving its
+   banner and header row where they are.  Used to show that row order carries no
+   meaning: the parent column is what rebuilds the forest. *)
+let reverse_section wanted doc =
+  let section = ref "" and header_seen = ref false and out = ref [] and held = ref [] in
+  let release () =
+    List.iter (fun l -> List.accum out l) !held;
+    held := [] in
+  List.iter (fun line ->
+    let is_banner = String.length line > 2 && String.sub line 0 2 = "#!" in
+    if is_banner then begin
+      release ();
+      section := (match String.Split.on_char_as_list ' ' (String.sub line 2 (String.length line - 2)) with
+                  | n :: _ -> n
+                  | [] -> "");
+      header_seen := false;
+      List.accum out line
+    end else if !section = wanted && line <> "" then begin
+      if not !header_seen then begin
+        header_seen := true;
+        List.accum out line
+      end else
+        (* Accumulated in reverse, then released in that order. *)
+        held := line :: !held
+    end else begin
+      release ();
+      List.accum out line
+    end) (String.Split.on_char_as_list '\n' doc);
+  release ();
+  List.rev !out |> String.concat "\n"
+
+let test_tabular () =
+  Testing.section "Tabular format" (fun () ->
+    let describe ann =
+      (* A canonical summary of everything a feature carries, so that a round
+         trip is compared on content rather than on byte-identical output. *)
+      let acc = ref [] in
+      A.Annotation.iter_paths (fun ~path f ->
+        let attrs = ref [] in
+        A.Annotation.attr_iter ann (fun k vs -> List.accum attrs (k ^ "=" ^ String.concat "," vs)) f;
+        List.accum acc
+          (Printf.sprintf "%s|%s|%s|%s|%s|%s|%s"
+             (A.Annotation.path_to_string path) (A.Annotation.seq_name ann f)
+             (List.map (fun (i: T.simple_interval_t) ->
+                Printf.sprintf "%d+%d" i.low i.length) f.A.Annotation.intervals
+              |> String.concat ",")
+             (match f.A.Annotation.strand with
+              | Some (T.Forward _) -> "+" | Some (T.Reverse _) -> "-" | None -> ".")
+             (match f.A.Annotation.phase with Some n -> string_of_int n | None -> ".")
+             (match f.A.Annotation.score with Some s -> string_of_float s | None -> ".")
+             (List.sort compare !attrs |> String.concat ";"))) ann;
+      List.rev !acc |> String.concat "\n" in
+    let round_trip ann = A.Tabular.to_string ann |> A.Tabular.of_string in
+    let check_round_trip name ann =
+      Testing.check_string (Printf.sprintf "%s survives a tabular round trip" name)
+        ~expected:(describe ann) (describe (round_trip ann));
+      Testing.check_string (Printf.sprintf "%s renders identically on a second pass" name)
+        ~expected:(A.Tabular.to_string ann) (A.Tabular.to_string (round_trip ann)) in
+    let gb =
+      genbank [
+        "     gene            1..15";
+        "                     /gene=\"abcA\"";
+        "                     /locus_tag=\"DEMO_0001\"";
+        "     CDS             join(1..9,20..28)";
+        "                     /gene=\"abcA\"";
+        "                     /codon_start=\"2\"";
+        "                     /product=\"hypothetical protein, putative\"";
+        "     misc_feature    10^11";
+        "                     /note=\"insertion site\"" ]
+      |> A.GenBank.of_string in
+    check_round_trip "a GenBank register" gb;
+    let gf =
+      gff3 [
+        "chr1\tdemo\tgene\t100\t500\t42.5\t+\t.\tID=gene1;Name=ABC1";
+        "chr1\tdemo\tmRNA\t100\t500\t.\t+\t.\tID=mRNA1;Parent=gene1";
+        "chr1\tdemo\texon\t100\t200\t.\t+\t.\tID=ex1;Parent=mRNA1";
+        "chr1\tdemo\tCDS\t150\t200\t.\t+\t0\tID=cds1;Parent=mRNA1" ]
+      |> A.GFF3.of_string in
+    check_round_trip "a GFF3 register" gf;
+    (* The three things GFF3's column 9 cannot express, which is most of why
+       this format exists. *)
+    let awkward =
+      gff3 [ "chr1\tdemo\tgene\t100\t500\t.\t+\t.\t\
+              ID=g1;Note=alpha%2Cbeta;multi=a,b,c;pseudo=;dot=%2E" ]
+      |> A.GFF3.of_string in
+    check_round_trip "values a packed column cannot hold" awkward;
+    Testing.check_string "a multi-valued attribute stays multi-valued"
+      ~expected:"a,b,c"
+      (let back = round_trip awkward in
+       match feature_at back "gene" with
+       | Some (_, f) ->
+         (match A.Annotation.attr_get back f "multi" with
+          | Some vs -> String.concat "," vs
+          | None -> "(absent)")
+       | None -> "(no gene)");
+    Testing.check_string "a value that is a bare dot is not read as absent"
+      ~expected:"."
+      (let back = round_trip awkward in
+       match feature_at back "gene" with
+       | Some (_, f) ->
+         (match A.Annotation.attr_get back f "dot" with
+          | Some (v :: _) -> v
+          | _ -> "(absent)")
+       | None -> "(no gene)");
+    (* The hierarchy travels in the metadata table, so a register read back does
+       not need it supplied again -- without that the format would be convenient
+       rather than lossless. *)
+    Testing.check_string "the hierarchy travels with the data"
+      ~expected:(A.Hierarchy.to_string (A.Annotation.hierarchy gb))
+      (A.Hierarchy.to_string (A.Annotation.hierarchy (round_trip gb)));
+    Testing.check_string "annotation metadata travels with the data"
+      ~expected:"Synthetic test entry."
+      (match A.Annotation.get_metadata (round_trip gb) "DEFINITION" with
+       | v :: _ -> v
+       | [] -> "(absent)");
+    (* Identity is chained through the parent, so two identical exons under two
+       different transcripts are distinguishable -- the case that makes a hash
+       of the feature alone insufficient, and that GENCODE hits constantly. *)
+    let shared =
+      gff3 [
+        "chr1\tdemo\tgene\t100\t500\t.\t+\t.\tID=g1";
+        "chr1\tdemo\tmRNA\t100\t500\t.\t+\t.\tID=t1;Parent=g1";
+        "chr1\tdemo\texon\t100\t200\t.\t+\t.\tID=e1;Parent=t1";
+        "chr1\tdemo\tmRNA\t100\t500\t.\t+\t.\tID=t2;Parent=g1";
+        "chr1\tdemo\texon\t100\t200\t.\t+\t.\tID=e2;Parent=t2" ]
+      |> A.GFF3.of_string in
+    Testing.check "identical exons under different transcripts get different ids"
+      (fun () ->
+        let ids =
+          String.Split.on_char_as_list '\n' (A.Tabular.to_string shared)
+          |> List.filter_map (fun l ->
+            match String.Split.on_char_as_list '\t' l with
+            | id :: _ :: _ :: path :: _ when path = "gene->mRNA->exon" -> Some id
+            | _ -> None) in
+        List.length ids = 2 && List.nth ids 0 <> List.nth ids 1);
+    check_round_trip "a register with shared exons" shared;
+    (* Row order carries no meaning: the parent column is what rebuilds the
+       forest, so either file may be sorted and still read back. *)
+    (* Reordering the rows reorders the siblings that come back -- the forest is
+       rebuilt from the parent links, and nothing records which sibling came
+       first -- so the claim being checked is that the same features return, not
+       that they return in the same order. *)
+    let as_set d = String.Split.on_char_as_list '\n' d |> List.sort compare |> String.concat "\n" in
+    Testing.check_string "the features table may be reordered"
+      ~expected:(as_set (describe shared))
+      (as_set
+         (describe (A.Tabular.of_string (reverse_section "features" (A.Tabular.to_string shared)))));
+    Testing.check_string "the attributes table may be reordered"
+      ~expected:(describe shared)
+      (describe
+         (A.Tabular.of_string (reverse_section "attributes" (A.Tabular.to_string shared))));
+    (* A malformed table is refused rather than half-read. *)
+    Testing.check_raises ~re:".*expected header.*"
+      "a table with the wrong header is refused"
+      (fun () ->
+        A.Tabular.of_string
+          "#!metadata\nkey\tvalue\n#!features\nwrong\theader\n#!attributes\nid\tkey\tvalue\n");
+    Testing.check_raises ~re:".*has no .* section.*"
+      "a document missing a section is refused"
+      (fun () -> A.Tabular.of_string "#!metadata\nkey\tvalue\n");
+    (* The feature's own identifier is not always derivable from an attribute --
+       the GenBank reader names a record's source feature after its LOCUS -- so
+       it needs a column of its own.  Without one it was silently dropped, and
+       the second render disagreed with the first. *)
+    Testing.check_string "a feature id that is in no attribute still survives"
+      ~expected:"demo01"
+      (let back = round_trip gb in
+       match List.nth_opt (features back) 0 with
+       | Some (_, f) -> Option.value ~default:"(none)" f.A.Annotation.id
+       | None -> "(no features)"))
+
+(* The NCBI submission feature table. *)
+
+let test_feature_table () =
+  Testing.section "NCBI feature table" (fun () ->
+    let tbl feature_lines = genbank feature_lines |> A.GenBank.of_string |> A.Tbl.to_string in
+    let lines_of s =
+      String.Split.on_char_as_list '\n' s |> List.filter (fun l -> l <> "") in
+    let coordinate_lines s =
+      lines_of s |> List.filter (fun l -> String.length l > 0 && l.[0] <> '\t' && l.[0] <> '>') in
+    Testing.check_string "the block header names the sequence"
+      ~expected:">Feature demo01"
+      (match lines_of (tbl [ "     CDS             1..15" ]) with
+       | first :: _ -> first
+       | [] -> "(empty)");
+    Testing.check_string "a forward feature is written low then high"
+      ~expected:"1\t15\tCDS"
+      (match coordinate_lines (tbl [ "     CDS             1..15" ]) with
+       | _source :: cds :: _ -> cds
+       | _ -> "(missing)");
+    (* There is no strand column: the minus strand IS the inverted range. *)
+    Testing.check_string "a reverse feature is written high then low"
+      ~expected:"30\t16\tCDS"
+      (match coordinate_lines (tbl [ "     CDS             complement(16..30)" ]) with
+       | _source :: cds :: _ -> cds
+       | _ -> "(missing)");
+    Testing.check_string "extra intervals are bare coordinate lines"
+      ~expected:"1\t9\tCDS|20\t28"
+      (match coordinate_lines (tbl [ "     CDS             join(1..9,20..28)" ]) with
+       | _source :: a :: b :: _ -> a ^ "|" ^ b
+       | _ -> "(missing)");
+    (* Intervals run 5' to 3' along the FEATURE, so a minus-strand join lists
+       them in the reverse of the genomic order they are stored in. *)
+    Testing.check_string "a reverse join lists its intervals in feature order"
+      ~expected:"28\t20\tCDS|9\t1"
+      (match coordinate_lines (tbl [ "     CDS             complement(join(1..9,20..28))" ]) with
+       | _source :: a :: b :: _ -> a ^ "|" ^ b
+       | _ -> "(missing)");
+    Testing.check "a qualifier line carries three empty leading columns"
+      (fun () ->
+        lines_of (tbl [ "     CDS             1..15"; "                     /gene=\"abcA\"" ])
+        |> List.exists (fun l -> l = "\t\t\tgene\tabcA"));
+    (* A valueless qualifier simply omits the fifth column, which is how a
+       feature table says "present, no value". *)
+    Testing.check "a valueless qualifier omits its value column"
+      (fun () ->
+        lines_of (tbl [ "     CDS             1..15"; "                     /pseudo=\"\"" ])
+        |> List.exists (fun l -> l = "\t\t\tpseudo"));
+    (* /codon_start is the only slot a feature table has for a phase, so a phase
+       that arrived in a GFF3 column has to be rendered as one. *)
+    Testing.check "a phase with no /codon_start is written as one"
+      (fun () ->
+        let from_gff3 =
+          gff3 [ "chr1\tdemo\tgene\t100\t500\t.\t+\t.\tID=g1";
+                 "chr1\tdemo\tmRNA\t100\t500\t.\t+\t.\tID=t1;Parent=g1";
+                 "chr1\tdemo\tCDS\t100\t500\t.\t+\t2\tID=c1;Parent=t1" ]
+          |> A.GFF3.of_string |> A.Tbl.to_string in
+        lines_of from_gff3 |> List.exists (fun l -> l = "\t\t\tcodon_start\t3"));
+    (* A zero-length site has no spelling here at all, and quietly widening it
+       to one base would be a submission that says something the annotation did
+       not. *)
+    Testing.check_raises ~re:".*zero-length.*"
+      "a zero-length feature is refused rather than widened"
+      (fun () -> tbl [ "     misc_feature    10^11" ]))
+
 (* Insertion invariants.  These are not defects -- they are the contract a
    tabular reader has to satisfy, pinned so that a change to it is deliberate. *)
 
@@ -612,5 +849,7 @@ let run () =
   test_attributes ();
   test_gff3_fidelity ();
   test_attribute_order ();
+  test_tabular ();
+  test_feature_table ();
   test_add_invariants ();
   test_extraction_prerequisites ()
