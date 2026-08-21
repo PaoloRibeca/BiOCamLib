@@ -146,7 +146,9 @@ module Annotation:
 = struct
     include Annotations_Base.Annotation
     (* *)
-    let archive_version = "2026-05-09"
+    (* Bumped when [feature_t] gained its [score] slot: an archive written
+       before that cannot be unmarshalled into the current record. *)
+    let archive_version = "2026-08-21"
     let make_filename_binary = function
       | w when String.length w >= 5 && String.sub w 0 5 = "/dev/" -> w
       | prefix -> prefix ^ ".Annotation"
@@ -384,13 +386,37 @@ let phase_of_field = function
     Exception.raise __FUNCTION__ IO_Format
       (Printf.sprintf "Invalid phase %S" s)
 
+(* Column 6 of GFF3 and GTF.  [.] is "no score", which is not the same as a
+   score of zero, hence the option. *)
+let score_of_field = function
+  | "." | "" -> None
+  | s ->
+    (match float_of_string_opt s with
+     | Some f -> Some f
+     | None ->
+       Exception.raise __FUNCTION__ IO_Format
+         (Printf.sprintf "Invalid score %S" s))
+(* Written back with %.12g, which is enough to carry every float a reader is
+   likely to have produced without printing 17 digits for a round number. *)
+let field_of_score = function
+  | None -> "."
+  | Some f -> Printf.sprintf "%.12g" f
+
 (* GFF3/GTF ranges are 1-based inclusive in the source; the
    AST stores 0-based half-open. *)
 let interval_of_1_based ~lo ~hi : Sequences.Types.simple_interval_t =
-  if hi < lo then
-    Exception.raise __FUNCTION__ IO_Format
-      (Printf.sprintf "Invalid interval (lo=%d, hi=%d)" lo hi);
-  { low = lo - 1; length = hi - lo + 1 }
+  (* [hi = lo - 1] is the one legal inversion: it is how a zero-length site --
+     the position between two consecutive bases, GenBank's [lo^hi] -- comes back
+     from a format that has only a 1-based inclusive pair to spell it with.  It
+     denotes the 0-based half-open interval [lo - 1, lo - 1), which is exactly
+     what [GenBankLocation.intervals] stores for [Between]. *)
+  if hi = lo - 1 then { low = lo - 1; length = 0 }
+  else begin
+    if hi < lo then
+      Exception.raise __FUNCTION__ IO_Format
+        (Printf.sprintf "Invalid interval (lo=%d, hi=%d)" lo hi);
+    { low = lo - 1; length = hi - lo + 1 }
+  end
 
 (* Extended [GenBankLocation]: the base AST module from
    [Annotations_Base] plus the LOCATION-string parser
@@ -433,10 +459,21 @@ module GenBankLocation:
           walk flipped seq inner
         | Join parts
         | Order parts ->
-          let acc = ref [] and st = ref strand in
+          (* Every part is resolved under the strand in force at this level, and
+             the parts have to agree.  A feature carries ONE strand, so a
+             mixed-strand join -- legal INSDC, and how trans-splicing is spelled
+             -- cannot be represented here.  Refusing it is the point: the
+             previous version kept whichever strand came last, which silently
+             reverse-complemented the parts that disagreed with it. *)
+          let acc = ref [] and st = ref strand and seen = ref false in
           List.iter (fun p ->
             let pieces, s = walk strand seq p in
+            if !seen && s <> !st then
+              Exception.raise __FUNCTION__ IO_Format
+                "Mixed-strand join/order is not representable: a feature carries a \
+                 single strand, so its parts must all lie on the same one";
             st := s;
+            seen := true;
             acc := !acc @ pieces) parts;
           !acc, !st
         | Remote (acc_name, _, inner) ->
@@ -489,10 +526,17 @@ let add_dfs_with_seq_bloom ann_ref features =
     ann_ref := Annotation.add !ann_ref ~path feature
   ) features
 
-(* Walk every attribute pair on [feature] in source order,
-   resolving each value array back to its [string list] form.
-   Format-specific writers thread the result through their own
-   per-pair formatters. *)
+(* Walk every attribute pair on [feature], resolving each value array back to
+   its [string list] form.  Format-specific writers thread the result through
+   their own per-pair formatters.
+   The order is NOT the order the keys appeared in the source, whatever an
+   earlier version of this comment claimed.  [AttrMap] is keyed by the integer
+   [AttrKey] id, and ids are handed out on first intern across the whole
+   annotation, so what comes out is global first-intern order -- which, because
+   the GenBank reader folds a [StringMap] to build each feature's qualifiers, is
+   near enough alphabetical.  Preserving true per-feature source order would
+   take a list rather than a map.  A format that needs a stable, predictable
+   order must therefore sort explicitly rather than rely on this. *)
 let attribute_pairs ann feature =
   let pairs = ref [] in
   Annotation.attr_iter ann (fun k vs ->
@@ -599,6 +643,7 @@ module GFF3:
     and ftype = fields.(2)
     and lo = int_of_string fields.(3)
     and hi = int_of_string fields.(4)
+    and score = score_of_field fields.(5)
     and strand = strand_of_field fields.(6)
     and phase = phase_of_field fields.(7)
     and attrs = parse_attributes fields.(8) in
@@ -623,6 +668,7 @@ module GFF3:
       seq;
       source;
       intervals = [ interval_of_1_based ~lo ~hi ];
+      score;
       strand;
       phase;
       id;
@@ -732,10 +778,19 @@ module GFF3:
      feature's [seq] / [intervals] / etc., and the
      path-leaf as the type column.  Multi-interval features
      emit one row per interval sharing the [ID]. *)
+  (* The bytes that carry structure in column 9.  The lexer percent-decodes on
+     the way in, so the writer has to percent-encode on the way out, or a value
+     containing one of them changes meaning on the next read: a comma splits it
+     into two values, a semicolon into two attributes.
+     Space is in the set although GFF3 permits it unencoded, because this
+     lexer treats a space as a token separator: encoding it is what makes
+     [product=hypothetical protein] survive being written and read again. *)
+  let column_9_reserved = ";=&, "
   let attribute_string ann feature =
+    let encode = Annotations_Lex.url_encode ~reserved:column_9_reserved in
     let s =
       attribute_pairs ann feature
-      |> List.map (fun (k, vs) -> k ^ "=" ^ String.concat "," vs)
+      |> List.map (fun (k, vs) -> encode k ^ "=" ^ (List.map encode vs |> String.concat ","))
       |> String.concat ";" in
     (* Column 9 is mandatory in GFF3 and uses [.] as the
        attribute-less placeholder; an empty string is not
@@ -747,7 +802,7 @@ module GFF3:
     and src =
       match feature_source ann feature with
       | Some s -> s | None -> "."
-    and score = "."
+    and score = field_of_score feature.score
     and strand =
       match feature.strand with
       | Some Sequences.Types.Forward _ -> "+"
@@ -803,6 +858,7 @@ module GTF: Format_t = struct
     gtf_type: string;
     gtf_lo: int;
     gtf_hi: int;
+    gtf_score: float option;
     gtf_strand: Sequences.Types.strand_t option;
     gtf_phase: int option;
     gtf_attrs: string list StringMap.t;
@@ -832,6 +888,7 @@ module GTF: Format_t = struct
       gtf_type = fields.(2);
       gtf_lo = int_of_string fields.(3);
       gtf_hi = int_of_string fields.(4);
+      gtf_score = score_of_field fields.(5);
       gtf_strand = strand_of_field fields.(6);
       gtf_phase = phase_of_field fields.(7);
       gtf_attrs = attr_map;
@@ -863,6 +920,7 @@ module GTF: Format_t = struct
       source = intern_source_field values r.gtf_source;
       intervals =
         [ interval_of_1_based ~lo:r.gtf_lo ~hi:r.gtf_hi ];
+      score = r.gtf_score;
       strand = r.gtf_strand;
       phase = r.gtf_phase;
       id = None;
@@ -879,6 +937,9 @@ module GTF: Format_t = struct
       seq = Seq.intern seqs seq;
       source = intern_source_field values source;
       intervals = [ interval_of_1_based ~lo ~hi ];
+      (* A synthesised parent has no score of its own: GTF gives one only to
+         the rows actually present in the file. *)
+      score = None;
       strand;
       phase = None;
       id = Some id;
@@ -1088,8 +1149,8 @@ module GTF: Format_t = struct
     List.map (fun (i : Sequences.Types.simple_interval_t) ->
       let lo = i.low + 1 and hi = i.low + i.length in
       Printf.sprintf
-        "%s\t%s\t%s\t%d\t%d\t.\t%s\t%s\t%s"
-        seq src leaf lo hi strand phase attrs
+        "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s"
+        seq src leaf lo hi (field_of_score feature.score) strand phase attrs
     ) feature.intervals
   let to_buffer buf ann =
     iter_paths (fun ~path feature ->
@@ -1212,12 +1273,28 @@ module GenBank:
       match lookup_str_attr "locus_tag" with
       | Some _ as r -> r
       | None -> lookup_str_attr "gene" in
+    (* /codon_start is GenBank's spelling of GFF3's phase, counted from 1 rather
+       than from 0, so phase = codon_start - 1.  A CDS carrying no /codon_start
+       starts in frame, which is phase 0; leaving it None here made every
+       out-of-frame CDS fail validate_translation for the wrong reason. *)
+    let phase =
+      match lookup_str_attr "codon_start" with
+      | None -> None
+      | Some s ->
+        (match int_of_string_opt (String.trim s) with
+         | Some n when n >= 1 && n <= 3 -> Some (n - 1)
+         | _ ->
+           Exception.raise __FUNCTION__ IO_Format
+             (Printf.sprintf "GenBank: invalid /codon_start %S on feature %S (expected 1, 2 or 3)"
+                s ftype)) in
     let feature = {
       seq = Seq.intern seqs seq_name;
       source = None;
       intervals;
+      (* GenBank has no score column: the concept is GFF3's. *)
+      score = None;
       strand;
-      phase = None;
+      phase;
       id;
       attributes = attrs
     } in
@@ -1270,6 +1347,7 @@ module GenBank:
               { seq = Seq.intern (seqs !ann) locus;
                 source = None;
                 intervals;
+                score = None;
                 strand = None;
                 phase = None;
                 id = Some locus;
@@ -1282,6 +1360,7 @@ module GenBank:
               { seq = Seq.intern (seqs !ann) locus;
                 source = None;
                 intervals = [ source_iv ];
+                score = None;
                 strand = None;
                 phase = None;
                 id = Some locus;
@@ -1332,8 +1411,12 @@ module GenBank:
   let format_intervals_strand intervals strand =
     let parts =
       List.map (fun (i : Sequences.Types.simple_interval_t) ->
-        let lo = i.low + 1 and hi = i.low + i.length in
-        Printf.sprintf "%d..%d" lo hi
+        (* A zero-length site is INSDC's [lo^hi], the position between two
+           consecutive bases.  Running it through the ordinary formula would
+           emit the reversed range [low+1..low], which this reader rejects and
+           no other tool would accept either. *)
+        if i.length = 0 then Printf.sprintf "%d^%d" i.low (i.low + 1)
+        else Printf.sprintf "%d..%d" (i.low + 1) (i.low + i.length)
       ) intervals in
     let body =
       match parts with

@@ -167,6 +167,12 @@ gff_attribute_list:
 gff_attribute_pair:
   | Attr_KEY Attr_EQ gff_attribute_values
     { $1, $3 }
+  /* A key with nothing after the '=' is how a valueless qualifier -- GenBank's
+     /pseudo, /ribosomal_slippage -- has to be spelled in column 9, which has no
+     other way to say "present, no value".  Without this production such a
+     feature could be written but not read back. */
+  | Attr_KEY Attr_EQ
+    { $1, [ "" ] }
 
 gff_attribute_values:
   | Attr_VALUE

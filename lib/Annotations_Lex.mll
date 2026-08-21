@@ -158,6 +158,22 @@
     done;
     Buffer.contents buf
 
+  (* The inverse of [url_decode], so that what a writer emits survives being
+     read back.  [reserved] names the bytes that carry structure in the context
+     being written and so must not appear literally there; [%] is always
+     encoded, since leaving it literal would let a following pair of hex digits
+     decode into something that was never written.  Control bytes go too: a tab
+     or a newline inside a field would end the field or the record. *)
+  let url_encode ?(reserved = "") s =
+    let buf = Buffer.create (String.length s) in
+    String.iter (fun c ->
+      if c = '%' || String.contains reserved c
+         || Char.code c < 0x20 || Char.code c = 0x7F then
+        Buffer.add_string buf (Printf.sprintf "%%%02X" (Char.code c))
+      else
+        Buffer.add_char buf c) s;
+    Buffer.contents buf
+
 }
 
 (* Hierarchy S-expression.

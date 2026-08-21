@@ -442,6 +442,7 @@ module Annotation:
       seq: Seq.t;
       source: Value.t option;
       intervals: Sequences.Types.simple_interval_t list;
+      score: float option;
       strand: Sequences.Types.strand_t option;
       phase: int option;
       id: string option;
@@ -488,6 +489,7 @@ module Annotation:
       seq: Seq.t;
       source: Value.t option;
       intervals: Sequences.Types.simple_interval_t list;
+      score: float option;
       strand: Sequences.Types.strand_t option;
       phase: int option;
       id: string option;
@@ -497,6 +499,7 @@ module Annotation:
       seq = (Obj.magic 0 : Seq.t);
       source = None;
       intervals = [];
+      score = None;
       strand = None;
       phase = None;
       id = None;

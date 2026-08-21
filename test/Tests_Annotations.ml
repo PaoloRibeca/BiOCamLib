@@ -127,15 +127,17 @@ let test_locations () =
       (match location "J00194.1:100..202" |> fst with
        | (Some acc, _) :: _ -> acc
        | _ -> "(none)");
-    (* Trans-splicing: one part forward, one part reverse.  Today the outer
-       strand is passed down to every part and only the LAST part's strand is
-       kept, so this whole feature comes back as Reverse and the forward part is
-       silently reverse-complemented.  Representing it properly needs a strand
-       per interval rather than one per feature. *)
-    Testing.check
-      ~known_bug:"Annotations.ml:368 keeps only the last part's strand"
-      "a mixed-strand join does not report the whole feature as reverse"
-      (fun () -> location "join(1..9,complement(20..28))" |> snd <> Some T.reverse))
+    Testing.check_string "a join whose parts are each complemented is one reverse feature"
+      ~expected:"-"
+      (location "join(complement(20..28),complement(1..9))" |> snd |> strand_to_string);
+    (* Trans-splicing: one part forward, one part reverse.  A feature_t carries a
+       single strand, so this is not representable and is refused.  It used to
+       keep whichever strand came last, which silently reverse-complemented the
+       parts that disagreed with it -- a wrong answer rather than no answer.
+       Representing it properly would need a strand per interval. *)
+    Testing.check_raises ~re:".*[Mm]ixed-strand.*"
+      "a mixed-strand join is refused rather than silently flattened"
+      (fun () -> location "join(1..9,complement(20..28))"))
 
 (* GenBank record to AST. *)
 
@@ -166,14 +168,70 @@ let test_genbank_records () =
     (* /codon_start is the GenBank spelling of GFF3's phase, 1-based against the
        0-based phase.  It is currently never read, so a CDS that does not start
        in frame 0 fails validate_translation for the wrong reason. *)
-    Testing.check_equal
-      ~known_bug:"Annotations.ml:1154 hardcodes phase = None"
-      "/codon_start=2 becomes phase 1"
+    (* /codon_start is 1-based against the 0-based phase, so 2 means phase 1. *)
+    Testing.check_equal "/codon_start=2 becomes phase 1"
       ~to_string:(function Some n -> string_of_int n | None -> "none")
       ~expected:(Some 1)
       (match feature_at ann "CDS" with
        | Some (_, f) -> f.A.Annotation.phase
-       | None -> None))
+       | None -> None);
+    Testing.check_equal "a CDS with no /codon_start has no phase"
+      ~to_string:(function Some n -> string_of_int n | None -> "none")
+      ~expected:None
+      (let plain =
+         genbank [ "     CDS             1..15"; "                     /gene=\"abcA\"" ]
+         |> A.GenBank.of_string in
+       match feature_at plain "CDS" with
+       | Some (_, f) -> f.A.Annotation.phase
+       | None -> Some 99);
+    Testing.check_raises ~re:".*codon_start.*"
+      "an out-of-range /codon_start is refused"
+      (fun () ->
+        genbank [
+          "     CDS             1..15";
+          "                     /codon_start=\"7\"" ]
+        |> A.GenBank.of_string))
+
+(* GenBank round trip.  Unlike GFF3, GenBank keeps a joined feature as one
+   feature and can spell every location this AST can hold, so it is the format
+   whose round trip should be exact. *)
+
+let test_genbank_round_trip () =
+  Testing.section "GenBank round trip" (fun () ->
+    let round_trip feature_lines =
+      let once = genbank feature_lines |> A.GenBank.of_string in
+      A.GenBank.to_string once, A.GenBank.to_string (A.GenBank.of_string (A.GenBank.to_string once)) in
+    let locations text =
+      List.filter_map (fun l ->
+        let l = String.trim l in
+        match String.Split.on_char_as_list ' ' l with
+        | k :: rest when k = "CDS" || k = "misc_feature" ->
+          Some (String.concat "" rest)
+        | _ -> None) (String.Split.on_char_as_list '\n' text) in
+    let cases = [
+      "a plain range", [ "     CDS             1..15" ], "1..15";
+      "a reverse range", [ "     CDS             complement(16..30)" ], "complement(16..30)";
+      "a join", [ "     CDS             join(1..9,20..28)" ], "join(1..9,20..28)";
+      "a reverse join",
+        [ "     CDS             complement(join(1..9,20..28))" ],
+        "complement(join(1..9,20..28))";
+      (* The writer used to render this as the reversed range 101..100, which its
+         own reader then refused. *)
+      "a zero-length site", [ "     misc_feature    100^101" ], "100^101"
+    ] in
+    List.iter (fun (name, lines_, expected) ->
+      let first, second = round_trip lines_ in
+      Testing.check_string (Printf.sprintf "%s survives the writer" name)
+        ~expected (locations first |> String.concat ",");
+      Testing.check_string (Printf.sprintf "%s is stable on a second pass" name)
+        ~expected:first second) cases;
+    (* /codon_start is now read into phase, and has to come back out again. *)
+    let with_phase, _ =
+      round_trip [
+        "     CDS             1..15";
+        "                     /codon_start=\"2\"" ] in
+    Testing.check "a /codon_start survives the writer"
+      (fun () -> count_substring "/codon_start=\"2\"" with_phase = 1))
 
 (* Feature sequence extraction.  The demo ORIGIN is
    atgcccgggtaagcgactagcgcatcgtca, 30 bases, and the reference the GenBank
@@ -297,20 +355,84 @@ let test_attributes () =
       ~expected:"alpha,beta" (attr "Note");
     Testing.check_string "a percent-encoded space is decoded on read"
       ~expected:"x y" (attr "Desc");
-    (* Decoding without re-encoding is lossy: the comma re-emerges as a value
-       separator on the next read, so the value silently splits in two. *)
-    Testing.check
-      ~known_bug:"Annotations.ml:669 never re-encodes what url_decode decoded"
-      "a comma inside a value is re-encoded on write"
+    (* Decoding without re-encoding was lossy: the comma re-emerged as a value
+       separator on the next read, so the value silently split in two. *)
+    Testing.check "a comma inside a value is re-encoded on write"
       (fun () -> count_substring "%2C" (A.GFF3.to_string ann) > 0);
-    (* GFF3 column 9 has no way to spell a valueless qualifier: the grammar wants
-       at least one value after '='.  A GenBank /pseudo therefore cannot survive
-       a round trip through GFF3. *)
-    Testing.check_does_not_raise
-      ~known_bug:"Annotations_Parse.mly:171 requires at least one Attr_VALUE"
-      "an empty attribute value can be read back"
+    (* The property that actually matters is not which bytes get encoded but
+       that a value survives being written and read again. *)
+    let round_tripped key =
+      let again = A.GFF3.to_string ann |> A.GFF3.of_string in
+      match feature_at again "gene" with
+      | Some (_, f) ->
+        (match A.Annotation.attr_get again f key with
+         | Some vs -> String.concat "|" vs
+         | None -> "(absent)")
+      | None -> "(no gene)" in
+    Testing.check_string "a value containing a comma survives a round trip"
+      ~expected:"alpha,beta" (round_tripped "Note");
+    Testing.check_string "a value containing a space survives a round trip"
+      ~expected:"x y" (round_tripped "Desc");
+    (* Column 9 has no way to spell a valueless qualifier other than a bare '=',
+       so the grammar has to accept one: a GenBank /pseudo or
+       /ribosomal_slippage could otherwise be written but not read back. *)
+    Testing.check_does_not_raise "an empty attribute value can be read back"
       (fun () ->
-        gff3 [ "chr1\tdemo\tgene\t100\t500\t.\t+\t.\tID=g1;pseudo=" ] |> A.GFF3.of_string))
+        gff3 [ "chr1\tdemo\tgene\t100\t500\t.\t+\t.\tID=g1;pseudo=" ] |> A.GFF3.of_string);
+    Testing.check_string "an empty attribute value reads back as present-but-empty"
+      ~expected:""
+      (let one =
+         gff3 [ "chr1\tdemo\tgene\t100\t500\t.\t+\t.\tID=g1;pseudo=" ] |> A.GFF3.of_string in
+       match feature_at one "gene" with
+       | Some (_, f) ->
+         (match A.Annotation.attr_get one f "pseudo" with
+          | Some (v :: _) -> v
+          | Some [] -> "(no values)"
+          | None -> "(absent)")
+       | None -> "(no gene)");
+    (* A separator that arrives percent-encoded must not be decoded into a
+       structural role: %3D is a literal '=' inside a value, not the pair's
+       separator. *)
+    Testing.check_string "an encoded separator stays inside the value"
+      ~expected:"a=b;c"
+      (let tricky =
+         gff3 [ "chr1\tdemo\tgene\t100\t500\t.\t+\t.\tID=g1;Note=a%3Db%3Bc" ]
+         |> A.GFF3.of_string in
+       let again = A.GFF3.to_string tricky |> A.GFF3.of_string in
+       match feature_at again "gene" with
+       | Some (_, f) ->
+         (match A.Annotation.attr_get again f "Note" with
+          | Some (v :: _) -> v
+          | _ -> "(absent)")
+       | None -> "(no gene)");
+    (* Reading a value that arrives with an UNENCODED space is a separate
+       matter, and this lexer cannot: it treats a space as a token separator,
+       so two adjacent values with no comma between them are a parse error.
+       Third-party GFF3 carries such values routinely (product=hypothetical
+       protein), so this is worth pinning -- but note that it fails loudly
+       rather than corrupting, and that our own writer now encodes the space,
+       so it costs nothing on a file this library produced. *)
+    Testing.check_does_not_raise
+      ~known_bug:"the gff_attributes lexer skips spaces, so a value cannot contain one"
+      "a value with an unencoded space can be read"
+      (fun () ->
+        gff3 [ "chr1\tdemo\tgene\t100\t500\t.\t+\t.\tproduct=hypothetical protein" ]
+        |> A.GFF3.of_string);
+    (* The same lexer rule silently swallows the space in a comma-separated
+       list, which is corruption rather than a refusal, and so is the more
+       dangerous half of the same defect. *)
+    Testing.check_string
+      ~known_bug:"the gff_attributes lexer eats the space after a comma"
+      "a space after a comma is not swallowed"
+      ~expected:"alpha| beta"
+      (let one =
+         gff3 [ "chr1\tdemo\tgene\t100\t500\t.\t+\t.\tName=alpha, beta" ] |> A.GFF3.of_string in
+       match feature_at one "gene" with
+       | Some (_, f) ->
+         (match A.Annotation.attr_get one f "Name" with
+          | Some vs -> String.concat "|" vs
+          | None -> "(absent)")
+       | None -> "(no gene)"))
 
 (* GFF3 fidelity. *)
 
@@ -318,10 +440,26 @@ let test_gff3_fidelity () =
   Testing.section "GFF3 fidelity" (fun () ->
     let scored =
       gff3 [ "chr1\tdemo\tgene\t100\t500\t42.5\t+\t.\tID=g1" ] |> A.GFF3.of_string in
-    Testing.check
-      ~known_bug:"parse_row never reads fields.(5) and row_of_feature hardcodes \".\""
-      "the score column survives a round trip"
+    Testing.check "the score column survives a round trip"
       (fun () -> count_substring "42.5" (A.GFF3.to_string scored) > 0);
+    Testing.check_equal "a score reads back as a float"
+      ~to_string:(function Some f -> string_of_float f | None -> "none")
+      ~expected:(Some 42.5)
+      (match feature_at scored "gene" with
+       | Some (_, f) -> f.A.Annotation.score
+       | None -> None);
+    (* '.' is "no score", which is not the same as a score of zero. *)
+    Testing.check_equal "an absent score stays absent"
+      ~to_string:(function Some f -> string_of_float f | None -> "none")
+      ~expected:None
+      (let unscored =
+         gff3 [ "chr1\tdemo\tgene\t100\t500\t.\t+\t.\tID=g1" ] |> A.GFF3.of_string in
+       match feature_at unscored "gene" with
+       | Some (_, f) -> f.A.Annotation.score
+       | None -> Some 0.);
+    Testing.check_raises ~re:".*[Ss]core.*" "a non-numeric score is refused"
+      (fun () ->
+        gff3 [ "chr1\tdemo\tgene\t100\t500\tnonsense\t+\t.\tID=g1" ] |> A.GFF3.of_string);
     (* A joined CDS is ONE feature.  The GFF3 writer emits one row per interval
        and the reader never re-merges rows sharing an ID, so it comes back as
        N separate features. *)
@@ -371,15 +509,33 @@ let test_attribute_order () =
     (match feature_at ann "CDS" with
      | Some (_, f) -> A.Annotation.attr_iter ann (fun k _ -> List.accum keys k) f
      | None -> ());
-    (* The comment at Annotations.ml:426 claims source order.  attrs_of_qualifiers
-       folds a StringMap alphabetically and AttrMap is keyed by the resulting
-       intern ids, so what comes out is global first-intern order instead.  Any
-       format wanting stable output must sort explicitly rather than rely on
-       this. *)
+    (* attrs_of_qualifiers folds a StringMap and AttrMap is keyed by the
+       resulting intern ids, so what comes out is global first-intern order,
+       not the order the qualifiers appeared in.  Preserving true per-feature
+       source order would take a list rather than a map, so this is pinned
+       rather than fixed -- and a format that wants a predictable order has to
+       sort explicitly, which is what the tabular writer does. *)
     Testing.check_string
-      ~known_bug:"attrs_of_qualifiers folds a StringMap, so order is intern order"
+      ~known_bug:"AttrMap is keyed by intern id, so per-feature source order is not kept"
       "attributes are emitted in source order"
-      ~expected:"product,gene" (List.rev !keys |> String.concat ","))
+      ~expected:"product,gene" (List.rev !keys |> String.concat ",");
+    (* What IS guaranteed is that the order is deterministic: the same input
+       gives the same output, which is what a diffable text format needs. *)
+    Testing.check "attribute order is at least deterministic"
+      (fun () ->
+        let keys_of a =
+          let acc = ref [] in
+          (match feature_at a "CDS" with
+           | Some (_, f) -> A.Annotation.attr_iter a (fun k _ -> List.accum acc k) f
+           | None -> ());
+          List.rev !acc in
+        let build () =
+          genbank [
+            "     CDS             1..15";
+            "                     /product=\"hypothetical\"";
+            "                     /gene=\"abcA\"" ]
+          |> A.GenBank.of_string in
+        keys_of (build ()) = keys_of (build ())))
 
 (* Insertion invariants.  These are not defects -- they are the contract a
    tabular reader has to satisfy, pinned so that a change to it is deliberate. *)
@@ -450,6 +606,7 @@ let test_extraction_prerequisites () =
 let run () =
   test_locations ();
   test_genbank_records ();
+  test_genbank_round_trip ();
   test_feature_sequence ();
   test_selection ();
   test_attributes ();
