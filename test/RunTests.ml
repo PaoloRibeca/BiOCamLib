@@ -38,3 +38,4 @@ let () =
   Printf.eprintf "%s\n%!" (String.TermIO.bold "BiOCamLib test suite");
   Tests_Annotations.run ();
   Testing.summary ()
+

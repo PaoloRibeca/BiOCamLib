@@ -297,9 +297,12 @@ let () =
       TA.make_separator_multiline
         [ "";
           "Actions involving the selection register.";
-          "The selection restricts every subsequent output action to";
-          "the features it matches.  It is sticky, and starts out";
-          "matching everything." ];
+          "The selection restricts '--selection-print' and the";
+          "'--extract-*' actions to the features it matches.  The";
+          "'--to-*' writers and '-o' always write the whole register,";
+          "because a feature whose parent is not selected would be";
+          "emitted without it.  The selection is sticky, and starts";
+          "out matching everything." ];
       [ "-L"; "--labels"; "--selection-from-labels" ],
         Some "<feature_id>[','...','<feature_id>]",
         [ "put into the selection register the features carrying the";

@@ -48,7 +48,7 @@ let lines = String.concat "\n"
    zero-length interval shown as "lo^" so the degenerate case stays visible
    instead of collapsing into a reversed range. *)
 let intervals_to_string ivs =
-  List.map (fun ((_ : string option), (i : T.simple_interval_t)) ->
+  List.map (fun ((_: string option), (i: T.simple_interval_t)) ->
     if i.length = 0 then Printf.sprintf "%d^" i.low
     else Printf.sprintf "%d..%d" (i.low + 1) (i.low + i.length)) ivs
   |> String.concat ","
@@ -130,6 +130,14 @@ let test_locations () =
     Testing.check_string "a join whose parts are each complemented is one reverse feature"
       ~expected:"-"
       (location "join(complement(20..28),complement(1..9))" |> snd |> strand_to_string);
+    (* INSDC 3.4.3 gives these as two spellings of ONE feature, so they must
+       resolve identically.  They arrive in opposite orders -- a distributed
+       complement lists its parts 5' to 3' along the feature, the wrapped form
+       lists them along the sequence -- and everything downstream assumes the
+       latter, so the former has to be put back. *)
+    Testing.check_string "a distributed complement stores its parts in genomic order"
+      ~expected:(location "complement(join(1..9,20..28))" |> fst |> intervals_to_string)
+      (location "join(complement(20..28),complement(1..9))" |> fst |> intervals_to_string);
     (* Trans-splicing: one part forward, one part reverse.  A feature_t carries a
        single strand, so this is not representable and is refused.  It used to
        keep whichever strand came last, which silently reverse-complemented the
@@ -137,7 +145,13 @@ let test_locations () =
        Representing it properly would need a strand per interval. *)
     Testing.check_raises ~re:".*[Mm]ixed-strand.*"
       "a mixed-strand join is refused rather than silently flattened"
-      (fun () -> location "join(1..9,complement(20..28))"))
+      (fun () -> location "join(1..9,complement(20..28))");
+    (* GenBank spells a between-bases site lo^hi, so it has no use for the
+       inverted pair the shared 1-based helper tolerates on behalf of the
+       formats that cannot spell one.  Here 200..199 is simply malformed. *)
+    Testing.check_raises ~re:".*between-bases site is spelled.*"
+      "an inverted GenBank range is refused rather than read as a zero-length site"
+      (fun () -> location "200..199"))
 
 (* GenBank record to AST. *)
 
@@ -200,7 +214,8 @@ let test_genbank_round_trip () =
   Testing.section "GenBank round trip" (fun () ->
     let round_trip feature_lines =
       let once = genbank feature_lines |> A.GenBank.of_string in
-      A.GenBank.to_string once, A.GenBank.to_string (A.GenBank.of_string (A.GenBank.to_string once)) in
+      A.GenBank.to_string once,
+      A.GenBank.to_string (A.GenBank.of_string (A.GenBank.to_string once)) in
     let locations text =
       List.filter_map (fun l ->
         let l = String.trim l in
@@ -262,6 +277,15 @@ let test_feature_sequence () =
       ~expected:"MPG" (protein (cds "1..15" []));
     Testing.check_string "a joined CDS translates across the junction"
       ~expected:"MPGAHR" (protein (cds "join(1..9,20..28)" []));
+    (* The two INSDC spellings of one minus-strand joined feature have to give
+       the same sequence and the same protein.  They did not: the parts arrive
+       in opposite orders, so the halves came out swapped. *)
+    Testing.check_string "both spellings of a reverse join give the same DNA"
+      ~expected:(dna (cds "complement(join(1..9,20..28))" []))
+      (dna (cds "join(complement(20..28),complement(1..9))" []));
+    Testing.check_string "both spellings of a reverse join give the same protein"
+      ~expected:(protein (cds "complement(join(1..9,20..28))" []))
+      (protein (cds "join(complement(20..28),complement(1..9))" []));
     (* The table is the feature's /transl_table when it carries one.  Table 2
        reads AGA/AGG as stops, which Table 1 does not, so the two disagree on a
        sequence containing one. *)
@@ -278,6 +302,21 @@ let test_feature_sequence () =
          (match feature_at ann "CDS" with
           | Some (_, f) -> A.Annotation.feature_table ann f
           | None -> Sequences.Translation.Table_1));
+    (* A CDS whose 5' end is partial does not begin at a start codon at all, so
+       rewriting its first codon to M invents a residue the record does not
+       claim -- TTG is Leu here, not Met.  Fixing it properly needs the
+       partiality the LOCATION parser already sees but discards at the boundary
+       with feature_t (endpoint_t carries fuzzy_left/fuzzy_right; feature_t has
+       nowhere to put them), which is the same missing slot the feature-table
+       writer needs and is tracked as an open item in the design note. *)
+    Testing.check_string
+      ~known_bug:"5' partiality is parsed and then dropped, so feature_protein cannot see it"
+      "a 5'-partial CDS does not have its first codon rewritten to methionine"
+      ~expected:"LPG"
+      (protein
+         (genbank ~seq:"ttgcccgggtaagcgactagcgcatcgtca"
+            [ "     CDS             <1..15" ]
+          |> A.GenBank.of_string));
     (* Extraction needs a reference; asking without one is a programmer error,
        not a data error, so it raises rather than returning "". *)
     Testing.check_raises ~re:".*no reference set.*"
@@ -486,6 +525,23 @@ let test_gff3_fidelity () =
       ~known_bug:"row_of_feature emits neither ID= nor Parent=, so identity is lost"
       "a feature id derived from /locus_tag is written as ID="
       (fun () -> count_substring "ID=" written > 0);
+    (* Column 8 is per ROW: it says how many bases of that row's first codon sit
+       in the rows before it.  Stamping the feature's phase on every row of a
+       multi-exon CDS is right only for the first.  With a 10-base first exon
+       and phase 0, the second row starts two bases into a codon. *)
+    Testing.check_string "phase is recomputed for each row of a multi-exon CDS"
+      ~expected:"0,2"
+      (let spliced =
+         genbank [
+           "     CDS             join(1..10,20..28)";
+           "                     /codon_start=\"1\"" ]
+         |> A.GenBank.of_string in
+       String.Split.on_char_as_list '\n' (A.GFF3.to_string spliced)
+       |> List.filter_map (fun l ->
+         match String.Split.on_char_as_list '\t' l with
+         | _ :: _ :: "CDS" :: _ :: _ :: _ :: _ :: phase :: _ -> Some phase
+         | _ -> None)
+       |> String.concat ",");
     (* Every GenBank feature lives at annotation->source->X, and an Annotation.t
        holds exactly one hierarchy, so GFF3 output of a GenBank register cannot
        be read back at all.  This is the structural reason GFF3 cannot serve as
@@ -551,9 +607,11 @@ let reverse_section wanted doc =
     let is_banner = String.length line > 2 && String.sub line 0 2 = "#!" in
     if is_banner then begin
       release ();
-      section := (match String.Split.on_char_as_list ' ' (String.sub line 2 (String.length line - 2)) with
-                  | n :: _ -> n
-                  | [] -> "");
+      let banner = String.sub line 2 (String.length line - 2) in
+      section :=
+        (match String.Split.on_char_as_list ' ' banner with
+         | n :: _ -> n
+         | [] -> "");
       header_seen := false;
       List.accum out line
     end else if !section = wanted && line <> "" then begin
@@ -578,7 +636,8 @@ let test_tabular () =
       let acc = ref [] in
       A.Annotation.iter_paths (fun ~path f ->
         let attrs = ref [] in
-        A.Annotation.attr_iter ann (fun k vs -> List.accum attrs (k ^ "=" ^ String.concat "," vs)) f;
+        A.Annotation.attr_iter ann
+          (fun k vs -> List.accum attrs (k ^ "=" ^ String.concat "," vs)) f;
         List.accum acc
           (Printf.sprintf "%s|%s|%s|%s|%s|%s|%s"
              (A.Annotation.path_to_string path) (A.Annotation.seq_name ann f)
@@ -697,7 +756,8 @@ let test_tabular () =
     Testing.check_string "the features table may be reordered"
       ~expected:(as_set (describe shared))
       (as_set
-         (describe (A.Tabular.of_string (reverse_section "features" (A.Tabular.to_string shared)))));
+         (describe
+            (A.Tabular.of_string (reverse_section "features" (A.Tabular.to_string shared)))));
     Testing.check_string "the attributes table may be reordered"
       ~expected:(describe shared)
       (describe
@@ -740,6 +800,89 @@ let test_tabular () =
           (doc_with
              [ "aaaaaaaaaaaaaaaa\t.\tdemo01\tsource\t.\t.\t.\t.\t.\t1..30" ]
              [ "cccccccccccccccc\tnote\torphan" ]));
+    (* A between-bases site names two CONSECUTIVE positions.  Accepting any pair
+       meant a hand-edited 100^999 parsed happily and was re-emitted as 100^101
+       -- rewritten rather than diagnosed, in a format whose whole point is that
+       you can edit it by hand. *)
+    Testing.check_raises ~re:".*consecutive.*"
+      "a between-bases site whose positions are not consecutive is refused"
+      (fun () ->
+        A.Tabular.of_string
+          (doc_with [ "aaaaaaaaaaaaaaaa\t.\tdemo01\tsource\t.\t.\t.\t.\t.\t100^999" ] []));
+    (* 1-based means positions start at 1.  A lo of 0 used to yield low = -1,
+       which every writer then re-emitted happily and which surfaced only much
+       later, as an internal error from the reference rather than a diagnosis. *)
+    Testing.check_raises ~re:".*positions start at 1.*"
+      "a non-positive coordinate is refused"
+      (fun () ->
+        A.Tabular.of_string
+          (doc_with [ "aaaaaaaaaaaaaaaa\t.\tdemo01\tsource\t.\t.\t.\t.\t.\t0..500" ] []));
+    Testing.check_raises ~re:".*positions start at 1.*"
+      "a non-positive coordinate is refused by the GFF3 reader too"
+      (fun () -> gff3 [ "chr1\tdemo\tgene\t0\t500\t.\t+\t.\tID=g1" ] |> A.GFF3.of_string);
+    (* CRLF.  The module's own GFF3 reader strips a trailing CR; this one did
+       not, so the CR landed inside the LAST field of every row -- for the
+       attributes table, inside the value itself, which was then interned and
+       re-emitted downstream as ID=gene1%0D.  Silent corruption, not an error. *)
+    Testing.check_string "a CRLF document reads with no carriage returns left in it"
+      ~expected:"alpha,beta"
+      (let crlf =
+         String.Split.on_char_as_list '\n' (A.Tabular.to_string awkward)
+         |> String.concat "\r\n" in
+       let back = A.Tabular.of_string crlf in
+       match feature_at back "gene" with
+       | Some (_, f) ->
+         (match A.Annotation.attr_get back f "Note" with
+          | Some (v :: _) -> v
+          | _ -> "(absent)")
+       | None -> "(no gene)");
+    (* A metadata row is <key><TAB><value>, so a pair that is empty on both
+       sides renders as a line that TRIMS to nothing -- and a bare ## pragma in
+       a GFF3 file produces exactly that pair.  Filtering blank lines by trim
+       therefore dropped a real entry. *)
+    Testing.check_int "a metadata entry that is empty on both sides survives"
+      ~expected:1
+      (let empty_pragma =
+         A.GFF3.of_string (gff3 [ "chr1\tdemo\tgene\t1\t9\t.\t+\t.\tID=g1" ])
+         |> (fun a -> A.Annotation.add_metadata a ~key:"" ~value:"") in
+       List.length (A.Annotation.get_metadata (round_trip empty_pragma) ""));
+    (* The score column has to be exact here: this format claims to hold
+       everything the binary archive holds, and %.12g silently rounds on the
+       first crossing from an archive or from a column 6 with more digits. *)
+    Testing.check_string "a score survives with full double precision"
+      ~expected:"0.1234567890123457"
+      (let precise =
+         gff3 [ "chr1\tdemo\tgene\t100\t500\t0.1234567890123457\t+\t.\tID=g1" ]
+         |> A.GFF3.of_string in
+       match feature_at (round_trip precise) "gene" with
+       | Some (_, f) ->
+         (match f.A.Annotation.score with
+          | Some s -> Printf.sprintf "%.16g" s
+          | None -> "(absent)")
+       | None -> "(no gene)");
+    (* The parent column and the path column describe one forest twice, and
+       Annotation.add places a feature by its path alone -- so if they disagree,
+       which description wins depends on row order, and row order carrying no
+       meaning is the whole point of the format. *)
+    Testing.check_raises ~re:".*does not sit directly below.*"
+      "a row whose parent and path disagree is refused"
+      (fun () ->
+        A.Tabular.of_string
+          (doc_with
+             [ "aaaaaaaaaaaaaaaa\t.\tdemo01\tsource\t.\t.\t.\t.\t.\t1..30";
+               "bbbbbbbbbbbbbbbb\taaaaaaaaaaaaaaaa\tdemo01\tgene\t.\t.\t.\t.\t.\t1..15" ] []));
+    (* The register is rebuilt around the hierarchy the file declares, so
+       everything on the carrier that is not the hierarchy has to come across.
+       The reference already did; the metadata was dropped without a word. *)
+    Testing.check_string "the carrier's metadata survives a read into an empty register"
+      ~expected:"kept"
+      (let carrier =
+         A.Annotation.add_metadata (A.Annotation.create (A.Annotation.hierarchy gb))
+           ~key:"CARRIED" ~value:"kept" in
+       let merged = A.Tabular.read carrier (A.Tabular.to_string gb) in
+       match A.Annotation.get_metadata merged "CARRIED" with
+       | v :: _ -> v
+       | [] -> "(dropped)");
     Testing.check_raises ~re:".*has no .* section.*"
       "a document missing a section is refused"
       (fun () -> A.Tabular.of_string "#!metadata\nkey\tvalue\n");
@@ -952,3 +1095,4 @@ let run () =
   test_add_invariants ();
   test_insertion_cost ();
   test_extraction_prerequisites ()
+

@@ -398,11 +398,11 @@ One limitation worth stating plainly: a *filtered* tabular table does not read b
 
 ### Selecting features and extracting their sequences
 
-A *selection register* sits beside the annotation register and restricts every subsequent output action to the features it matches &mdash; the same pattern, and the same switch names, that [`KPopCountDB`](https://github.com/PaoloRibeca/KPop/) uses to select spectra. A selection is expressed as a comma-separated list of `<field>~<regexp>` criteria, all of which must match:
+A *selection register* sits beside the annotation register and restricts `--selection-print` and the `--extract-*` actions to the features it matches &mdash; the same pattern, and the same switch names, that [`KPopCountDB`](https://github.com/PaoloRibeca/KPop/) uses to select spectra. A selection is expressed as a comma-separated list of `<field>~<regexp>` criteria, all of which must match:
 ```bash
 AnnoTools --from-genbank NC_000913.gb -R 'type~CDS' --selection-print
 ```
-A field is one of `seq`, `path`, `type`, `source`, `strand` or `id`; anything else is read as an attribute name, so `-R 'gene~dnaA'` selects on the `/gene` qualifier. An empty field name matches the feature's own id. The selection is sticky, starts out matching everything, and can be inverted with `--selection-negate` or reset with `--selection-clear`.
+A field is one of `seq`, `path`, `type`, `source`, `strand`, `id` or `label`; anything else is read as an attribute name, so `-R 'gene~dnaA'` selects on the `/gene` qualifier. An empty field name matches the feature's own id. Note that those names are reserved: an attribute that happens to share one of them cannot be selected on. The selection is sticky, starts out matching everything, and can be inverted with `--selection-negate` or reset with `--selection-clear`.
 
 Given a reference, the selected features' sequences can then be written out as FASTA:
 ```bash
@@ -609,7 +609,7 @@ Each check raises and exits non-zero on the first violation. All require a refer
 | `--summary` |  |  print a one\-line summary of the current register to stderr |  |
 
 *Actions involving the selection register.*
-The selection restricts every subsequent output action to the features it matches. It is sticky, and starts out matching everything.
+The selection restricts `--selection-print` and the `--extract-*` actions to the features it matches. The `--to-*` writers and `-o` always write the whole register, because a feature whose parent is not selected would be emitted without it. The selection is sticky, and starts out matching everything.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|

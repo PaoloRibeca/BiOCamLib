@@ -402,14 +402,35 @@ let score_of_field = function
        Exception.raise __FUNCTION__ IO_Format
          (Printf.sprintf "Invalid score %S" s))
 (* Written back with %.12g, which is enough to carry every float a reader is
-   likely to have produced without printing 17 digits for a round number. *)
+   likely to have produced without printing 17 digits for a round number.  That
+   is a readability trade for GFF3 and GTF column 6; a format that claims to
+   hold everything the binary archive holds needs [field_of_score_exact]
+   below instead. *)
 let field_of_score = function
   | None -> "."
   | Some f -> Printf.sprintf "%.12g" f
 
+(* %.17g is the shortest precision that recovers every double exactly.  A score
+   that arrived from an archive, or from a column 6 carrying more than twelve
+   significant digits, would otherwise be silently rounded on its first crossing
+   into a table that is supposed to be lossless -- and the loss is invisible to
+   any test that only re-reads what the tabular writer produced, since %.12g of
+   an already-rounded value is a fixed point. *)
+let field_of_score_exact = function
+  | None -> "."
+  | Some f -> Printf.sprintf "%.17g" f
+
 (* GFF3/GTF ranges are 1-based inclusive in the source; the
    AST stores 0-based half-open. *)
 let interval_of_1_based ~lo ~hi : Sequences.Types.simple_interval_t =
+  (* Positions are 1-based, so anything below 1 is not a coordinate.  Left
+     unchecked, a [lo] of 0 yields [low = -1], which every writer then re-emits
+     happily -- GFF3 [0 500], GenBank [0..500] -- and which only surfaces much
+     later, and as an internal error rather than a diagnosis, when the reference
+     is finally indexed. *)
+  if lo < 1 then
+    Exception.raise __FUNCTION__ IO_Format
+      (Printf.sprintf "Invalid 1-based coordinate %d (positions start at 1)" lo);
   (* [hi = lo - 1] is the one legal inversion: it is how a zero-length site --
      the position between two consecutive bases, GenBank's [lo^hi] -- comes back
      from a format that has only a 1-based inclusive pair to spell it with.  It
@@ -449,8 +470,19 @@ module GenBankLocation:
         { low; length } in
       let rec walk strand seq = function
         | Point e ->
-          [ seq, mk_simple (e.pos - 1) 1 ], strand
+          (* Through [interval_of_1_based] rather than [mk_simple], so that a
+             point location of 0 is caught by the same check as a range. *)
+          [ seq, interval_of_1_based ~lo:e.pos ~hi:e.pos ], strand
         | Range (a, b) ->
+          (* GenBank spells a between-bases site [lo^hi], so it has no use for
+             the inverted pair [interval_of_1_based] tolerates on behalf of the
+             formats that cannot -- here [200..199] is simply malformed, and
+             letting the shared helper read it as a zero-length feature would
+             accept a broken record in silence. *)
+          if b.pos < a.pos then
+            Exception.raise __FUNCTION__ IO_Format
+              (Printf.sprintf "Invalid range (%d..%d): a between-bases site is spelled %d^%d"
+                 a.pos b.pos b.pos a.pos);
           [ seq, interval_of_1_based ~lo:a.pos ~hi:b.pos ], strand
         | Between (a, _) ->
           (* Zero-length feature between [a] and [a+1]. *)
@@ -480,7 +512,18 @@ module GenBankLocation:
             st := s;
             seen := true;
             acc := !acc @ pieces) parts;
-          !acc, !st
+          (* INSDC 3.4.3 gives complement(join(A,B)) and join(complement(B),
+             complement(A)) as two spellings of ONE feature, but they arrive
+             here in opposite orders: the first stores [A; B], the second
+             [B; A].  Everything downstream assumes the first -- [feature_dna]
+             concatenates and reverse-complements once, the feature-table writer
+             reverses the stored list -- so a distributed complement has to be
+             put back into that order, or the two spellings yield different
+             proteins and the exons come out of transcription order.
+             The test is the parts' strand against the strand already in force:
+             they differ exactly when the complement was distributed over the
+             parts rather than wrapped around them. *)
+          if !seen && !st <> strand then List.rev !acc, !st else !acc, !st
         | Remote (acc_name, _, inner) ->
           walk strand (Some acc_name) inner in
       walk None None loc
@@ -826,16 +869,26 @@ module GFF3:
       | Some Sequences.Types.Forward _ -> "+"
       | Some Sequences.Types.Reverse _ -> "-"
       | None -> "."
-    and phase =
-      match feature.phase with
-      | None -> "." | Some n -> string_of_int n
     and attrs = attribute_string ann feature in
-    List.map (fun (ivl : Sequences.Types.simple_interval_t) ->
-      let lo = ivl.low + 1
-      and hi = ivl.low + ivl.length in
-      Printf.sprintf "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s"
-        seq src ftype lo hi score strand phase attrs
-    ) feature.intervals
+    (* Column 8 is per ROW, not per feature: it says how many bases of the first
+       codon of THIS row lie in the previous rows.  Stamping the feature's phase
+       on every row of a multi-exon CDS is right only for the first.  Intervals
+       are stored in transcription order -- the order [feature_dna] splices them
+       -- so the running total of coding bases already 5' of each row gives it
+       directly, with no strand special case. *)
+    let phase_of consumed =
+      match feature.phase with
+      | None -> "."
+      | Some p -> string_of_int (((p - consumed) mod 3 + 3) mod 3) in
+    let _, rows =
+      List.fold_left (fun (consumed, acc) (ivl: Sequences.Types.simple_interval_t) ->
+        let lo = ivl.low + 1
+        and hi = ivl.low + ivl.length in
+        consumed + ivl.length,
+        Printf.sprintf "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s"
+          seq src ftype lo hi score strand (phase_of consumed) attrs :: acc)
+        (0, []) feature.intervals in
+    List.rev rows
   let to_buffer buf ann =
     let has_gff_version =
       StringMap.mem "gff-version" (all_metadata ann) in
@@ -1149,9 +1202,11 @@ module GTF: Format_t = struct
       | Some Sequences.Types.Forward _ -> "+"
       | Some Sequences.Types.Reverse _ -> "-"
       | None -> "." in
-    let phase =
+    (* Per ROW, not per feature -- see the GFF3 writer above. *)
+    let phase_of consumed =
       match feature.phase with
-      | None -> "." | Some n -> string_of_int n in
+      | None -> "."
+      | Some p -> string_of_int (((p - consumed) mod 3 + 3) mod 3) in
     let seq = seq_name ann feature in
     let src =
       match feature_source ann feature with
@@ -1164,12 +1219,16 @@ module GTF: Format_t = struct
          a lonely [;], which no consumer would parse as a valid
          attribute list. *)
       if s = "" then "" else s ^ ";" in
-    List.map (fun (i : Sequences.Types.simple_interval_t) ->
-      let lo = i.low + 1 and hi = i.low + i.length in
-      Printf.sprintf
-        "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s"
-        seq src leaf lo hi (field_of_score feature.score) strand phase attrs
-    ) feature.intervals
+    let _, rows =
+      List.fold_left (fun (consumed, acc) (i: Sequences.Types.simple_interval_t) ->
+        let lo = i.low + 1 and hi = i.low + i.length in
+        consumed + i.length,
+        Printf.sprintf
+          "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s"
+          seq src leaf lo hi (field_of_score feature.score) strand (phase_of consumed) attrs
+          :: acc)
+        (0, []) feature.intervals in
+    List.rev rows
   let to_buffer buf ann =
     iter_paths (fun ~path feature ->
       List.iter (fun r ->
@@ -1606,7 +1665,19 @@ module Tabular: Format_t = struct
         | Some (lo, hi) -> interval_of_1_based ~lo ~hi
         | None ->
           (match two "^" with
-           | Some (lo, _) -> { Sequences.Types.low = lo; length = 0 }
+           (* Only consecutive positions denote a between-bases site.  Accepting
+              any [hi] meant [100^999] parsed happily and was then re-emitted as
+              [100^101], so a hand-edited file was silently rewritten rather
+              than diagnosed -- and hand editing is what this format is for. *)
+           | Some (lo, hi) when hi = lo + 1 ->
+             if lo < 1 then
+               Exception.raise __FUNCTION__ IO_Format
+                 (Printf.sprintf "Invalid 1-based coordinate %d (positions start at 1)" lo);
+             { Sequences.Types.low = lo; length = 0 }
+           | Some (lo, hi) ->
+             Exception.raise __FUNCTION__ IO_Format
+               (Printf.sprintf
+                  "Invalid between-bases site %d^%d: the two positions must be consecutive" lo hi)
            | None ->
              Exception.raise __FUNCTION__ IO_Format
                (Printf.sprintf "Invalid interval %S (expected lo..hi or lo^hi)" piece)))
@@ -1667,10 +1738,33 @@ module Tabular: Format_t = struct
     match open_in path with
     | exception _ -> false
     | ic ->
-      let first = try input_line ic with End_of_file -> "" in
-      close_in ic;
-      String.length first >= String.length banner
-      && String.sub first 0 (String.length banner) = banner
+      let starts_with p s =
+        String.length s >= String.length p && String.sub s 0 (String.length p) = p in
+      (* [read] tolerates a preamble before the first banner, so the sniff has
+         to skip the same thing rather than decide on line one -- otherwise a
+         document carrying a comment header is taken for a prefix and the reader
+         then goes looking for files that do not exist.  The first [#!] line
+         settles it either way; anything that is not blank, not a comment and
+         not a banner means this is not a document.  The line cap stops the
+         sniff reading an arbitrary large file that merely begins with
+         comments.
+         [Sys_error] is caught alongside [End_of_file] because [open_in] on a
+         directory succeeds on Linux and it is the READ that fails: without
+         this the exception escaped a function whose whole job is to answer
+         yes or no, and the channel leaked with it. *)
+      let rec scan n =
+        if n = 0 then false
+        else
+          match input_line ic with
+          | exception (End_of_file | Sys_error _) -> false
+          | line ->
+            if String.trim line = "" then scan (n - 1)
+            else if starts_with "#!" line then starts_with banner line
+            else if line.[0] = '#' then scan (n - 1)
+            else false in
+      let verdict = scan 100 in
+      close_in_noerr ic;
+      verdict
   (* Rendering.  Every feature is visited once, in DFS pre-order, and its id is
      computed from its identity chained through its parent's id -- so an id
      depends on where a feature sits, not merely on what it says, which is what
@@ -1753,7 +1847,7 @@ module Tabular: Format_t = struct
       Printf.bprintf r.r_features "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n"
         id (if parent = "" then "." else parent) (encode (seq_name ann feature))
         (path_to_field path) (encode_opt feature.id) (encode_opt (feature_source ann feature))
-        (field_of_score feature.score) strand phase intervals;
+        (field_of_score_exact feature.score) strand phase intervals;
       (* Sorted, because AttrMap order is an interning artefact: a format whose
          point is to be diffable cannot inherit an order nobody controls. *)
       let pairs = ref [] in
@@ -1761,10 +1855,17 @@ module Tabular: Format_t = struct
       List.sort (fun (a, _) (b, _) -> compare a b) !pairs
         |> List.iter (fun (k, vs) ->
           match vs with
-          | [] -> Printf.bprintf r.r_attributes "%s\t%s\t\n" id (encode k)
+          (* No values at all is not the same as one empty value, but the row
+             shape cannot say both -- [<id> <key> <empty>] already means the
+             latter, which is how a valueless qualifier travels.  An attribute
+             with an empty value ARRAY is a degenerate state no reader produces
+             (only [attr_set ~values:[]] can), and it means the same as the
+             attribute being absent, so that is how it is written. *)
+          | [] -> ()
           | _ ->
-            List.iter (fun v -> Printf.bprintf r.r_attributes "%s\t%s\t%s\n" id (encode k) (encode v))
-              vs)) ann;
+            List.iter
+              (fun v ->
+                Printf.bprintf r.r_attributes "%s\t%s\t%s\n" id (encode k) (encode v)) vs)) ann;
     r
   let to_buffer buf ann =
     let r = render ann in
@@ -1791,10 +1892,21 @@ module Tabular: Format_t = struct
   (* Reading.  Rows are collected first and the forest rebuilt from the parent
      column afterwards, so neither file has to arrive in any particular order:
      both may be sorted, which is most of the point of a tabular format. *)
+  (* Split into lines, dropping a trailing CR the way [iter_tsv_lines] already
+     does for GFF3 and GTF.  Without it a CRLF file carries the CR into the last
+     field of every row: in the attributes table that is the value itself, which
+     is then interned and re-emitted downstream as [ID=gene1%0D] -- silent
+     corruption rather than a diagnosis. *)
+  let lines_of s =
+    String.Split.on_char_as_list '\n' s
+    |> List.map (fun l ->
+      let n = String.length l in
+      if n > 0 && l.[n - 1] = '\r' then String.sub l 0 (n - 1) else l)
   let split_rows header what s =
-    let lines =
-      String.Split.on_char_as_list '\n' s
-      |> List.filter (fun l -> String.trim l <> "") in
+    (* Only a genuinely empty line is filler.  Trimming first would also discard
+       a metadata row whose key and value are both empty -- which a bare [##]
+       pragma in a GFF3 file produces -- and lose it without a word. *)
+    let lines = lines_of s |> List.filter (fun l -> l <> "") in
     match lines with
     | [] -> []
     | first :: rest ->
@@ -1829,10 +1941,22 @@ module Tabular: Format_t = struct
     let ann =
       match !file_hierarchy with
       | Some h when is_empty ->
+        (* The register is rebuilt around the hierarchy the file declares, so
+           everything on the carrier that is NOT the hierarchy has to be carried
+           across -- its reference, and its metadata, which is register state in
+           exactly the same way and was previously dropped without a word.  The
+           carrier's entries go in first, so that the file's append after them,
+           which is the order every other add-mode read already gives. *)
         let fresh = create h in
-        ref (match reference ann_in with
-             | Some r -> set_reference fresh r
-             | None -> fresh)
+        let fresh =
+          match reference ann_in with
+          | Some r -> set_reference fresh r
+          | None -> fresh in
+        ref
+          (StringMap.fold
+             (fun k vs acc ->
+               List.fold_left (fun acc v -> add_metadata acc ~key:k ~value:v) acc vs)
+             (all_metadata ann_in) fresh)
       | Some h when Hierarchy.to_string h <> Hierarchy.to_string (hierarchy ann_in) ->
         Exception.raise __FUNCTION__ IO_Format
           "Tabular input declares a hierarchy that differs from the register's; \
@@ -1874,7 +1998,7 @@ module Tabular: Format_t = struct
        level, which is exactly what a depth-first walk of this forest gives it,
        whatever order the rows arrived in. *)
     let ordered = ref [] and reached = Hashtbl.create 64 in
-    let rec walk id =
+    let rec walk parent_path id =
       (* A feature reached twice means the parent links are not a forest.  The
          completeness check below would not catch it on its own, since the count
          could still come out right. *)
@@ -1884,6 +2008,19 @@ module Tabular: Format_t = struct
       Hashtbl.replace reached id ();
       let row = Hashtbl.find by_id id in
       let path = path_of_field (field row 3 "features" 10) in
+      (* The parent column and the path column describe one forest twice, and
+         [Annotation.add] places a feature by its path alone.  If they disagree
+         the file has no single meaning -- which of the two descriptions wins
+         would depend on row order, and row order carrying no meaning is the
+         whole point of the format. *)
+      (match List.rev path with
+       | _ :: rev_prefix when List.rev rev_prefix = parent_path -> ()
+       | _ ->
+         Exception.raise __FUNCTION__ IO_Format
+           (Printf.sprintf
+              "Feature %S has path %S, which does not sit directly below %S, the path of the \
+               feature its parent column names"
+              id (path_to_field path) (path_to_field parent_path)));
       let attrs =
         try List.rev (Hashtbl.find attrs_of id) with Not_found -> [] in
       let attr_map =
@@ -1908,8 +2045,8 @@ module Tabular: Format_t = struct
       List.accum ordered (path, feature);
       match Hashtbl.find_opt children id with
       | None -> ()
-      | Some kids -> List.iter walk (List.rev kids) in
-    List.iter walk (List.rev !roots);
+      | Some kids -> List.iter (walk path) (List.rev kids) in
+    List.iter (walk [ implicit_root_name ]) (List.rev !roots);
     (* Every row has to have been reached.  A row whose parent column names an
        id that is not in the table, and a cycle among the parent links, are both
        invisible to the walk -- it simply never arrives -- so without this check
@@ -1945,7 +2082,7 @@ module Tabular: Format_t = struct
       end else begin
         Buffer.add_string buf line;
         Buffer.add_char buf '\n'
-      end) (String.Split.on_char_as_list '\n' s);
+      end) (lines_of s);
     flush ();
     let section name =
       match Hashtbl.find_opt sections name with
@@ -2028,7 +2165,8 @@ module Tbl: Writer_t = struct
              still has to travel, and /codon_start is the only slot for it.
              It is 1-based against the 0-based phase. *)
           (match feature.phase with
-           | Some n when not !has_codon_start -> Printf.bprintf buf "\t\t\tcodon_start\t%d\n" (n + 1)
+           | Some n when not !has_codon_start ->
+             Printf.bprintf buf "\t\t\tcodon_start\t%d\n" (n + 1)
            | _ -> ()))) (List.rev !order)
   let to_string = to_string_via_buffer to_buffer
   let to_file = to_file_via_buffer to_buffer
@@ -2083,7 +2221,6 @@ module Format = struct
            (String.concat ", " (List.map fst F.dialects)))
 end
 
-
 (* A serialisable handle on everything that can be WRITTEN, which is every
    format plus the write-only feature table.  Keeping it distinct from
    [Format.t] is what stops [--from-tbl] being expressible: the reading side of
@@ -2109,3 +2246,4 @@ module Writer = struct
     | "tbl" | "feature-table" | "featuretable" -> Tbl
     | _ -> Format (Format.of_string s)
 end
+
