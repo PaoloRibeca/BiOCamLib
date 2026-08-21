@@ -184,13 +184,20 @@ module Annotation:
       close_in ic;
       res
     (* *)
+    (* [Initialize] rather than [Algorithm]: asking for a feature's sequence
+       when no reference has been attached is an ordinary mistake by the caller,
+       not a broken invariant inside the library.  [Exception.handle] prints the
+       usage and a plain FATAL line for the first, but treats the second as a
+       bug -- dumping a backtrace and inviting the user to report it, for
+       something they can simply fix by loading a reference. *)
     let require_reference ann who =
       match reference ann with
       | Some r -> r
       | None ->
-        Exception.raise __FUNCTION__ Algorithm
-          (Printf.sprintf "%s: no reference set on the annotation"
-             who)
+        Exception.raise __FUNCTION__ Initialize
+          (Printf.sprintf
+             "%s: no reference sequence is attached to this annotation -- load one before \
+              asking for a feature's sequence" who)
     (* Read each interval on the FORWARD strand and complement the stitched
        result once at the end, rather than reading a minus-strand feature's
        intervals as Reverse.  [Sequences.Reference] keeps the reverse strand in
@@ -1714,21 +1721,34 @@ module Tabular: Format_t = struct
       let rest = encode (String.sub k 1 (String.length k - 1)) in
       match k.[0] with
       | '!' -> "%21" ^ rest
+      (* A leading [#] would make the row look like a table header, and a
+         leading [>] like the start of the reference. *)
       | '#' -> "%23" ^ rest
+      | '>' -> "%3E" ^ rest
       | _ -> encode k
+  (* The per-sequence translation table, recorded only when it is not the
+     standard one, so an ordinary annotation carries no such rows at all. *)
+  let table_key name = own_key ("table:" ^ name)
   (* [id] is the content hash and the join key; [feature_id] is the feature's
      OWN identifier, which is not always derivable from an attribute -- the
      GenBank reader names a record's source feature after its LOCUS -- and so
      needs a column of its own or it is simply lost.  The name matches the
      column --validate-report already uses for the same thing. *)
+  (* A table opens with ONE line naming its columns, prefixed with [#].  That
+     single rule replaces a banner plus a bare header row, and it is enough on
+     its own: the three headers differ, so in the one-document form the header
+     IS the table's identity and nothing else has to be agreed on.  A [>] line
+     opens the reference, which is plain FASTA. *)
   let features_header =
-    "id\tparent\tseq\tpath\tfeature_id\tsource\tscore\tstrand\tphase\tintervals"
-  let attributes_header = "id\tkey\tvalue"
-  let metadata_header = "key\tvalue"
+    "#id\tparent\tseq\tpath\tfeature_id\tsource\tscore\tstrand\tphase\tintervals"
+  let attributes_header = "#id\tkey\tvalue"
+  let metadata_header = "#key\tvalue"
   let features_suffix = ".AnnotationFeatures.txt"
   let attributes_suffix = ".AnnotationAttributes.txt"
   let metadata_suffix = ".AnnotationMetadata.txt"
-  let banner = "#!annotation-tabular"
+  let reference_suffix = ".AnnotationReference.fasta"
+  (* Wrapped at the width every FASTA is wrapped at. *)
+  let fasta_width = 60
   let single_document prefix = String.length prefix >= 5 && String.sub prefix 0 5 = "/dev/"
   (* A prefix under [/dev/*] selects the one-document form, as it does for the
      binary writers.  So does an ordinary path that turns out to BE a document:
@@ -1738,8 +1758,6 @@ module Tabular: Format_t = struct
     match open_in path with
     | exception _ -> false
     | ic ->
-      let starts_with p s =
-        String.length s >= String.length p && String.sub s 0 (String.length p) = p in
       (* [read] tolerates a preamble before the first banner, so the sniff has
          to skip the same thing rather than decide on line one -- otherwise a
          document carrying a comment header is taken for a prefix and the reader
@@ -1758,10 +1776,11 @@ module Tabular: Format_t = struct
           match input_line ic with
           | exception (End_of_file | Sys_error _) -> false
           | line ->
-            if String.trim line = "" then scan (n - 1)
-            else if starts_with "#!" line then starts_with banner line
-            else if line.[0] = '#' then scan (n - 1)
-            else false in
+            let trimmed = String.trim line in
+            if trimmed = "" then scan (n - 1)
+            else
+              trimmed = metadata_header || trimmed = features_header
+              || trimmed = attributes_header in
       let verdict = scan 100 in
       close_in_noerr ic;
       verdict
@@ -1772,15 +1791,39 @@ module Tabular: Format_t = struct
   type rendered_t = {
     r_features: Buffer.t;
     r_attributes: Buffer.t;
-    r_metadata: Buffer.t
+    r_metadata: Buffer.t;
+    (* Empty when no reference is attached, which is the GFF3-shaped case. *)
+    r_reference: Buffer.t
   }
   let render ann =
     let r = {
       r_features = Buffer.create 4096;
       r_attributes = Buffer.create 4096;
-      r_metadata = Buffer.create 256
+      r_metadata = Buffer.create 256;
+      r_reference = Buffer.create 4096
     } in
+    (* The reference goes out as FASTA rather than into a table: a sequence is
+       not tabular data, and a 30 kbp cell would be the same category error as
+       packing attributes into one column.  As FASTA it is also readable by
+       every other tool it might be handed to, and comes back in through the
+       reader this library already has. *)
     Printf.bprintf r.r_metadata "%s\n" metadata_header;
+    (match reference ann with
+     | None -> ()
+     | Some reference ->
+       Sequences.Reference.iter (fun ~name ~seq ~table ->
+         if table <> Sequences.Translation.Table_1 then
+           Printf.bprintf r.r_metadata "%s\t%s\n" (table_key name)
+             (Sequences.Translation.to_string table);
+         Printf.bprintf r.r_reference ">%s\n" name;
+         let n = String.length seq in
+         let i = ref 0 in
+         while !i < n do
+           let w = min fasta_width (n - !i) in
+           Buffer.add_string r.r_reference (String.sub seq !i w);
+           Buffer.add_char r.r_reference '\n';
+           i := !i + w
+         done) reference);
     Printf.bprintf r.r_metadata "%s\t%s\n" (own_key "format-version") format_version;
     Printf.bprintf r.r_metadata "%s\t%s\n" (own_key "hash-recipe") hash_recipe;
     Printf.bprintf r.r_metadata "%s\t%s\n" (own_key "hierarchy")
@@ -1869,25 +1912,28 @@ module Tabular: Format_t = struct
     r
   let to_buffer buf ann =
     let r = render ann in
-    Printf.bprintf buf "%s %s\n" banner format_version;
-    Buffer.add_string buf "#!metadata\n";
+    (* Each table already opens with its own header line, so they simply
+       follow one another; the reference, being FASTA, goes last. *)
     Buffer.add_buffer buf r.r_metadata;
-    Buffer.add_string buf "#!features\n";
     Buffer.add_buffer buf r.r_features;
-    Buffer.add_string buf "#!attributes\n";
-    Buffer.add_buffer buf r.r_attributes
+    Buffer.add_buffer buf r.r_attributes;
+    Buffer.add_buffer buf r.r_reference
   let to_string = to_string_via_buffer to_buffer
   let to_file ann prefix =
     if single_document prefix then to_file_via_buffer to_buffer ann prefix
     else begin
       let r = render ann in
       List.iter (fun (suffix, buf) ->
-        let oc = open_out (prefix ^ suffix) in
-        Buffer.output_buffer oc buf;
-        close_out oc)
+        (* No reference means no FASTA file, rather than an empty one. *)
+        if suffix <> reference_suffix || Buffer.length buf > 0 then begin
+          let oc = open_out (prefix ^ suffix) in
+          Buffer.output_buffer oc buf;
+          close_out oc
+        end)
         [ features_suffix, r.r_features;
           attributes_suffix, r.r_attributes;
-          metadata_suffix, r.r_metadata ]
+          metadata_suffix, r.r_metadata;
+          reference_suffix, r.r_reference ]
     end
   (* Reading.  Rows are collected first and the forest rebuilt from the parent
      column afterwards, so neither file has to arrive in any particular order:
@@ -1902,31 +1948,38 @@ module Tabular: Format_t = struct
     |> List.map (fun l ->
       let n = String.length l in
       if n > 0 && l.[n - 1] = '\r' then String.sub l 0 (n - 1) else l)
+  (* Split one table's text into rows.  A leading [#] line is the header this
+     table was recognised by and is checked; its absence is an error rather than
+     something to guess around.  Only a genuinely EMPTY line is filler --
+     trimming first would discard a metadata row whose key and value are both
+     empty, which a bare [##] pragma in a GFF3 file produces. *)
   let split_rows header what s =
-    (* Only a genuinely empty line is filler.  Trimming first would also discard
-       a metadata row whose key and value are both empty -- which a bare [##]
-       pragma in a GFF3 file produces -- and lose it without a word. *)
     let lines = lines_of s |> List.filter (fun l -> l <> "") in
     match lines with
     | [] -> []
-    | first :: rest ->
-      if String.trim first <> header then
-        Exception.raise __FUNCTION__ IO_Format
-          (Printf.sprintf "Malformed %s table: expected header %S, found %S" what header
-             (String.trim first));
+    | first :: rest when String.trim first = header ->
       List.map (fun l -> String.Split.on_char_as_array '\t' l) rest
+    | first :: _ ->
+      Exception.raise __FUNCTION__ IO_Format
+        (Printf.sprintf "Malformed %s table: expected header %S, found %S" what header
+           (String.trim first))
   let field row i what n =
     if Array.length row <> n then
       Exception.raise __FUNCTION__ IO_Format
         (Printf.sprintf "Malformed %s row: expected %d fields, found %d" what n
            (Array.length row));
     row.(i)
-  let read_tables ann_in ~features ~attributes ~metadata =
+  let read_tables ann_in ~features ~attributes ~metadata ~reference_fasta =
     (* Metadata first: it carries the hierarchy the rest has to validate
        against. *)
-    let file_hierarchy = ref None and plain_metadata = ref [] in
+    let file_hierarchy = ref None and plain_metadata = ref []
+    and tables = ref StringMap.empty in
+    let table_prefix = own_key "table:" in
     List.iter (fun row ->
       let k = field row 0 "metadata" 2 and v = field row 1 "metadata" 2 in
+      let is_table =
+        String.length k > String.length table_prefix
+        && String.sub k 0 (String.length table_prefix) = table_prefix in
       match k with
       | "!hierarchy" -> file_hierarchy := Some (Hierarchy.of_string (decode v))
       | "!format-version" ->
@@ -1935,6 +1988,11 @@ module Tabular: Format_t = struct
             (Printf.sprintf "Unsupported tabular format version %S (this is %S)" (decode v)
                format_version)
       | "!hash-recipe" -> ()
+      | _ when is_table ->
+        let name =
+          decode (String.sub k (String.length table_prefix)
+                    (String.length k - String.length table_prefix)) in
+        tables := StringMap.add name (Sequences.Translation.of_string (decode v)) !tables
       | _ -> List.accum plain_metadata (decode k, decode v))
       (split_rows metadata_header "metadata" metadata);
     let is_empty = fold (fun ~path:_ _ _ -> false) true ann_in in
@@ -2059,27 +2117,59 @@ module Tabular: Format_t = struct
               parent links contain a cycle" id)) by_id;
     add_dfs_with_seq_bloom ann (List.rev !ordered);
     List.iter (fun (k, v) -> ann := add_metadata !ann ~key:k ~value:v) (List.rev !plain_metadata);
+    (* The reference travels as FASTA beside the tables.  Load it with the
+       identity linter: what was written is what the register held, and folding
+       an IUPAC code to N on the way back in would corrupt what a round trip is
+       supposed to preserve.  Sequences with no recorded table get the standard
+       one, which is why only the others are written out. *)
+    if reference_fasta <> "" then begin
+      let base =
+        match Annotation.reference !ann with
+        | Some r -> r
+        | None -> Sequences.Reference.empty in
+      ann :=
+        Annotation.set_reference !ann
+          (Sequences.Reference.add_from_fasta_string ~linter:Fun.id ~tables:!tables base
+             reference_fasta)
+    end;
     cleanup_values !ann;
     !ann
+  (* One document.  A [#] line opens a table and names it -- the three headers
+     differ, so nothing beyond the header itself has to be agreed on -- and a
+     [>] line opens the reference, which is plain FASTA and runs to the end
+     unless another [#] header follows it.  A row before any header, or a header
+     that names no known table, is an error rather than something to skip. *)
   let read ann_in s =
-    (* One document with [#!] banners.  Anything before the first banner is the
-       preamble and is ignored, so that a hand-written file may carry a comment
-       header. *)
     let sections = Hashtbl.create 4 in
     let current = ref None and buf = Buffer.create 1024 in
     let flush () =
-      match !current with
-      | None -> ()
-      | Some name -> Hashtbl.replace sections name (Buffer.contents buf) in
+      Option.iter (fun name -> Hashtbl.replace sections name (Buffer.contents buf)) !current in
+    let open_section name line =
+      flush ();
+      Buffer.clear buf;
+      current := Some name;
+      Buffer.add_string buf line;
+      Buffer.add_char buf '\n' in
     List.iter (fun line ->
-      if String.length line > 2 && String.sub line 0 2 = "#!" then begin
+      if line = "" then ()
+      else if line.[0] = '#' then begin
+        let trimmed = String.trim line in
+        if trimmed = features_header then open_section "features" line
+        else if trimmed = attributes_header then open_section "attributes" line
+        else if trimmed = metadata_header then open_section "metadata" line
+        else
+          Exception.raise __FUNCTION__ IO_Format
+            (Printf.sprintf "Tabular input: %S names no known table" trimmed)
+      end else if line.[0] = '>' && !current <> Some "reference" then begin
         flush ();
         Buffer.clear buf;
-        current :=
-          (match String.Split.on_char_as_list ' ' (String.sub line 2 (String.length line - 2)) with
-           | name :: _ -> Some name
-           | [] -> None)
+        current := Some "reference";
+        Buffer.add_string buf line;
+        Buffer.add_char buf '\n'
       end else begin
+        if !current = None then
+          Exception.raise __FUNCTION__ IO_Format
+            (Printf.sprintf "Tabular input: row %S appears before any table header" line);
         Buffer.add_string buf line;
         Buffer.add_char buf '\n'
       end) (lines_of s);
@@ -2089,9 +2179,10 @@ module Tabular: Format_t = struct
       | Some s -> s
       | None ->
         Exception.raise __FUNCTION__ IO_Format
-          (Printf.sprintf "Tabular input has no %S section" name) in
+          (Printf.sprintf "Tabular input has no %S table" name) in
     read_tables ann_in ~features:(section "features") ~attributes:(section "attributes")
       ~metadata:(section "metadata")
+      ~reference_fasta:(Option.value ~default:"" (Hashtbl.find_opt sections "reference"))
   let read_from_file ann prefix =
     if single_document prefix || looks_like_document prefix then read ann (read_file prefix)
     else
@@ -2099,6 +2190,11 @@ module Tabular: Format_t = struct
         ~features:(read_file (prefix ^ features_suffix))
         ~attributes:(read_file (prefix ^ attributes_suffix))
         ~metadata:(read_file (prefix ^ metadata_suffix))
+        (* A register with no reference writes no FASTA, so its absence is
+           ordinary rather than an error. *)
+        ~reference_fasta:
+          (if Sys.file_exists (prefix ^ reference_suffix) then read_file (prefix ^ reference_suffix)
+           else "")
   let of_string ?(hierarchy = default_hierarchy) s = read (create hierarchy) s
   let of_file ?(hierarchy = default_hierarchy) prefix = read_from_file (create hierarchy) prefix
 end

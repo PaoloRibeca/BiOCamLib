@@ -892,6 +892,17 @@ module Reference:
     (* The last optional argument is a file containing translation tables.
         If they are absent, Table_1 (Standard) is assumed *)
     val add_from_fasta: ?linter:(string -> string) -> ?tables:string -> t -> string -> t
+    (* The in-memory twin of [add_from_fasta], for a caller that already holds
+       the FASTA rather than a path to it -- a GenBank ORIGIN block, or the
+       reference a tabular annotation carries alongside its tables.  Its
+       [?tables] is the resolved map rather than the name of a file to read one
+       from, since such a caller has no file either. *)
+    val add_from_fasta_string:
+      ?linter:(string -> string) -> ?tables:Translation.t StringMap.t -> t -> string -> t
+    (* Walk the FORWARD strand only.  Both are stored, so that a lookup on
+       either is O(1), but they are one sequence and a caller writing the
+       reference out wants it once. *)
+    val iter: (name:string -> seq:string -> table:Translation.t -> unit) -> t -> unit
     val find: t -> string Types.stranded_t -> string * Translation.t
     val length: t -> string Types.stranded_t -> int
     val get_sequence: t -> Types.stranded_interval_t -> string
@@ -905,7 +916,8 @@ module Reference:
     type t = (string * Translation.t) StrandedStringMap.t
     let empty = StrandedStringMap.empty
     let fasta_name_re = Str.regexp "^>"
-    let add_from_fasta ?(linter = Lint.dnaize ~keep_lowercase:false ~keep_dashes:false) ?(tables = "") obj input =
+    let rec add_from_fasta ?(linter = Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
+                           ?(tables = "") obj input =
       let tables =
         let res = ref StringMap.empty in
         if tables <> "" then begin
@@ -930,8 +942,23 @@ module Reference:
           with End_of_file -> ()
         end;
         !res in
-      let input = open_in input
-      and name = ref "" and seq = Buffer.create 128 and res = ref obj in
+      let ic = open_in input in
+      let res = add_from_lines ~linter ~tables obj (fun () -> input_line ic) in
+      close_in ic;
+      res
+    and add_from_fasta_string ?(linter = Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
+                              ?(tables = StringMap.empty) obj s =
+      let lines = ref (String.Split.on_char_as_list '\n' s) in
+      add_from_lines ~linter ~tables obj
+        (fun () ->
+          match !lines with
+          | [] -> raise End_of_file
+          | l :: rest -> lines := rest; l)
+    (* The body both entry points share.  [next_line] raises [End_of_file] when
+       the input is exhausted, so a file is still read incrementally rather than
+       slurped. *)
+    and add_from_lines ~linter ~tables obj next_line =
+      let name = ref "" and seq = Buffer.create 128 and res = ref obj in
       let process_seq () =
         if !name <> "" && Buffer.length seq > 0 then begin
           let table =
@@ -949,10 +976,12 @@ module Reference:
         end in
       begin try
         while true do
-          let line = input_line input in
+          let line = next_line () in
           let line =
+            (* Guarded: an empty line has no last character, and a FASTA may
+               well contain one -- reading it unguarded raised. *)
             let red_len = String.length line - 1 in
-            if line.[red_len] = '\r' then
+            if red_len >= 0 && line.[red_len] = '\r' then
               String.sub line 0 red_len
             else
               line in
@@ -964,10 +993,14 @@ module Reference:
             Buffer.add_string seq (linter line)
         done
       with End_of_file ->
-        process_seq ();
-        close_in input
+        process_seq ()
       end;
       !res
+    let iter f obj =
+      StrandedStringMap.iter (fun k (seq, table) ->
+        match k with
+        | Types.Forward name -> f ~name ~seq ~table
+        | Types.Reverse _ -> ()) obj
     let find obj str_name =
       try
         StrandedStringMap.find str_name obj

@@ -317,9 +317,12 @@ let test_feature_sequence () =
          (genbank ~seq:"ttgcccgggtaagcgactagcgcatcgtca"
             [ "     CDS             <1..15" ]
           |> A.GenBank.of_string));
-    (* Extraction needs a reference; asking without one is a programmer error,
-       not a data error, so it raises rather than returning "". *)
-    Testing.check_raises ~re:".*no reference set.*"
+    (* Extraction needs a reference, so asking without one raises rather than
+       returning "".  It raises as Initialize, not Algorithm: it is an ordinary
+       mistake by the caller, and Exception.handle would otherwise treat it as a
+       library bug -- printing a backtrace and inviting a report for something
+       the user fixes by loading a reference. *)
+    Testing.check_raises ~re:".*no reference sequence is attached.*"
       "extracting without a reference raises"
       (fun () ->
         let ann = A.GFF3.of_string (gff3 [ "chr1\tdemo\tgene\t1\t9\t.\t+\t.\tID=g1" ]) in
@@ -595,33 +598,30 @@ let test_attribute_order () =
 
 (* The tabular format. *)
 
-(* Reverse the DATA rows of one [#!] section of a tabular document, leaving its
-   banner and header row where they are.  Used to show that row order carries no
-   meaning: the parent column is what rebuilds the forest. *)
+(* The three table headers.  Each opens its table and, being distinct, names it:
+   that single rule is the format's whole framing. *)
+let features_header =
+  "#id\tparent\tseq\tpath\tfeature_id\tsource\tscore\tstrand\tphase\tintervals"
+let attributes_header = "#id\tkey\tvalue"
+let metadata_header = "#key\tvalue"
+
+(* Reverse the DATA rows of the table opened by [wanted], leaving its header
+   where it is.  Used to show that row order carries no meaning: the parent
+   column is what rebuilds the forest. *)
 let reverse_section wanted doc =
-  let section = ref "" and header_seen = ref false and out = ref [] and held = ref [] in
+  let inside = ref false and out = ref [] and held = ref [] in
   let release () =
     List.iter (fun l -> List.accum out l) !held;
     held := [] in
   List.iter (fun line ->
-    let is_banner = String.length line > 2 && String.sub line 0 2 = "#!" in
-    if is_banner then begin
+    if line <> "" && line.[0] = '#' then begin
       release ();
-      let banner = String.sub line 2 (String.length line - 2) in
-      section :=
-        (match String.Split.on_char_as_list ' ' banner with
-         | n :: _ -> n
-         | [] -> "");
-      header_seen := false;
+      inside := line = wanted;
       List.accum out line
-    end else if !section = wanted && line <> "" then begin
-      if not !header_seen then begin
-        header_seen := true;
-        List.accum out line
-      end else
-        (* Accumulated in reverse, then released in that order. *)
-        held := line :: !held
-    end else begin
+    end else if !inside && line <> "" then
+      (* Accumulated in reverse, then released in that order. *)
+      held := line :: !held
+    else begin
       release ();
       List.accum out line
     end) (String.Split.on_char_as_list '\n' doc);
@@ -757,26 +757,28 @@ let test_tabular () =
       ~expected:(as_set (describe shared))
       (as_set
          (describe
-            (A.Tabular.of_string (reverse_section "features" (A.Tabular.to_string shared)))));
+            (A.Tabular.of_string (reverse_section features_header (A.Tabular.to_string shared)))));
     Testing.check_string "the attributes table may be reordered"
       ~expected:(describe shared)
       (describe
-         (A.Tabular.of_string (reverse_section "attributes" (A.Tabular.to_string shared))));
+         (A.Tabular.of_string (reverse_section attributes_header (A.Tabular.to_string shared))));
     (* A malformed table is refused rather than half-read. *)
-    Testing.check_raises ~re:".*expected header.*"
-      "a table with the wrong header is refused"
-      (fun () ->
-        A.Tabular.of_string
-          "#!metadata\nkey\tvalue\n#!features\nwrong\theader\n#!attributes\nid\tkey\tvalue\n");
+    (* A [#] line matching none of the three headers names no table, so it can
+       be neither a row nor something to skip. *)
+    Testing.check_raises ~re:".*names no known table.*"
+      "a header naming no known table is refused"
+      (fun () -> A.Tabular.of_string (metadata_header ^ "\n#wrong\theader\n"));
+    Testing.check_raises ~re:".*before any table header.*"
+      "a row appearing before the first header is refused"
+      (fun () -> A.Tabular.of_string "orphan\trow\n");
     (* A row the walk never arrives at, and an attributes row attaching to
        nothing, would both be dropped without a word.  The house rule is that a
        defined format never fails silently. *)
     let doc_with rows attrs =
       String.concat "\n"
-        ([ "#!annotation-tabular 1"; "#!metadata"; "key\tvalue"; "!format-version\t1";
-           "!hierarchy\t(source (gene, CDS))"; "#!features";
-           "id\tparent\tseq\tpath\tfeature_id\tsource\tscore\tstrand\tphase\tintervals" ]
-         @ rows @ [ "#!attributes"; "id\tkey\tvalue" ] @ attrs @ [ "" ]) in
+        ([ metadata_header; "!format-version\t1"; "!hierarchy\t(source (gene, CDS))";
+           features_header ]
+         @ rows @ [ attributes_header ] @ attrs @ [ "" ]) in
     Testing.check_raises ~re:".*unreachable.*"
       "a feature whose parent is not in the table is refused"
       (fun () ->
@@ -883,9 +885,61 @@ let test_tabular () =
        match A.Annotation.get_metadata merged "CARRIED" with
        | v :: _ -> v
        | [] -> "(dropped)");
-    Testing.check_raises ~re:".*has no .* section.*"
-      "a document missing a section is refused"
-      (fun () -> A.Tabular.of_string "#!metadata\nkey\tvalue\n");
+    (* The reference is register state, and a GenBank record carries its own, so
+       a format that claims to be the register's text twin has to carry it too
+       -- otherwise a GenBank -> tabular pipeline loses the sequence silently
+       and every later extraction fails for want of it.  It travels as FASTA
+       beside the tables: a sequence is not tabular data. *)
+    Testing.check_string "the reference travels with the tables"
+      ~expected:"ATGCCCGGGTAAGCGACTAGCGCATCGTCA"
+      (let back = round_trip gb in
+       match A.Annotation.reference back with
+       | None -> "(no reference)"
+       | Some r -> Sequences.Reference.find r (T.Forward "demo01") |> fst);
+    (* Which is the property that actually matters: extraction has to keep
+       working on the far side of a round trip. *)
+    Testing.check_string "a feature's DNA is unchanged by a round trip"
+      ~expected:
+        (match feature_at gb "CDS" with
+         | Some (_, f) -> A.Annotation.feature_dna gb f
+         | None -> "(no CDS)")
+      (let back = round_trip gb in
+       match feature_at back "CDS" with
+       | Some (_, f) -> A.Annotation.feature_dna back f
+       | None -> "(no CDS)");
+    Testing.check_string "a feature's protein is unchanged by a round trip"
+      ~expected:
+        (match feature_at gb "CDS" with
+         | Some (_, f) -> A.Annotation.feature_protein gb f
+         | None -> "(no CDS)")
+      (let back = round_trip gb in
+       match feature_at back "CDS" with
+       | Some (_, f) -> A.Annotation.feature_protein back f
+       | None -> "(no CDS)");
+    (* A per-sequence translation table is recorded only when it is not the
+       standard one, so an ordinary annotation carries no such rows -- but when
+       there is one it has to survive, or the protein changes. *)
+    Testing.check_string "a non-standard per-sequence translation table survives"
+      ~expected:"11"
+      (let with_table =
+         A.Annotation.set_reference gb
+           (Sequences.Reference.add_from_fasta_string ~linter:Fun.id
+              ~tables:(StringMap.singleton "demo01" Sequences.Translation.Table_11)
+              Sequences.Reference.empty ">demo01\nACGTACGTAC\n") in
+       match A.Annotation.reference (round_trip with_table) with
+       | None -> "(no reference)"
+       | Some r ->
+         Sequences.Reference.find r (T.Forward "demo01")
+         |> snd |> Sequences.Translation.to_string);
+    (* A register with no reference writes no FASTA at all, rather than an
+       empty one, and reads back none. *)
+    Testing.check "an annotation with no reference carries none"
+      (fun () ->
+        let gff_only = gff3 [ "chr1\tdemo\tgene\t1\t9\t.\t+\t.\tID=g1" ] |> A.GFF3.of_string in
+        A.Annotation.reference (round_trip gff_only) = None);
+    Testing.check_raises ~re:".*has no .* table.*"
+      "a document missing a table is refused"
+      (fun () -> A.Tabular.of_string (metadata_header ^ "\n"));
     (* The feature's own identifier is not always derivable from an attribute --
        the GenBank reader names a record's source feature after its LOCUS -- so
        it needs a column of its own.  Without one it was silently dropped, and

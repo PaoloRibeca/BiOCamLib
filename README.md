@@ -370,11 +370,16 @@ Writing takes a *prefix* and produces three tables:
 AnnoTools --from-genbank NC_000913.gb --to-tsv NC_000913
 ```
 ```
-NC_000913.AnnotationFeatures.txt     id parent seq path feature_id source score strand phase intervals
-NC_000913.AnnotationAttributes.txt   id key value
-NC_000913.AnnotationMetadata.txt     key value
+NC_000913.AnnotationFeatures.txt     #id parent seq path feature_id source score strand phase intervals
+NC_000913.AnnotationAttributes.txt   #id key value
+NC_000913.AnnotationMetadata.txt     #key value
+NC_000913.AnnotationReference.fasta  the sequence, as FASTA
 ```
-None of them contains a nested syntax, and every one has a fixed number of columns, so `cat`ting two together is meaningful and adding a feature with a novel attribute key does not reshape any other row. Attributes live in their own relation rather than packed into a column, which is what lets a multi-valued attribute be several rows and a valueless one be a row with an empty third field. The metadata table carries the hierarchy the annotation was read under, plus any file-level pragmas, so a register written this way can be read back without being told its schema again.
+Each table opens with a single `#`-prefixed line naming its columns. That one line is the whole of the framing: the three headers differ, so in the single-document form below the header *is* the table's identity and nothing else has to be agreed on.
+
+None of the tables contains a nested syntax, and every one has a fixed number of columns, so `cat`ting two together is meaningful and adding a feature with a novel attribute key does not reshape any other row. Attributes live in their own relation rather than packed into a column, which is what lets a multi-valued attribute be several rows and a valueless one be a row with an empty third field. The metadata table carries the hierarchy the annotation was read under, plus any file-level pragmas, so a register written this way can be read back without being told its schema again.
+
+The reference sequence travels too, as FASTA rather than as a fourth table &mdash; a sequence is not tabular data, and a 30 kbp cell would be the same category error as packing attributes into one column. This matters because a GenBank record is self-contained: without it, a GenBank &rarr; tabular pipeline would drop the sequence silently and every later `--extract-*` would fail for want of it. A register with no reference simply writes no FASTA. Per-sequence translation tables ride in the metadata table as `!table:<name>` rows, and only when they are not the standard code.
 
 A feature's `id` is a content hash &mdash; 64-bit FNV-1a over its identity, chained through its parent &mdash; not a row number. It is therefore stable when features are inserted, and independent of row order: the `parent` column is what rebuilds the forest, so either table can be sorted and still `join`ed on the `id`. Chaining through the parent is what keeps the identical exons that alternative transcripts share distinguishable.
 
@@ -382,7 +387,7 @@ Reading takes the same prefix:
 ```bash
 AnnoTools --from-tsv NC_000913 --to-genbank round-tripped.gb
 ```
-For pipelines, a prefix under `/dev/*` &mdash; or a plain file that turns out to be one &mdash; selects a single-document form in which the three tables are introduced by `#!features`, `#!attributes` and `#!metadata` banners, so `--to-tsv /dev/stdout` composes with the rest of a shell pipeline. Note that the reference sequence is *not* part of the format, exactly as it is not part of GFF3: supply it with `--from-fasta` when you need one.
+For pipelines, a prefix under `/dev/*` &mdash; or a plain file that turns out to be one &mdash; selects a single-document form in which the tables simply follow one another, each recognised by its own `#` header, with the FASTA last. So `--to-tsv /dev/stdout` composes with the rest of a shell pipeline.
 
 ### Submitting an annotation
 
