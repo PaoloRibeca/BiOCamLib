@@ -381,6 +381,8 @@ None of the tables contains a nested syntax, and every one has a fixed number of
 
 The reference sequence travels too, as FASTA rather than as a fourth table &mdash; a sequence is not tabular data, and a 30 kbp cell would be the same category error as packing attributes into one column. This matters because a GenBank record is self-contained: without it, a GenBank &rarr; tabular pipeline would drop the sequence silently and every later `--extract-*` would fail for want of it. A register with no reference simply writes no FASTA. Per-sequence translation tables ride in the metadata table as `!table:<name>` rows, and only when they are not the standard code.
 
+The sequence is written on a single line, the way `FASTools` writes sequence, so that every line of a tabular document is one whole record and `awk`, `cut` and `sort` can take it a line at a time. The `--extract-*` actions do the same. GFF3's `##FASTA` section is the exception, and stays wrapped at 60 because third-party GFF3 readers expect it; `--fasta-width <n>` overrides all three at once, with `0` meaning one line per sequence.
+
 A feature's `id` is a content hash &mdash; 64-bit FNV-1a over its identity, chained through its parent &mdash; not a row number. It is therefore stable when features are inserted, and independent of row order: the `parent` column is what rebuilds the forest, so either table can be sorted and still `join`ed on the `id`. Chaining through the parent is what keeps the identical exons that alternative transcripts share distinguishable.
 
 Reading takes the same prefix:
@@ -593,7 +595,7 @@ AnnoTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is AnnoTools version 2 [21-Aug-2026]
+This is AnnoTools version 3 [21-Aug-2026]
  compiled against: BiOCamLib version 638 [21-Aug-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
@@ -688,6 +690,7 @@ They are set immediately.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
+| `--fasta-width` | _&lt;non\_negative\_integer&gt;_ |  wrap sequence lines at this width wherever FASTA is emitted  \('\-\-to\-gff3', '\-\-to\-tsv' and the '\-\-extract\-\*' actions\),  with '0' meaning one line per sequence\.  Without this option  each format keeps its own convention: GFF3 wraps its  '\#\#FASTA' section at 60, while the tabular format and the  extraction actions emit one line per sequence, so that every  line of their output is a whole record | <ins>default=<mark>_each format's own convention_</mark></ins> |
 | `-v`<br>`--verbose` |  |  set verbose execution | <ins>default=<mark>_quiet execution_</mark></ins> |
 | `-V`<br>`--version` |  |  print version and exit |  |
 | `-h`<br>`--help` |  |  print syntax and exit |  |
