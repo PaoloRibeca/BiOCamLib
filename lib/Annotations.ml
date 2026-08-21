@@ -146,8 +146,13 @@ module Annotation:
 = struct
     include Annotations_Base.Annotation
     (* *)
-    (* Bumped when [feature_t] gained its [score] slot: an archive written
-       before that cannot be unmarshalled into the current record. *)
+    (* Bumped for two changes, neither of which an older archive survives:
+       [feature_t] gained its [score] slot, so the record shape differs; and
+       sibling lists are now stored most-recent-first, so an archive written in
+       insertion order would read back with every level reversed -- which,
+       being a shape the type still accepts, would corrupt silently rather than
+       fail.  The previous released version is 2026-05-09; no archive carrying
+       an intermediate value ever left this branch, so one bump covers both. *)
     let archive_version = "2026-08-21"
     let make_filename_binary = function
       | w when String.length w >= 5 && String.sub w 0 5 = "/dev/" -> w

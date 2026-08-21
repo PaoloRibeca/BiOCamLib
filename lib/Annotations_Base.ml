@@ -505,6 +505,16 @@ module Annotation:
       id = None;
       attributes = AttrMap.empty
     }
+    (* Siblings are stored MOST RECENT FIRST, not in insertion order.  [add]
+       always appends at one end and always drills through the node most
+       recently added at each level, so keeping that node at the head makes both
+       operations O(1); appending instead made each insertion copy the whole
+       sibling list, which cost O(n^2) per level and, on a flat input where
+       every feature is a top-level sibling, made a million-feature file take
+       hours rather than seconds.
+       The order is a private invariant -- [t] is abstract -- and the only cost
+       is that every traversal which cares about order reverses on the way in.
+       Nothing else may walk [sub] or [forest] directly. *)
     type node_t = {
       path: Path.t;
       feature: feature_t;
@@ -576,6 +586,8 @@ module Annotation:
               | Value.Hashed _ -> ()
             ) arr
           ) n.feature.attributes;
+          (* No [in_order] here: this pass rewrites each feature's attribute
+             array in place and does not depend on sibling order. *)
           walk_nodes n.sub
         ) nodes in
       walk_nodes t.forest;
@@ -623,20 +635,21 @@ module Annotation:
         let rec drill prefix nodes = function
           | [] -> assert false
           | [_] ->
-            nodes @ [{ path = leaf_path_id; feature; sub = [] }]
+            { path = leaf_path_id; feature; sub = [] } :: nodes
           | cat :: rest ->
             let prefix = prefix @ [cat] in
             let prefix_id = Path.intern t.paths prefix in
-            let rec patch_last = function
-              | [] ->
-                Exception.raise __FUNCTION__ IO_Format
-                  (Printf.sprintf
-                     "No parent of category %S to attach feature at %s"
-                     cat (path_to_string path))
-              | [n] when Path.equal n.path prefix_id ->
-                [{ n with sub = drill prefix n.sub rest }]
-              | n :: ns -> n :: patch_last ns in
-            patch_last nodes in
+            (* The parent has to be the node most recently added at this level,
+               which is the head.  Matching it costs one comparison rather than
+               a walk to the end and a rebuild of the spine behind us. *)
+            (match nodes with
+             | n :: ns when Path.equal n.path prefix_id ->
+               { n with sub = drill prefix n.sub rest } :: ns
+             | _ ->
+               Exception.raise __FUNCTION__ IO_Format
+                 (Printf.sprintf
+                    "No parent of category %S to attach feature at %s"
+                    cat (path_to_string path))) in
         let root_prefix = [ Hierarchy.name t.hierarchy ] in
         { t with forest = drill root_prefix t.forest rest }
       | _ ->
@@ -644,19 +657,25 @@ module Annotation:
           (Printf.sprintf
              "Cannot attach a feature directly at the hierarchy \
               root %S" (path_to_string path))
+    (* Siblings are held most-recent-first, so a traversal that must present
+       them in insertion order reverses each level on the way in.  That is one
+       reversal per sibling list per traversal, O(n) over the whole forest --
+       against the O(n^2) that keeping them in order on the way IN used to
+       cost. *)
+    let in_order = List.rev
     let iter f t =
       let rec walk nodes =
         List.iter (fun n ->
           f ~path:n.path n.feature;
           walk n.sub
-        ) nodes in
+        ) (in_order nodes) in
       walk t.forest
     let fold f init t =
       let rec walk acc nodes =
         List.fold_left (fun acc n ->
           let acc = f ~path:n.path n.feature acc in
           walk acc n.sub
-        ) acc nodes in
+        ) acc (in_order nodes) in
       walk init t.forest
     let iter_paths f t =
       iter (fun ~path feature ->

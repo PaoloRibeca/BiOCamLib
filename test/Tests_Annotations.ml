@@ -844,6 +844,60 @@ let test_add_invariants () =
     Testing.check_does_not_raise "adding a root-level feature succeeds"
       (fun () -> A.Annotation.add ann ~path:[ "annotation"; "gene" ] (feature "chr1")))
 
+(* Insertion cost.  Not a benchmark: a guard on the ASYMPTOTICS.  Sibling lists
+   are held most-recent-first precisely so that Annotation.add is O(1) at each
+   level; restore the append-and-walk-to-the-end version and every functional
+   check here still passes while a flat million-feature file goes from seconds
+   to hours.  The threshold is deliberately loose -- linear predicts about 4,
+   quadratic about 16 -- so that a loaded machine cannot make it flap. *)
+
+let test_insertion_cost () =
+  Testing.section "Insertion cost" (fun () ->
+    let h = A.Hierarchy.of_string "gene" in
+    let build n =
+      let ann = ref (A.Annotation.create h) in
+      let seq = A.Annotation.intern_seq !ann "chr1" in
+      let started = Unix.gettimeofday () in
+      for i = 0 to n - 1 do
+        ann :=
+          A.Annotation.add !ann ~path:[ "annotation"; "gene" ]
+            { A.Annotation.empty_feature with
+              A.Annotation.seq;
+              intervals = [ { T.low = i * 100; length = 50 } ] }
+      done;
+      Unix.gettimeofday () -. started in
+    (* Large enough that both measurements sit well clear of scheduler noise --
+       at a few thousand features the smaller one lands near a millisecond and
+       the ratio is mostly jitter. *)
+    let _warm = build 5000 in
+    let small = build 20000 in
+    let large = build 80000 in
+    let ratio = large /. Float.max small 1e-3 in
+    Testing.check
+      (Printf.sprintf
+         "quadrupling the feature count costs far less than quadratically \
+          (%.0f ms -> %.0f ms, %.1fx)" (small *. 1000.) (large *. 1000.) ratio)
+      (fun () -> ratio < 8.);
+    (* Order still has to be insertion order, which is the property the reversed
+       representation is quietly relying on. *)
+    Testing.check_string "features come back in insertion order"
+      ~expected:"0,100,200,300,400"
+      (let ann = ref (A.Annotation.create h) in
+       let seq = A.Annotation.intern_seq !ann "chr1" in
+       for i = 0 to 4 do
+         ann :=
+           A.Annotation.add !ann ~path:[ "annotation"; "gene" ]
+             { A.Annotation.empty_feature with
+               A.Annotation.seq;
+               intervals = [ { T.low = i * 100; length = 50 } ] }
+       done;
+       let acc = ref [] in
+       A.Annotation.iter (fun ~path:_ f ->
+         match f.A.Annotation.intervals with
+         | i :: _ -> List.accum acc (string_of_int i.T.low)
+         | [] -> ()) !ann;
+       List.rev !acc |> String.concat ","))
+
 (* Sequence handling that AnnoTools extraction depends on.  These live in
    Sequences rather than Annotations, but they decide whether --extract-dna
    would return the right bases, so they are pinned here until that action
@@ -896,4 +950,5 @@ let run () =
   test_tabular ();
   test_feature_table ();
   test_add_invariants ();
+  test_insertion_cost ();
   test_extraction_prerequisites ()
