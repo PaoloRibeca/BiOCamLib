@@ -395,6 +395,9 @@ module Translation:
       | Table_31 | Table_33
     val of_string: string -> t
     val to_string: t -> string
+    (* The table's human-readable name, or names: several NCBI tables cover
+       more than one clade and are described by a '|'-separated list. *)
+    val describe: t -> string
     val stops: ?frames:int list -> t -> string -> IntSet.t
     val starts:
           ?frames:int list -> ?get_alternative_start_codons:bool -> t -> string -> IntSet.t
@@ -528,9 +531,6 @@ module Translation:
             i := !i + 3
           done)
         frames
-    let raise_not_yet_implemented __FUNCTION__ t =
-      Exception.raise __FUNCTION__ Algorithm
-        (describe t |> Printf.sprintf "Translation table '%s' not yet implemented, sorry")
     (* Is [triplet] one of the alternative (non-ATG) start codons
        accepted by [table]?  The membership is derived from the
        NCBI translation-table catalogue; canonical [ATG] is
