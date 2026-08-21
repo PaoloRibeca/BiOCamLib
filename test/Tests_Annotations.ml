@@ -1224,6 +1224,70 @@ let test_extraction_prerequisites () =
     Testing.check_string "gaps survive reverse complement"
       ~expected:"C-G" (Sequences.Lint.rc "C-G"))
 
+(* FASTA line wrapping.  The three outputs that emit sequence disagree on
+   purpose: GFF3 is read by third-party tools that expect the conventional
+   60-column wrap, whereas a tabular document is one whole record per line
+   throughout -- a wrapped tail would be the only part of it [awk] and [sort]
+   could not take a line at a time -- and an extracted feature is usually on its
+   way down a pipe.  [set_fasta_width] overrides all three. *)
+
+let test_fasta_wrapping () =
+  Testing.section "FASTA line wrapping" (fun () ->
+    (* 150 bases: two full 60-column lines and a short third. *)
+    let unit = "ATGCCCGGGTAAGCGACTAGCGCATCGTCA" in
+    let seq = unit ^ unit ^ unit ^ unit ^ unit in
+    let ann =
+      gff3 [ "chr1\tdemo\tgene\t1\t9\t.\t+\t.\tID=g1"; "##FASTA"; ">chr1"; seq ]
+      |> A.GFF3.of_string in
+    (* The lengths of the sequence lines, i.e. of everything after the deflines,
+       which is what wrapping is visible as. *)
+    let widths doc =
+      let rec after = function
+        | [] -> []
+        | l :: rest when l <> "" && l.[0] = '>' -> rest
+        | _ :: rest -> after rest in
+      String.Split.on_char_as_list '\n' doc |> after
+      |> List.filter (fun l -> l <> "")
+      |> List.map (fun l -> string_of_int (String.length l))
+      |> String.concat "," in
+    Testing.check_string "GFF3 wraps its ##FASTA section at 60 by default"
+      ~expected:"60,60,30" (widths (A.GFF3.to_string ann));
+    Testing.check_string "the tabular format emits one line per sequence"
+      ~expected:"150" (widths (A.Tabular.to_string ann));
+    (* An override is global, so every check below has to put it back. *)
+    A.set_fasta_width (Some 20);
+    Testing.check_string "an override replaces GFF3's own default"
+      ~expected:"20,20,20,20,20,20,20,10" (widths (A.GFF3.to_string ann));
+    Testing.check_string "an override reaches the tabular writer too"
+      ~expected:"20,20,20,20,20,20,20,10" (widths (A.Tabular.to_string ann));
+    A.set_fasta_width (Some 0);
+    Testing.check_string "a width of zero unwraps GFF3 as well"
+      ~expected:"150" (widths (A.GFF3.to_string ann));
+    Testing.check_string "a width of zero leaves the tabular writer unwrapped"
+      ~expected:"150" (widths (A.Tabular.to_string ann));
+    (* A negative width is a caller error, and is refused before the override is
+       touched -- so the width in force is still the zero set above. *)
+    Testing.check_raises "a negative width is refused"
+      (fun () -> A.set_fasta_width (Some (-1)));
+    Testing.check_string "a refused width does not disturb the one in force"
+      ~expected:"150" (widths (A.Tabular.to_string ann));
+    A.set_fasta_width None;
+    Testing.check_string "clearing the override restores GFF3's own default"
+      ~expected:"60,60,30" (widths (A.GFF3.to_string ann));
+    Testing.check_string "clearing the override restores the tabular default"
+      ~expected:"150" (widths (A.Tabular.to_string ann));
+    (* Wrapping is a layout choice, not a format change: a document written when
+       the tabular writer still wrapped at 60 has to keep reading back, or
+       --to-tsv output would stop being readable across a version boundary. *)
+    A.set_fasta_width (Some 60);
+    let wrapped = A.Tabular.to_string ann in
+    A.set_fasta_width None;
+    Testing.check_string "a tabular document with a wrapped FASTA still reads back"
+      ~expected:seq
+      (match A.Annotation.reference (A.Tabular.of_string wrapped) with
+       | None -> "(no reference)"
+       | Some r -> Sequences.Reference.find r (T.Forward "chr1") |> fst))
+
 let run () =
   test_locations ();
   test_genbank_records ();
@@ -1236,6 +1300,7 @@ let run () =
   test_gff3_fidelity ();
   test_attribute_order ();
   test_tabular ();
+  test_fasta_wrapping ();
   test_feature_table ();
   test_add_invariants ();
   test_insertion_cost ();

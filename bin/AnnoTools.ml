@@ -87,7 +87,7 @@ end
 
 let info = {
   Tools.Argv.name = "AnnoTools";
-  version = "2";
+  version = "3";
   date = "21-Aug-2026"
 } and authors = [
   "2026", "Paolo Ribeca", "paolo.ribeca@gmail.com"
@@ -495,6 +495,17 @@ let () =
           |> List.accum Parameters.program);
       TA.make_separator_multiline
         [ "Miscellaneous options."; "They are set immediately." ];
+      [ "--fasta-width" ],
+        Some "<non_negative_integer>",
+        [ "wrap sequence lines at this width wherever FASTA is emitted";
+          " ('--to-gff3', '--to-tsv' and the '--extract-*' actions),";
+          " with '0' meaning one line per sequence.  Without this option";
+          " each format keeps its own convention: GFF3 wraps its";
+          " '##FASTA' section at 60, while the tabular format and the";
+          " extraction actions emit one line per sequence, so that every";
+          " line of their output is a whole record" ],
+        TA.Default (Fun.const "each format's own convention"),
+        (fun _ -> A.set_fasta_width (Some (TA.get_parameter_int_non_neg ())));
       [ "-v"; "--verbose" ],
         None,
         [ "set verbose execution" ],
@@ -690,8 +701,9 @@ let () =
             (* Data goes to stdout and the count to stderr, so flush before the
                count or the two interleave out of order on a terminal. *)
             flush stdout;
-            Printf.eprintf "(%s): %d %s selected by %s\n%!" info.Tools.Argv.name !n
-              (String.pluralize_int "feature" !n) (A.Selection.to_string !selection))
+            if !Parameters.verbose then
+              Printf.eprintf "(%s): %d %s selected by %s\n%!" info.Tools.Argv.name !n
+                (String.pluralize_int "feature" !n) (A.Selection.to_string !selection))
       | Extract (kind, path) ->
         Exception.catch_unexpected_end_of_output __FUNCTION__
           (fun () ->
@@ -703,12 +715,16 @@ let () =
                 match kind with
                 | Sequence_kind.DNA -> A.Annotation.feature_dna !current feature
                 | Sequence_kind.Protein -> A.Annotation.feature_protein !current feature in
+              (* One line per sequence unless '--fasta-width' says otherwise:
+                 an extracted feature is usually on its way down a pipe. *)
               Printf.fprintf oc ">%s path=%s seq=%s location=%s\n%s\n"
                 (name_of !current ~path:p feature) (A.Annotation.path_to_string p)
-                (A.Annotation.seq_name !current feature) (location_of feature) sequence);
+                (A.Annotation.seq_name !current feature) (location_of feature)
+                (A.wrap_sequence ~width:0 sequence));
             close_out oc;
-            Printf.eprintf "(%s): wrote %d %s %s to %s\n%!" info.Tools.Argv.name !n
-              (Sequence_kind.to_string kind) (String.pluralize_int "sequence" !n) path)
+            if !Parameters.verbose then
+              Printf.eprintf "(%s): wrote %d %s %s to %s\n%!" info.Tools.Argv.name !n
+                (Sequence_kind.to_string kind) (String.pluralize_int "sequence" !n) path)
       | Summary -> summary ()
     ) program
   with

@@ -65,21 +65,52 @@ let to_string_via_buffer to_buffer ann =
   let buf = Buffer.create 256 in
   to_buffer buf ann;
   Buffer.contents buf
-(* Render a reference as FASTA, wrapped at the width every FASTA is wrapped at.
-   Shared by the tabular writer, which keeps the sequence in a sidecar, and by
-   the GFF3 writer, whose [##FASTA] directive appends it to the annotation. *)
-let fasta_width = 60
-let write_fasta buf reference =
-  Sequences.Reference.iter (fun ~name ~seq ~table:_ ->
-    Printf.bprintf buf ">%s\n" name;
-    let n = String.length seq in
+(* Render a reference as FASTA.  Shared by the tabular writer, which keeps the
+   sequence in a sidecar, and by the GFF3 writer, whose [##FASTA] directive
+   appends it to the annotation.  The two want different defaults, so the width
+   is per-caller rather than a constant: GFF3 is read by third-party tools that
+   expect the conventional wrap, whereas the tabular document is one record per
+   line throughout and a wrapped tail would be the only part of it that [awk],
+   [cut] and [sort] could not take a line at a time.  A width of zero means
+   never wrap. *)
+let default_fasta_width = 60
+(* Set by a front-end that wants one width everywhere -- AnnoTools'
+   [--fasta-width].  [None] leaves each writer its own default. *)
+let fasta_width_override = ref None
+let set_fasta_width w =
+  (match w with
+   | Some w when w < 0 ->
+     Exception.raise __FUNCTION__ Algorithm
+       (Printf.sprintf "Invalid FASTA width %d (expected zero or more)" w)
+   | Some _ | None -> ());
+  fasta_width_override := w
+(* The sequence half of a FASTA record, returned without a trailing newline so
+   that a caller can lay the record out itself.  A width of zero, whether the
+   caller's or the override's, returns the sequence whole. *)
+let wrap_sequence ?(width = default_fasta_width) seq =
+  let width = match !fasta_width_override with Some w -> w | None -> width in
+  let n = String.length seq in
+  if width <= 0 || n <= width then
+    seq
+  else begin
+    let buf = Buffer.create (n + n / width + 1) in
     let i = ref 0 in
     while !i < n do
-      let w = min fasta_width (n - !i) in
+      if !i > 0 then
+        Buffer.add_char buf '\n';
+      let w = min width (n - !i) in
       Buffer.add_string buf (String.sub seq !i w);
-      Buffer.add_char buf '\n';
       i := !i + w
-    done) reference
+    done;
+    Buffer.contents buf
+  end
+let write_fasta ?(width = default_fasta_width) buf reference =
+  Sequences.Reference.iter (fun ~name ~seq ~table:_ ->
+    Printf.bprintf buf ">%s\n" name;
+    (* An empty sequence gets a header and nothing else, rather than a blank
+       line that would read back as a sequence of length zero. *)
+    if seq <> "" then
+      Printf.bprintf buf "%s\n" (wrap_sequence ~width seq)) reference
 
 (* Build a [to_file] from a [to_buffer]: ditto. *)
 let to_file_via_buffer to_buffer ann path =
@@ -1878,7 +1909,9 @@ module Tabular: Format_t = struct
          if table <> Sequences.Translation.Table_1 then
            Printf.bprintf r.r_metadata "%s\t%s\n" (table_key name)
              (Sequences.Translation.to_string table)) reference;
-       write_fasta r.r_reference reference);
+       (* Unwrapped: every other line of a tabular document is one whole
+          record, and the sequence is no different. *)
+       write_fasta ~width:0 r.r_reference reference);
     Printf.bprintf r.r_metadata "%s\t%s\n" (own_key "format-version") format_version;
     Printf.bprintf r.r_metadata "%s\t%s\n" (own_key "hash-recipe") hash_recipe;
     Printf.bprintf r.r_metadata "%s\t%s\n" (own_key "hierarchy")
