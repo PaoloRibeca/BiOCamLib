@@ -8,7 +8,19 @@
  (release-static
   (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static))))
 
+; The assertion suite.  RunTests is the entry point; Testing is the harness and
+; every Tests_<Area> module is one area's checks.  Not installed: it is run from
+; the build tree by BUILD.
+(executables
+ (names RunTests)
+ (modules RunTests Testing Tests_Annotations)
+ (libraries str unix BiOCamLib))
+
+; Standalone demo drivers, kept separate so that a stale one cannot break the
+; suite above.  These predate the suite, assert nothing, and are listed in the
+; TODOs of the design notes as needing either a resync or retirement.
 (executables
  (public_names Vectors Trees Trie Annotations)
  (names Vectors Trees Trie Annotations)
+ (modules Vectors Trees Trie Annotations)
  (libraries str unix BiOCamLib))

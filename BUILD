@@ -279,6 +279,26 @@ if [[ "${1:-}" == "mac-end" ]]; then
   exit 0
 fi
 
+# ──────────────────────────────────────────────────────────────────────
+# The assertion suite (test/RunTests.exe, driven by test/Testing.ml).
+#   ./BUILD test [<profile>]   build and run it without rebuilding the binaries
+# It is also run at the end of every ordinary build.  A non-zero exit means
+# either a check failed or a known-bug marker went stale, and both should stop
+# a build.
+# ──────────────────────────────────────────────────────────────────────
+run_tests() {
+  local profile="${1:-$PROFILE}"
+  echo
+  dune build --profile="$profile" test/RunTests.exe $FLAGS
+  ./_build/default/test/RunTests.exe
+}
+
+if [[ "${1:-}" == "test" ]]; then
+  PROFILE="${2:-dev}"
+  run_tests "$PROFILE"
+  exit 0
+fi
+
 PROFILE="$1"
 if [[ "$PROFILE" == "" ]]; then
   PROFILE="dev"
@@ -316,6 +336,12 @@ cp _build/default/bin/Cophenetic.exe .build/Cophenetic
 cp _build/default/bin/Yggdrasill.exe .build/Yggdrasill
 
 chmod 755 .build/*
+
+# Build and run the assertion suite.  RunTests exits non-zero when a check fails
+# OR when a known-bug marker has gone stale -- i.e. a check pinning a diagnosed
+# defect has started passing, so the marker must be removed.  Both are build
+# failures: 'set -e' stops us here, before the binaries are stripped.
+run_tests
 
 if [[ "$PROFILE" == "release" || "$PROFILE" == "release-static" ]]; then
   strip .build/*
