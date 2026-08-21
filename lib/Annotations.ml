@@ -310,6 +310,63 @@ module Annotation:
 
 open Annotation
 
+(* A criterion picking out a subset of an annotation's features.  Asking an
+   annotation what it contains is a library concern rather than a CLI one, so
+   that every consumer -- and the test suite -- can do it; AnnoTools adds only
+   the command-line spelling of a criterion on top of this.
+   A criterion is evaluated afresh against whatever register it is applied to,
+   rather than resolved once into a set of features: an [Annotation.t] is
+   rebuilt wholesale by every replace-style read, so a captured set would go
+   stale against the annotation it was meant to describe. *)
+module Selection =
+  struct
+    type t =
+      | All
+      | Labels of StringSet.t
+      | Regexps of (string * Str.regexp) list
+      | Not of t
+    let rec to_string = function
+      | All -> "everything"
+      | Labels s -> Printf.sprintf "labels {%s}" (StringSet.elements s |> String.concat ",")
+      | Regexps l ->
+        Printf.sprintf "regexps {%s}"
+          (List.map (fun (f, _) -> if f = "" then "<label>" else f) l |> String.concat ",")
+      | Not t -> Printf.sprintf "not (%s)" (to_string t)
+    let label_of feature = Option.value ~default:"" feature.id
+    (* Resolve one criterion's field against a feature.  An empty field name
+       matches the feature's label; every other name is a structural field
+       first and an attribute key otherwise.  An attribute can hold several
+       values, hence the list: the field matches when any one of them does. *)
+    let field_of ann ~path feature = function
+      | "" | "id" | "label" -> [ label_of feature ]
+      | "seq" -> [ seq_name ann feature ]
+      | "path" -> [ path_to_string path ]
+      | "type" -> [ (match List.rev path with leaf :: _ -> leaf | [] -> "") ]
+      | "source" -> [ Option.value ~default:"" (feature_source ann feature) ]
+      | "strand" ->
+        [ (match feature.strand with
+           | Some (Sequences.Types.Forward _) -> "+"
+           | Some (Sequences.Types.Reverse _) -> "-"
+           | None -> ".") ]
+      | key -> Option.value ~default:[] (attr_get ann feature key)
+    (* Several field-and-regexp criteria are ANDed. *)
+    let rec matches ann ~path feature = function
+      | All -> true
+      | Labels s -> StringSet.mem (label_of feature) s
+      | Regexps l ->
+        List.for_all
+          (fun (f, re) -> List.exists (Str.matches re) (field_of ann ~path feature f)) l
+      | Not t -> not (matches ann ~path feature t)
+    (* Iterate the features a criterion selects, in register order. *)
+    let iter ann selection f =
+      iter_paths (fun ~path feature -> if matches ann ~path feature selection then f ~path feature)
+        ann
+    let count ann selection =
+      let n = ref 0 in
+      iter ann selection (fun ~path:_ _ -> incr n);
+      !n
+  end
+
 let strand_of_field = function
   | "+" -> Some Sequences.Types.forward
   | "-" -> Some Sequences.Types.reverse

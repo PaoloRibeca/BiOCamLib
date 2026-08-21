@@ -43,6 +43,18 @@ module Mode = struct
         (Printf.sprintf "Unknown mode %S (expected replace|add)" s)
 end
 
+module Sequence_kind = struct
+  type t = DNA | Protein
+  let of_string = function
+    | "dna" | "DNA" | "nucleotide" -> DNA
+    | "protein" | "PROTEIN" | "aa" -> Protein
+    | s ->
+      Exception.raise_unrecognized_initializer __FUNCTION__ "sequence kind" s
+  let to_string = function
+    | DNA -> "dna"
+    | Protein -> "protein"
+end
+
 type to_do_t =
   | Empty
   | Of_binary of string
@@ -56,6 +68,12 @@ type to_do_t =
   | Validate_translation
   | Validate_all
   | Validate_report of string
+  | Selection_from_labels of StringSet.t
+  | Selection_from_regexps of (string * Str.regexp) list
+  | Selection_negate
+  | Selection_print
+  | Selection_clear
+  | Extract of Sequence_kind.t * string
   | Summary
 
 module Defaults = struct
@@ -80,6 +98,21 @@ let () =
   try
     TA.set_header (info, authors, [ Info.info ]);
     TA.set_synopsis "[ACTIONS]";
+    (* Same selector syntax as KPopCountDB: comma-separated <field>~<regexp>
+       criteria, all of which must match. *)
+    let parse_regexp_selector option s =
+      List.map (fun l ->
+        let res = String.Split.on_char_as_list '~' l in
+        if List.length res <> 2 then begin
+          TA.usage ();
+          List.length res
+            |> Printf.sprintf
+                 "Option '%s': Wrong number of fields in criterion (expected 2, found %d)"
+                 option
+            |> TA.parse_error (* parse_error exits the program *)
+        end;
+        List.nth res 0, List.nth res 1 |> Str.regexp)
+        (String.Split.on_char_as_list ',' s) in
     TA.parse [
       TA.make_separator_multiline
         [ "Actions.";
@@ -241,6 +274,82 @@ let () =
         (fun _ ->
           Validate_report (TA.get_parameter ())
           |> List.accum Parameters.program);
+      TA.make_separator_multiline
+        [ "";
+          "Actions involving the selection register.";
+          "The selection restricts every subsequent output action to";
+          "the features it matches.  It is sticky, and starts out";
+          "matching everything." ];
+      [ "-L"; "--labels"; "--selection-from-labels" ],
+        Some "<feature_id>[','...','<feature_id>]",
+        [ "put into the selection register the features carrying the";
+          " specified ids" ],
+        TA.Optional,
+        (fun _ ->
+          Selection_from_labels
+            (TA.get_parameter () |> String.Split.on_char_as_list ',' |> StringSet.of_list)
+          |> List.accum Parameters.program);
+      [ "-R"; "--regexps"; "--selection-from-regexps" ],
+        Some "<field>'~'<regexp>[','...','<field>'~'<regexp>]",
+        [ "put into the selection register the features whose fields";
+          " match the specified regexps.  All criteria must match.";
+          " A field is one of 'seq', 'path', 'type', 'source',";
+          " 'strand' or 'id', or else the name of an attribute, in";
+          " which case the criterion matches when any one of that";
+          " attribute's values does.";
+          " An empty field name makes the regexp match feature ids" ],
+        TA.Optional,
+        (fun _ ->
+          Selection_from_regexps (TA.get_parameter () |> parse_regexp_selector "-R")
+          |> List.accum Parameters.program);
+      [ "--selection-negate" ],
+        None,
+        [ "negate the current selection" ],
+        TA.Optional,
+        (fun _ -> Selection_negate |> List.accum Parameters.program);
+      [ "--selection-print" ],
+        None,
+        [ "print the features currently selected, one per line, to";
+          " standard output" ],
+        TA.Optional,
+        (fun _ -> Selection_print |> List.accum Parameters.program);
+      [ "--selection-clear" ],
+        None,
+        [ "reset the selection register so that it matches everything" ],
+        TA.Optional,
+        (fun _ -> Selection_clear |> List.accum Parameters.program);
+      TA.make_separator_multiline
+        [ "";
+          "Sequence extraction.";
+          "Emit the sequence denoted by each selected feature as";
+          "FASTA.  A feature's intervals are spliced in the order";
+          "they are stored and the result is reverse-complemented";
+          "when the feature is on the minus strand; a protein is that";
+          "sequence with the phase bases dropped from its 5' end,";
+          "translated with the feature's '/transl_table' when it";
+          "carries one.  Requires a reference to have been loaded." ];
+      [ "--extract" ],
+        Some "<dna|protein> <file>",
+        [ "write the sequence of every selected feature to <file>" ],
+        TA.Optional,
+        (fun _ ->
+          let kind = TA.get_parameter () |> Sequence_kind.of_string in
+          let path = TA.get_parameter () in
+          Extract (kind, path) |> List.accum Parameters.program);
+      [ "--extract-dna" ],
+        Some "<file>",
+        [ "shorthand for '--extract dna <file>'" ],
+        TA.Optional,
+        (fun _ ->
+          Extract (Sequence_kind.DNA, TA.get_parameter ())
+          |> List.accum Parameters.program);
+      [ "--extract-protein" ],
+        Some "<file>",
+        [ "shorthand for '--extract protein <file>'" ],
+        TA.Optional,
+        (fun _ ->
+          Extract (Sequence_kind.Protein, TA.get_parameter ())
+          |> List.accum Parameters.program);
       [ "--summary" ],
         None,
         [ "print a one-line summary of the current register to stderr" ],
@@ -339,7 +448,13 @@ let () =
           (match A.Annotation.reference !current with
            | Some r -> r
            | None -> Sequences.Reference.empty) in
-      let r = Sequences.Reference.add_from_fasta base path in
+      (* Upper-case, and change nothing else.  The default linter is
+         [Lint.dnaize], which folds every non-ACGT byte to N -- so an IUPAC
+         ambiguity code in the reference would be destroyed before any feature
+         sequence was ever read out of it.  Case still has to be normalised,
+         because the codon tables are upper-case only and a soft-masked genome
+         would otherwise translate to X throughout. *)
+      let r = Sequences.Reference.add_from_fasta ~linter:String.uppercase_ascii base path in
       current := A.Annotation.set_reference !current r in
     let summary () =
       let n_feat = ref 0 in
@@ -354,6 +469,28 @@ let () =
         (match A.Annotation.reference !current with
          | None -> "(none)"
          | Some _ -> "(loaded)") in
+    let selection = ref A.Selection.All in
+    (* 1-based inclusive and comma-joined, the spelling GenBank uses for a
+       LOCATION; a zero-length site is written lo^hi rather than as the reversed
+       range a naive lo+1..lo+length would produce. *)
+    let location_of feature =
+      List.map (fun (i: Sequences.Types.simple_interval_t) ->
+        if i.length = 0 then Printf.sprintf "%d^%d" i.low (i.low + 1)
+        else Printf.sprintf "%d..%d" (i.low + 1) (i.low + i.length))
+        feature.A.Annotation.intervals
+      |> String.concat "," in
+    (* A feature need not carry an id: GenBank derives one from /locus_tag when
+       there is one and has none otherwise.  Fall back to sequence, category and
+       span, which separates everything except two features of the same category
+       occupying the same span on the same sequence. *)
+    let name_of ann ~path feature =
+      match feature.A.Annotation.id with
+      | Some id when id <> "" -> id
+      | _ ->
+        Printf.sprintf "%s:%s:%s" (A.Annotation.seq_name ann feature)
+          (match List.rev path with leaf :: _ -> leaf | [] -> "")
+          (location_of feature) in
+    let iter_selected f = A.Selection.iter !current !selection f in
     List.iter (function
       | Empty ->
         current := A.Annotation.create A.GFF3.default_hierarchy
@@ -414,6 +551,41 @@ let () =
             info.Tools.Argv.name !total path;
           exit 1
         end
+      | Selection_from_labels s -> selection := A.Selection.Labels s
+      | Selection_from_regexps l -> selection := A.Selection.Regexps l
+      | Selection_negate -> selection := A.Selection.Not !selection
+      | Selection_clear -> selection := A.Selection.All
+      | Selection_print ->
+        Exception.catch_unexpected_end_of_output __FUNCTION__
+          (fun () ->
+            let n = ref 0 in
+            iter_selected (fun ~path feature ->
+              incr n;
+              Printf.printf "%s\t%s\t%s\t%s\n" (name_of !current ~path feature)
+                (A.Annotation.path_to_string path) (A.Annotation.seq_name !current feature)
+                (location_of feature));
+            (* Data goes to stdout and the count to stderr, so flush before the
+               count or the two interleave out of order on a terminal. *)
+            flush stdout;
+            Printf.eprintf "(%s): %d %s selected by %s\n%!" info.Tools.Argv.name !n
+              (String.pluralize_int "feature" !n) (A.Selection.to_string !selection))
+      | Extract (kind, path) ->
+        Exception.catch_unexpected_end_of_output __FUNCTION__
+          (fun () ->
+            let oc = open_out path in
+            let n = ref 0 in
+            iter_selected (fun ~path:p feature ->
+              incr n;
+              let sequence =
+                match kind with
+                | Sequence_kind.DNA -> A.Annotation.feature_dna !current feature
+                | Sequence_kind.Protein -> A.Annotation.feature_protein !current feature in
+              Printf.fprintf oc ">%s path=%s seq=%s location=%s\n%s\n"
+                (name_of !current ~path:p feature) (A.Annotation.path_to_string p)
+                (A.Annotation.seq_name !current feature) (location_of feature) sequence);
+            close_out oc;
+            Printf.eprintf "(%s): wrote %d %s %s to %s\n%!" info.Tools.Argv.name !n
+              (Sequence_kind.to_string kind) (String.pluralize_int "sequence" !n) path)
       | Summary -> summary ()
     ) program
   with

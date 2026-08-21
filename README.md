@@ -361,6 +361,20 @@ loads the annotation, attaches the matching reference, and runs every consistenc
 
 Switch `--validate` is the catch-all that runs all three; the individual `--validate-...` switches let you run them selectively. Each of these stops at the first violation, prints a two-line message pointing the user at `--validate-report`, and exits non-zero. For a complete enumeration, use the sibling `--validate-report <file>` action: it walks the whole register, writes one tab-separated row per violation (`check`, `path`, `feature_id`, `message`) to `<file>`, and exits non-zero only if at least one violation was found.
 
+### Selecting features and extracting their sequences
+
+A *selection register* sits beside the annotation register and restricts every subsequent output action to the features it matches &mdash; the same pattern, and the same switch names, that [`KPopCountDB`](https://github.com/PaoloRibeca/KPop/) uses to select spectra. A selection is expressed as a comma-separated list of `<field>~<regexp>` criteria, all of which must match:
+```bash
+AnnoTools --from-genbank NC_000913.gb -R 'type~CDS' --selection-print
+```
+A field is one of `seq`, `path`, `type`, `source`, `strand` or `id`; anything else is read as an attribute name, so `-R 'gene~dnaA'` selects on the `/gene` qualifier. An empty field name matches the feature's own id. The selection is sticky, starts out matching everything, and can be inverted with `--selection-negate` or reset with `--selection-clear`.
+
+Given a reference, the selected features' sequences can then be written out as FASTA:
+```bash
+AnnoTools --from-genbank NC_000913.gb -R 'type~CDS' --extract-protein proteins.fasta
+```
+A feature's intervals are spliced in the order they are stored, so a `join(...)` location comes out as one record rather than one per exon; the result is reverse-complemented as a whole when the feature is on the minus strand. For `--extract-protein` the phase bases are dropped from the 5' end and the feature's `/transl_table` is honoured when it carries one. Because a GenBank file supplies its own sequence through its `ORIGIN` block, the example above needs nothing else; for GFF3 or GTF input, add `--from-fasta` first.
+
 ## Using `TREx`
 
 `TREx` finds exact tandem repeats in all the sequences present in a FASTA file read on standard input, and writes a tab-separated record per identified locus to standard output (sequence name, start and end coordinates, unit length, repeat count, and the repeat unit itself). The output is convenient for downstream filtering by length, intersection against an annotation, or visualisation as a per-sequence track.
@@ -557,6 +571,26 @@ Each check raises and exits non-zero on the first violation. All require a refer
 | `--validate` |  |  run every validation in turn |  |
 | `--validate-report` | _file_ |  run every validation against the whole register \(do not stop at the first violation\) and write a tab\-separated report \(`check`, `path`, `feature_id`, `message`\) to _file_; exit non\-zero iff any violation was found |  |
 | `--summary` |  |  print a one\-line summary of the current register to stderr |  |
+
+*Actions involving the selection register.*
+The selection restricts every subsequent output action to the features it matches. It is sticky, and starts out matching everything.
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-L`<br>`--labels`<br>`--selection-from-labels` | _feature\_id_\[`,`...`,`_feature\_id_\] |  put into the selection register the features carrying the specified ids |  |
+| `-R`<br>`--regexps`<br>`--selection-from-regexps` | _field_`~`_regexp_\[`,`...`,`_field_`~`_regexp_\] |  put into the selection register the features whose fields match the specified regexps. All criteria must match. A field is one of `seq`, `path`, `type`, `source`, `strand` or `id`, or else the name of an attribute, in which case the criterion matches when any one of that attribute's values does. An empty field name makes the regexp match feature ids |  |
+| `--selection-negate` |  |  negate the current selection |  |
+| `--selection-print` |  |  print the features currently selected, one per line, to standard output |  |
+| `--selection-clear` |  |  reset the selection register so that it matches everything |  |
+
+*Sequence extraction.*
+Emit the sequence denoted by each selected feature as FASTA. A feature's intervals are spliced in the order they are stored and the result is reverse-complemented when the feature is on the minus strand; a protein is that sequence with the phase bases dropped from its 5' end, translated with the feature's `/transl_table` when it carries one. Requires a reference to have been loaded.
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `--extract` | `dna`&#124;`protein` _file_ |  write the sequence of every selected feature to _file_ |  |
+| `--extract-dna` | _file_ |  shorthand for `--extract dna <file>` |  |
+| `--extract-protein` | _file_ |  shorthand for `--extract protein <file>` |  |
 
 *Annotation output.*
 

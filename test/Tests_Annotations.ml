@@ -230,6 +230,55 @@ let test_feature_sequence () =
         | Some (_, f) -> A.Annotation.feature_dna ann f
         | None -> ""))
 
+(* Feature selection. *)
+
+let test_selection () =
+  Testing.section "Feature selection" (fun () ->
+    let ann =
+      genbank [
+        "     gene            1..15";
+        "                     /gene=\"abcA\"";
+        "                     /locus_tag=\"DEMO_0001\"";
+        "     CDS             1..15";
+        "                     /gene=\"abcA\"";
+        "                     /product=\"hypothetical\"";
+        "     gene            complement(16..30)";
+        "                     /gene=\"xyzB\"";
+        "                     /locus_tag=\"DEMO_0002\"" ]
+      |> A.GenBank.of_string in
+    let count s = A.Selection.count ann s in
+    let re f r = A.Selection.Regexps [ f, Str.regexp r ] in
+    Testing.check_int "the default selection matches every feature"
+      ~expected:4 (count A.Selection.All);
+    Testing.check_int "a structural field selects on the leaf category"
+      ~expected:1 (count (re "type" "CDS"));
+    Testing.check_int "a structural field selects on the strand"
+      ~expected:1 (count (re "strand" "-"));
+    Testing.check_int "an unknown field name is read as an attribute key"
+      ~expected:1 (count (re "gene" "xyz"));
+    Testing.check_int "an attribute absent from a feature does not match it"
+      ~expected:2 (count (re "locus_tag" "DEMO"));
+    Testing.check_int "an empty field name matches the feature label"
+      ~expected:1 (count (re "" "DEMO_0002"));
+    Testing.check_int "labels select by feature id"
+      ~expected:2 (count (A.Selection.Labels (StringSet.of_list [ "DEMO_0001"; "DEMO_0002" ])));
+    (* Several criteria are ANDed, so adding one can only narrow the result. *)
+    Testing.check_int "several criteria are ANDed"
+      ~expected:1
+      (count (A.Selection.Regexps [ "type", Str.regexp "gene"; "gene", Str.regexp "abc" ]));
+    Testing.check_int "negation is the complement within the register"
+      ~expected:3 (count (A.Selection.Not (re "type" "CDS")));
+    Testing.check_int "negating everything selects nothing"
+      ~expected:0 (count (A.Selection.Not A.Selection.All));
+    (* The regexps are Str's, so they are unanchored substring searches -- worth
+       pinning, because it is the difference between "gene" matching only the
+       gene category and it also matching a category containing that word. *)
+    Testing.check_int "a regexp is an unanchored search"
+      ~expected:4 (count (re "path" "source"));
+    Testing.check_string "a criterion describes itself for diagnostics"
+      ~expected:"not (regexps {type})"
+      (A.Selection.to_string (A.Selection.Not (re "type" "CDS"))))
+
 (* Attribute handling. *)
 
 let test_attributes () =
@@ -402,6 +451,7 @@ let run () =
   test_locations ();
   test_genbank_records ();
   test_feature_sequence ();
+  test_selection ();
   test_attributes ();
   test_gff3_fidelity ();
   test_attribute_order ();
