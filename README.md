@@ -370,12 +370,12 @@ Writing takes a *prefix* and produces three tables:
 AnnoTools --from-genbank NC_000913.gb --to-tsv NC_000913
 ```
 ```
-NC_000913.AnnotationFeatures.txt     #id parent seq path feature_id source score strand phase intervals
-NC_000913.AnnotationAttributes.txt   #id key value
-NC_000913.AnnotationMetadata.txt     #key value
+NC_000913.AnnotationFeatures.txt     #id #parent #seq #path #feature_id #source #score #strand #phase #intervals
+NC_000913.AnnotationAttributes.txt   #id #key #value
+NC_000913.AnnotationMetadata.txt     #key #value
 NC_000913.AnnotationReference.fasta  the sequence, as FASTA
 ```
-Each table opens with a single `#`-prefixed line naming its columns. That one line is the whole of the framing: the three headers differ, so in the single-document form below the header *is* the table's identity and nothing else has to be agreed on.
+Each table opens with a single line naming its columns, each column name prefixed with `#` as every tabular output in this family of tools spells a header. That one line is the whole of the framing: the three headers differ, so in the single-document form below the header *is* the table's identity and nothing else has to be agreed on.
 
 None of the tables contains a nested syntax, and every one has a fixed number of columns, so `cat`ting two together is meaningful and adding a feature with a novel attribute key does not reshape any other row. Attributes live in their own relation rather than packed into a column, which is what lets a multi-valued attribute be several rows and a valueless one be a row with an empty third field. The metadata table carries the hierarchy the annotation was read under, plus any file-level pragmas, so a register written this way can be read back without being told its schema again.
 

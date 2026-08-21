@@ -690,9 +690,9 @@ let test_attribute_order () =
 (* The three table headers.  Each opens its table and, being distinct, names it:
    that single rule is the format's whole framing. *)
 let features_header =
-  "#id\tparent\tseq\tpath\tfeature_id\tsource\tscore\tstrand\tphase\tintervals"
-let attributes_header = "#id\tkey\tvalue"
-let metadata_header = "#key\tvalue"
+  "#id\t#parent\t#seq\t#path\t#feature_id\t#source\t#score\t#strand\t#phase\t#intervals"
+let attributes_header = "#id\t#key\t#value"
+let metadata_header = "#key\t#value"
 
 (* Reverse the DATA rows of the table opened by [wanted], leaving its header
    where it is.  Used to show that row order carries no meaning: the parent

@@ -1798,15 +1798,16 @@ module Tabular: Format_t = struct
      GenBank reader names a record's source feature after its LOCUS -- and so
      needs a column of its own or it is simply lost.  The name matches the
      column --validate-report already uses for the same thing. *)
-  (* A table opens with ONE line naming its columns, prefixed with [#].  That
-     single rule replaces a banner plus a bare header row, and it is enough on
-     its own: the three headers differ, so in the one-document form the header
-     IS the table's identity and nothing else has to be agreed on.  A [>] line
-     opens the reference, which is plain FASTA. *)
+  (* A table opens with ONE line naming its columns, EACH prefixed with [#], as
+     every tabular output in this family of tools spells a header.  That single
+     rule replaces a banner plus a bare header row, and it is enough on its own:
+     the three headers differ, so in the one-document form the header IS the
+     table's identity and nothing else has to be agreed on.  A [>] line opens
+     the reference, which is plain FASTA. *)
   let features_header =
-    "#id\tparent\tseq\tpath\tfeature_id\tsource\tscore\tstrand\tphase\tintervals"
-  let attributes_header = "#id\tkey\tvalue"
-  let metadata_header = "#key\tvalue"
+    "#id\t#parent\t#seq\t#path\t#feature_id\t#source\t#score\t#strand\t#phase\t#intervals"
+  let attributes_header = "#id\t#key\t#value"
+  let metadata_header = "#key\t#value"
   let features_suffix = ".AnnotationFeatures.txt"
   let attributes_suffix = ".AnnotationAttributes.txt"
   let metadata_suffix = ".AnnotationMetadata.txt"

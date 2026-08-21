@@ -634,7 +634,8 @@ let () =
            report the total to stderr at the end; exit non-zero
            if any was found. *)
         let oc = open_out path in
-        output_string oc "check\tpath\tfeature_id\tmessage\n";
+        (* Same header convention as every other tabular output here. *)
+        output_string oc "#check\t#path\t#feature_id\t#message\n";
         let total = ref 0 in
         let mk_callback check =
           fun ~path:p ~feature_id:fid ~message:m ->
