@@ -48,8 +48,12 @@ open Better
    list this replaces, [GenBankRecord] having been left out of it although
    [GenBank.parse_records] returns one.
    The scaffolding cannot live in this file: the per-format modules below sit
-   between it and here, so folding it in would close a cycle. *)
-include Annotations_Common
+   between it and here, so folding it in would close a cycle.
+   The constraint is what lets [Annotations_Common] be private: an unconstrained
+   include re-exports by aliasing, and an alias into a private module does not
+   resolve.  [module type of] is the constraint that repeats nothing -- it names
+   the signature the module already has, and asks for a copy of it. *)
+include (Annotations_Common: module type of Annotations_Common)
 
 (* The per-format readers and writers, each in its own file because together
    they were seven eighths of what this module used to be.

@@ -38,8 +38,11 @@ open Better
    downstream -- the five format modules, and [Annotations] through them --
    then reaches the base through here, and no hand-kept list of re-exports can
    drift out of step with what the base actually holds.  The extended
-   [Hierarchy] below shadows the base's, which is the intended reading. *)
-include Annotations_Base
+   [Hierarchy] below shadows the base's, which is the intended reading.
+   Constrained for the same reason as every other include here: it copies the
+   base's signature rather than aliasing into it, which is what allows the base
+   to be private.  See lib/dune. *)
+include (Annotations_Base: module type of Annotations_Base)
 
 (* Read an entire file into memory.  All format readers below
    are string-based (they keep the whole input around for
