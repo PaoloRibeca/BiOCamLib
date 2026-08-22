@@ -536,25 +536,29 @@ let test_attributes () =
           | Some (v :: _) -> v
           | _ -> "(absent)")
        | None -> "(no gene)");
-    (* Reading a value that arrives with an UNENCODED space is a separate
-       matter, and this lexer cannot: it treats a space as a token separator,
-       so two adjacent values with no comma between them are a parse error.
-       Third-party GFF3 carries such values routinely (product=hypothetical
-       protein), so this is worth pinning -- but note that it fails loudly
-       rather than corrupting, and that our own writer now encodes the space,
-       so it costs nothing on a file this library produced. *)
-    Testing.check_does_not_raise
-      ~known_bug:"the gff_attributes lexer skips spaces, so a value cannot contain one"
-      "a value with an unencoded space can be read"
+    (* A value that arrives with an UNENCODED space has to be readable: GFF3
+       permits one, and third-party files carry them routinely
+       (product=hypothetical protein).  The lexer used to treat a space as a
+       token separator, so this was a parse error. *)
+    Testing.check_does_not_raise "a value with an unencoded space can be read"
       (fun () ->
         gff3 [ "chr1\tdemo\tgene\t100\t500\t.\t+\t.\tproduct=hypothetical protein" ]
         |> A.GFF3.of_string);
-    (* The same lexer rule silently swallows the space in a comma-separated
-       list, which is corruption rather than a refusal, and so is the more
-       dangerous half of the same defect. *)
-    Testing.check_string
-      ~known_bug:"the gff_attributes lexer eats the space after a comma"
-      "a space after a comma is not swallowed"
+    Testing.check_string "and keeps the space"
+      ~expected:"hypothetical protein"
+      (let one =
+         gff3 [ "chr1\tdemo\tgene\t100\t500\t.\t+\t.\tproduct=hypothetical protein" ]
+         |> A.GFF3.of_string in
+       match feature_at one "gene" with
+       | Some (_, f) ->
+         (match A.Annotation.attr_get one f "product" with
+          | Some (v :: _) -> v
+          | _ -> "(absent)")
+       | None -> "(no gene)");
+    (* The same rule used to swallow the space in a comma-separated list, which
+       was corruption rather than a refusal and so the more dangerous half of
+       the same defect.  The space belongs to the value that follows it. *)
+    Testing.check_string "a space after a comma is not swallowed"
       ~expected:"alpha| beta"
       (let one =
          gff3 [ "chr1\tdemo\tgene\t100\t500\t.\t+\t.\tName=alpha, beta" ] |> A.GFF3.of_string in

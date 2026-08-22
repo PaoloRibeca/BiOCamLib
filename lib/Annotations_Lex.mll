@@ -238,7 +238,14 @@ and gff_attributes = parse
        just consume it and let the surrounding grammar produce
        an empty list. *)
     gff_attributes lexbuf }
-| [^ '=' ';' ',' ' ' '\t' '\r' '\n']+ as s
+(* A space belongs to the token rather than separating two of them: GFF3
+   permits it unencoded in a value, and [product=hypothetical protein] is
+   ordinary in third-party files.  Skipping it split that into two values, and
+   ate the one after a comma in [Note=a, b] -- corruption rather than a
+   refusal, since nothing said a value had been altered.  The whitespace rule
+   above still fires on a run of nothing but spaces, ocamllex preferring the
+   longest match and, on a tie, the earlier rule. *)
+| [^ '=' ';' ',' '\t' '\r' '\n']+ as s
   { (* Single token kind disambiguated by 1-byte lookahead:
        runs followed by [=] are keys, otherwise values. *)
     let pos = lexbuf.Lexing.lex_curr_pos in
@@ -252,7 +259,10 @@ and gff_attributes = parse
       done;
       if !i < len then Some (Bytes.get buf !i) else None in
     match next with
-    | Some '=' -> Annotations_Parse.Attr_KEY s
+    (* A key now absorbs any space that sat around it -- [; Name=] or
+       [Name =] -- so it is trimmed.  A value is not: whatever spaces it
+       carries are its own, and this writer encodes them on the way out. *)
+    | Some '=' -> Annotations_Parse.Attr_KEY (String.trim s)
     | _ -> Annotations_Parse.Attr_VALUE (url_decode s) }
 | eof
   { Annotations_Parse.Attr_EOF }
