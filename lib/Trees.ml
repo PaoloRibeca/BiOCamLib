@@ -689,12 +689,46 @@ module NeighbourJoining:
         val of_string: string -> t
         val to_string: t -> string
       end
+    (* What a distance matrix looks like before anything is joined from it.
+       Every field is a property of the INPUT, so a matrix that is about to be
+       refused can still be described -- which is when a description is most
+       useful.  [square] is exactly the condition [of_matrix] imposes, and is
+       taken from here rather than tested again, so the two cannot drift apart:
+       as many rows as columns, at least one of them, carrying the same names in
+       the same order.  The three fields that compare a cell with its mirror
+       image mean nothing without it and are [nan] where it does not hold *)
+    module Statistics:
+      sig
+        type t = {
+          rows: int;
+          columns: int;
+          square: bool;
+          (* Off-diagonal cells below zero.  A distance is not negative, so a
+             matrix with any is either not one or is writing "not measured" *)
+          negative_cells: int;
+          (* The largest |d(i,i)|, which a distance matrix keeps at zero *)
+          diagonal_max: float;
+          asymmetry_mean: float;
+          asymmetry_max: float;
+          (* The pair the largest disagreement was found on *)
+          asymmetry_at: string * string;
+          minimum: float;
+          maximum: float
+        }
+        val of_matrix: Matrix.t -> t
+      end
     (* [negative_branches] says what to do about the negative branch lengths a
        non-additive matrix yields; the sentinel for an undefined length is
        [neg_infinity], so keeping them ([OK], the default) is unambiguous *)
     val of_matrix: ?asymmetry:AsymmetryPolicy.t ->
                    ?negative_branches:Newick.NegativeBranchesPolicy.t -> ?verbose:bool ->
                    Matrix.t -> Newick.t
+    (* Branches of negative length, and the total the branches of the tree add
+       up to -- the two things about a JOINED tree that say how far from
+       additive the matrix that produced it was.  Neither is a property of the
+       matrix, so neither is in [Statistics.t] *)
+    val count_negative_branches: Newick.t -> int
+    val total_branch_length: Newick.t -> float
   end
 = struct
     module AsymmetryPolicy =
@@ -710,57 +744,142 @@ module NeighbourJoining:
           | Average -> "average"
           | Error -> "error"
       end
+    module Statistics =
+      struct
+        type t = {
+          rows: int;
+          columns: int;
+          square: bool;
+          negative_cells: int;
+          diagonal_max: float;
+          asymmetry_mean: float;
+          asymmetry_max: float;
+          asymmetry_at: string * string;
+          minimum: float;
+          maximum: float
+        }
+        let of_matrix matrix =
+          let names = matrix.Matrix.row_names and cols = matrix.Matrix.col_names in
+          let rows = Array.length names and columns = Array.length cols in
+          let square =
+            rows = columns && rows > 0
+            && begin
+              let same = ref true in
+              Array.iteri (fun i name -> if cols.(i) <> name then same := false) names;
+              !same
+            end in
+          (* The diagonal is only a diagonal when the two axes are the same one;
+             otherwise cell (i, i) is an ordinary measurement like any other *)
+          let negative_cells = ref 0 and diagonal_max = ref 0.
+          and minimum = ref infinity and maximum = ref neg_infinity in
+          Array.iteri
+            (fun i row ->
+              for j = 0 to min columns (Float.Array.length row) - 1 do
+                let value = Float.Array.get row j in
+                if square && i = j then
+                  diagonal_max := max !diagonal_max (Float.abs value)
+                else begin
+                  if value < 0. then
+                    incr negative_cells;
+                  if value < !minimum then
+                    minimum := value;
+                  if value > !maximum then
+                    maximum := value
+                end
+              done)
+            matrix.Matrix.data;
+          let asymmetry_mean = ref nan and asymmetry_max = ref nan
+          and asymmetry_at = ref ("", "") in
+          if square then begin
+            let total = ref 0. and pairs = ref 0 and worst = ref 0. in
+            for i = 0 to rows - 1 do
+              let above = matrix.Matrix.data.(i) in
+              for j = i + 1 to rows - 1 do
+                let gap =
+                  Float.abs (Float.Array.get above j -. Float.Array.get matrix.Matrix.data.(j) i) in
+                total := !total +. gap;
+                incr pairs;
+                if gap > !worst then begin
+                  worst := gap;
+                  asymmetry_at := names.(i), names.(j)
+                end
+              done
+            done;
+            asymmetry_max := !worst;
+            asymmetry_mean := if !pairs = 0 then 0. else !total /. float_of_int !pairs
+          end;
+          { rows; columns; square; negative_cells = !negative_cells;
+            diagonal_max = !diagonal_max; asymmetry_mean = !asymmetry_mean;
+            asymmetry_max = !asymmetry_max; asymmetry_at = !asymmetry_at;
+            (* A matrix with no off-diagonal cell at all -- one taxon -- has no
+               extremes to report, and zero says that better than an infinity *)
+            minimum = (if !minimum = infinity then 0. else !minimum);
+            maximum = (if !maximum = neg_infinity then 0. else !maximum) }
+      end
+    let count_negative_branches t =
+      let res = ref 0 in
+      Newick.dfs_iter (fun _ _ -> ())
+        (fun _ edge -> if Newick.get_edge_length edge < 0. then incr res)
+        (fun _ _ -> ()) (fun _ _ -> ()) t;
+      !res
+    let total_branch_length t =
+      let res = ref 0. in
+      Newick.dfs_iter (fun _ _ -> ())
+        (fun _ edge -> res := !res +. Newick.get_edge_length edge)
+        (fun _ _ -> ()) (fun _ _ -> ()) t;
+      !res
     let of_matrix ?(asymmetry = AsymmetryPolicy.Average)
                   ?(negative_branches = Newick.NegativeBranchesPolicy.OK) ?(verbose = false)
                   matrix =
       let names = matrix.Matrix.row_names and cols = matrix.Matrix.col_names in
       let n = Array.length names in
+      (* What the matrix is, measured once.  The refusals below read [square]
+         from here rather than testing it again, so that what this function
+         requires and what [Statistics] reports can never come apart *)
+      let stats = Statistics.of_matrix matrix in
       if n = 0 then
         Exception.raise_object_is_empty __FUNCTION__ "distance matrix";
       if Array.length cols <> n then
         Exception.raise __FUNCTION__ IO_Format
           (Printf.sprintf "A distance matrix must be square (found %d rows and %d columns)"
             n (Array.length cols));
-      Array.iteri
-        (fun i name ->
-          if cols.(i) <> name then
-            Exception.raise __FUNCTION__ IO_Format
-              (Printf.sprintf
-                "A distance matrix must carry the same names on both axes and in the same order \
-                 (at position %d there is row '%s' but column '%s')" (i + 1) name cols.(i)))
-        names;
-      (* A working copy, so that the caller's matrix is left alone and the
-         asymmetry policy is applied once and for all.  The diagonal is never
-         read by what follows, hence zeroed rather than believed *)
-      let d = Array.init n (fun _ -> Float.Array.make n 0.) and worst = ref 0. and worst_at = ref (0, 0) in
-      for i = 0 to n - 1 do
-        for j = i + 1 to n - 1 do
-          let above = Float.Array.get matrix.Matrix.data.(i) j
-          and below = Float.Array.get matrix.Matrix.data.(j) i in
-          let gap = Float.abs (above -. below) in
-          if gap > !worst then begin
-            worst := gap;
-            worst_at := i, j
-          end;
-          let value = (above +. below) /. 2. in
-          Float.Array.set d.(i) j value;
-          Float.Array.set d.(j) i value
-        done
-      done;
-      if !worst > 0. then begin
-        let i, j = !worst_at in
+      if not stats.Statistics.square then begin
+        let i = ref 0 in
+        while !i < n && cols.(!i) = names.(!i) do
+          incr i
+        done;
+        Exception.raise __FUNCTION__ IO_Format
+          (Printf.sprintf
+            "A distance matrix must carry the same names on both axes and in the same order \
+             (at position %d there is row '%s' but column '%s')" (!i + 1) names.(!i) cols.(!i))
+      end;
+      if stats.Statistics.asymmetry_max > 0. then begin
+        let one, other = stats.Statistics.asymmetry_at in
         match asymmetry with
         | AsymmetryPolicy.Error ->
           Exception.raise __FUNCTION__ IO_Format
             (Printf.sprintf
               "The distance matrix is not symmetric: '%s' and '%s' disagree by %.10g"
-              names.(i) names.(j) !worst)
+              one other stats.Statistics.asymmetry_max)
         | AsymmetryPolicy.Average ->
           if verbose then
             Printf.eprintf
-              "(%s): Averaged across the diagonal (largest disagreement %.10g, '%s' vs '%s')\n%!"
-              __FUNCTION__ !worst names.(i) names.(j)
+              "(%s): Averaging across the diagonal (largest disagreement %.10g, '%s' vs '%s')\n%!"
+              __FUNCTION__ stats.Statistics.asymmetry_max one other
       end;
+      (* A working copy, so that the caller's matrix is left alone and the
+         asymmetry policy is applied once and for all.  The diagonal is never
+         read by what follows, hence zeroed rather than believed *)
+      let d = Array.init n (fun _ -> Float.Array.make n 0.) in
+      for i = 0 to n - 1 do
+        for j = i + 1 to n - 1 do
+          let value =
+            (Float.Array.get matrix.Matrix.data.(i) j
+             +. Float.Array.get matrix.Matrix.data.(j) i) /. 2. in
+          Float.Array.set d.(i) j value;
+          Float.Array.set d.(j) i value
+        done
+      done;
       (* [node.(i)] is the subtree standing at active slot [i] and [r.(i)] the
          sum of its distances to every other active slot.  Slots are kept
          compact -- the active ones are always [0, m) -- so that every scan runs

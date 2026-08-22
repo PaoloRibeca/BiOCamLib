@@ -34,6 +34,7 @@ module Defaults =
   struct
     let input = "/dev/stdin"
     let output = "/dev/stdout"
+    let statistics = ""
     let asymmetry = Trees.NeighbourJoining.AsymmetryPolicy.Average
     let negative_branches = Trees.Newick.NegativeBranchesPolicy.OK
     let midpoint = false
@@ -46,6 +47,7 @@ module Parameters =
   struct
     let input = ref Defaults.input
     let output = ref Defaults.output
+    let statistics = ref Defaults.statistics
     let asymmetry = ref Defaults.asymmetry
     let negative_branches = ref Defaults.negative_branches
     let midpoint = ref Defaults.midpoint
@@ -83,6 +85,17 @@ let () =
         [ "name of the file the resulting tree should be written to" ],
         TA.Default (Fun.const Defaults.output),
         (fun _ -> Parameters.output := TA.get_parameter ());
+      [ "-S"; "--statistics" ],
+        Some "<statistics_file>",
+        [ "also write a two-line table of what the distance matrix is: its";
+          " shape, whether it can be joined at all, how far it disagrees with";
+          " itself across the diagonal and where, how many cells are negative";
+          " (a distance is not, so those are however the matrix writes 'not";
+          " measured'), and, for the tree, how many branches came out negative";
+          " and what they add up to.  Written even for a matrix that is then";
+          " refused, that being when a description is worth the most" ],
+        TA.Optional,
+        (fun _ -> Parameters.statistics := TA.get_parameter ());
       [ "-r"; "--rich-format" ],
         None,
         [ "emit the rich Newick dialect this suite understands, which tags the";
@@ -143,9 +156,41 @@ let () =
         (fun _ -> TA.usage (); exit 1)
     ];
     let m = Matrix.of_file ~threads:!Parameters.threads ~verbose:!Parameters.verbose !Parameters.input in
+    let stats = Trees.NeighbourJoining.Statistics.of_matrix m in
+    (* [number] renders an undefined quantity as '-' rather than as OCaml's
+       'nan', so a column a reader has to scan tells the two apart at a glance:
+       every '-' here means the question did not arise *)
+    let write_statistics tree =
+      if !Parameters.statistics <> "" then begin
+        let number v = if Float.is_nan v then "-" else Printf.sprintf "%.10g" v in
+        let one, other = stats.Trees.NeighbourJoining.Statistics.asymmetry_at in
+        let output = open_out !Parameters.statistics in
+        Printf.fprintf output
+          "#rows\t#columns\t#joinable\t#negative_cells\t#diagonal_max\t#asymmetry_mean\t\
+           #asymmetry_max\t#asymmetry_row\t#asymmetry_column\t#minimum\t#maximum\t\
+           #negative_branches\t#total_branch_length\n";
+        Printf.fprintf output "%d\t%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n"
+          stats.rows stats.columns (if stats.square then "yes" else "no") stats.negative_cells
+          (number stats.diagonal_max) (number stats.asymmetry_mean) (number stats.asymmetry_max)
+          (if one = "" then "-" else one) (if other = "" then "-" else other)
+          (number stats.minimum) (number stats.maximum)
+          (match tree with
+           | None -> "-"
+           | Some t -> Trees.NeighbourJoining.count_negative_branches t |> string_of_int)
+          (match tree with
+           | None -> "-"
+           | Some t -> Trees.NeighbourJoining.total_branch_length t |> number);
+        close_out output
+      end in
+    (* A matrix that cannot be joined is described and then refused, in that
+       order: the description is what says WHY, and losing it to the refusal
+       would leave the caller with nothing to read *)
+    if not stats.Trees.NeighbourJoining.Statistics.square then
+      write_statistics None;
     let t =
       Trees.NeighbourJoining.of_matrix ~asymmetry:!Parameters.asymmetry
         ~negative_branches:!Parameters.negative_branches ~verbose:!Parameters.verbose m in
+    write_statistics (Some t);
     let t =
       if !Parameters.midpoint then
         Trees.Newick.midpoint_root t
