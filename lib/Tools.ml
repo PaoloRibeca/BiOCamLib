@@ -516,8 +516,12 @@ module Trie:
         | Node (path_ending_here, ta) ->
           if i = n then
             if path_ending_here > -1 then
-            (* This means that the string is already in the dictionary *)
-              t.trie
+              (* The string is already in the dictionary, so this node stands as
+                 it is.  Returning [t.trie] here -- the ROOT rather than the node
+                 we are at -- made the caller graft the whole trie in as a child
+                 of the node above, and every later walk down that branch then
+                 recursed for ever. *)
+              Node (path_ending_here, ta)
             else begin
               let id = ArrayStack.length t.hash in
               ArrayStack.push t.hash s;
