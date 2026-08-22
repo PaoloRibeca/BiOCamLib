@@ -44,7 +44,7 @@ open Annotation
 module GenBank:
   sig
     include Format_t
-    val parse_records: string -> Annotations_Base.GenBankRecord.t list
+    val parse_records: string -> GenBankRecord.t list
   end
 = struct
   (* INSDC feature table standard categories, flat under an
@@ -124,7 +124,7 @@ module GenBank:
     acc_lists, attrs
   let feature_to_pair ~seqs ~attr_keys ~values
                       hierarchy seq_name
-                      (f : Annotations_Base.GenBankRecord.feature_t) =
+                      (f : GenBankRecord.feature_t) =
     let ftype = f.name in
     let path = [ implicit_root_name; "source"; ftype ] in
     if not (Hierarchy.validate hierarchy ~path) then
@@ -188,7 +188,7 @@ module GenBank:
       let ref_acc = ref Sequences.Reference.empty in
       let any_origin = ref false in
       let first_record = ref true in
-      List.iter (fun (r : Annotations_Base.GenBankRecord.t) ->
+      List.iter (fun (r : GenBankRecord.t) ->
         (* Each GenBank record is one sequence: drop the
            Bloom on every record boundary except the first
            (where it's already empty). *)
@@ -198,7 +198,7 @@ module GenBank:
         let source_path = [ implicit_root_name; "source" ] in
         let real_source =
           List.find_opt
-            (fun (gf : Annotations_Base.GenBankRecord.feature_t) ->
+            (fun (gf : GenBankRecord.feature_t) ->
                gf.name = "source") r.features in
         if Hierarchy.validate hierarchy ~path:source_path then begin
           (* Build the top-level source feature from the file's
@@ -247,7 +247,7 @@ module GenBank:
           if k <> "LOCUS" then
             ann := add_metadata !ann ~key:k ~value:v
         ) r.headers;
-        List.iter (fun (gf : Annotations_Base.GenBankRecord.feature_t) ->
+        List.iter (fun (gf : GenBankRecord.feature_t) ->
           if gf.name <> "source" then
             let path, feature =
               feature_to_pair
