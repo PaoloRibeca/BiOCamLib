@@ -20,7 +20,7 @@
 ; suite above.  These predate the suite, assert nothing, and are listed in the
 ; TODOs of the design notes as needing either a resync or retirement.
 (executables
- (public_names Vectors Trees Trie Annotations)
- (names Vectors Trees Trie Annotations)
- (modules Vectors Trees Trie Annotations)
+ (public_names Vectors Trees Annotations)
+ (names Vectors Trees Annotations)
+ (modules Vectors Trees Annotations)
  (libraries str unix BiOCamLib))
