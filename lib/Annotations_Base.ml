@@ -170,10 +170,37 @@ module Path:
     let hash = Hashtbl.hash
   end
 
+(* The interface the interner presents, named rather than left to be inferred
+   so that [Seq] and [AttrKey] can be declared to share it instead of having it
+   written out twice wherever they are re-exported. *)
+module type Table_t =
+  sig
+    type t = {
+      mutable next_id: int;
+      to_id: (string, int) Hashtbl.t;
+      from_id: (int, string) Hashtbl.t;
+    }
+    val create: unit -> t
+    val intern: t -> string -> int
+    val to_string: t -> int -> string
+    val cardinal: t -> int
+  end
+module type Intern_t =
+  sig
+    type t = int
+    module Table: Table_t
+    val intern: Table.t -> string -> t
+    val to_string: Table.t -> t -> string
+    val equal: 'a -> 'a -> bool
+    val compare: 'a -> 'a -> int
+    val hash: 'a -> int
+  end
+
 (* Generic single-string interner used by [Seq] and [AttrKey].
-   Distinct generative functor instantiations keep the [t]s
-   abstract per consumer. *)
-module MakeStringIntern () = struct
+   [t] is [int] rather than abstract, which is what lets [AttrMap] be
+   [Better.IntMap]: the map hands its keys back as [int], and there is no
+   coercion from one into an abstract type. *)
+module MakeStringIntern (): Intern_t = struct
   type t = int
   module Table = struct
     type t = {
@@ -225,7 +252,7 @@ module AttrKey = MakeStringIntern ()
    /db_xref, GFF3 comma lists split on parse) can be preserved
    without lossy joining, in a flat layout that's ~half the size of
    a cons-cell list. *)
-module AttrMap = Map.Make (Int)
+module AttrMap = IntMap
 
 (* Adaptive value representation.  The first time a value string is
    seen during parse it is stored as [Value.String s]; the
@@ -496,7 +523,7 @@ module Annotation:
       attributes: Value.t array AttrMap.t
     }
     let empty_feature = {
-      seq = (Obj.magic 0 : Seq.t);
+      seq = 0;
       source = None;
       intervals = [];
       score = None;

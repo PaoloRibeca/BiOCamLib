@@ -16,14 +16,15 @@
 ; written down; where it is only scaffolding, [include (M: module type of M)]
 ; says "copy, do not alias" without repeating anything.
 ;
-; The distinction is between an alias and a manifest, and only the first is
-; fatal.  Annotations.ml is itself sealed, in the house [include (struct ... end:
-; sig ... end)] form, and its signature spells types as [Annotations_Base.X.t =
-; ...]; such an equation resolves for a consumer even though the module it names
-; is private.  Note that this works only from inside lib/, where the private
-; modules can be named at all: re-declaring a component from outside -- [module
-; X: module type of Annotations_Common.X] -- mints a fresh opaque type anchored
-; in a module the consumer cannot see, and fails.
+; Annotations.ml is itself sealed, in the house [include (struct ... end: sig
+; ... end)] form, and the rule its signature obeys is that a public signature
+; may not name a private module at all -- not as an alias, not through a [module
+; type of], not as a module-type equation, because each of those leaves the
+; consumer with something it must expand and cannot.  What lives only inside a
+; sealed module is therefore written out; what has a public interface elsewhere
+; is named ([AttrMap] is [Better.IntMap]).  Writing it out is the standing cost
+; of sealing a module whose types are part of the API, and the reason to accept
+; it is that the result is an interface rather than a re-export.
 
 (library
  (libraries zarith)

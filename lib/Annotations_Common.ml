@@ -466,12 +466,12 @@ let attribute_pairs ann feature =
    default and is also exposed directly as
    [default_hierarchy].  [read] / [read_from_file] install the
    features encoded in their string / file argument into the
-   supplied carrier annotation register, using the carrier's
+   supplied carrier annotation, using the carrier's
    hierarchy for validation; the returned annotation may also
    carry an updated reference (in GenBank's case, populated
    from any ORIGIN block) replacing whatever was on the
    carrier.  [of_string] / [of_file] are convenience
-   constructors equivalent to [read] over a fresh register
+   constructors equivalent to [read] over a fresh annotation
    seeded with the requested hierarchy.  The canonical short
    name of each format lives on [Format.to_string] / its
    inverse [Format.of_string], not in the signature itself. *)
@@ -479,7 +479,7 @@ let attribute_pairs ann feature =
    written is expressible.  NCBI's submission feature table is one: it has no
    slot for a source column, no parent link and no annotation metadata, and
    table2asn INFERS the gene/mRNA/CDS relations from coordinate overlap rather
-   than reading them, so a register cannot be recovered from one.  Without this
+   than reading them, so an annotation cannot be recovered from one.  Without this
    split such a format would have to satisfy [Format_t] by stubbing four
    functions that raise, and its constructor would make [--from-tbl]
    expressible but broken. *)

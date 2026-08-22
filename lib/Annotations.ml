@@ -15,7 +15,7 @@
     it adds what belongs to no single format: the [Annotation] AST
     extended with binary I/O, the validation actions and the
     DNA/protein extraction primitives, plus [Selection], the predicate
-    that picks a subset of a register's features.
+    that picks a subset of an annotation's features.
 
     This program was designed and developed by the author(s),
     with the assistance of the following AI tool(s):
@@ -47,9 +47,18 @@ open Better
    [fasta_width_override] was a writable [ref] that walked straight past the
    validation in [set_fasta_width].  Nineteen names stop here; the two the CLI
    genuinely wants, [set_fasta_width] and [wrap_sequence], go through.
-   The signature was drafted by [ocamlc -i] and then cut down, which is also why
-   its types are spelled as manifests into [Annotations_Base]: a manifest into a
-   private module resolves for a consumer, whereas an alias to one does not. *)
+   The signature was drafted by [ocamlc -i] and then cut down, but it names no
+   private module anywhere, and cannot: an alias into a sealed module does not
+   resolve for a consumer, and neither does a [module type of] on one.  So what
+   exists only inside a sealed module is written out here -- that is the price
+   of sealing, and it is also just an interface -- while anything with a public
+   interface elsewhere is referred to rather than restated: [AttrMap] is
+   [Better.IntMap] in one line instead of fifty of [Map.Make], and the field and
+   argument types reach for [Better.Hashtbl] and [Sequences.Types] by name.
+   What repeats within the signature is named too, rather than repeated: [Seq]
+   and [AttrKey] are one functor applied twice and share [Intern_t], and the
+   format modules nest through [Writer_t] and [Format_t] as they do in the
+   implementation, so that [GFF3] is [Format_t] plus the one name it adds. *)
 include (
   struct
     (* [Annotations_Common] itself includes [Annotations_Base], so this one line
@@ -78,15 +87,18 @@ include (
        signatures are the ones the modules already declare, saying so twice costs
        four lines and is checked by the compiler. *)
     include (Annotations_GFF3: sig
-        module GFF3: sig include Format_t val gencode_hierarchy: Hierarchy.t end
-      end)
+      module GFF3: sig
+        include Format_t
+        val gencode_hierarchy: Hierarchy.t
+      end
+    end)
     include (Annotations_GTF: sig module GTF: Format_t end)
     include (Annotations_GenBank: sig
-        module GenBank: sig
-            include Format_t
-            val parse_records: string -> GenBankRecord.t list
-          end
-      end)
+      module GenBank: sig
+        include Format_t
+        val parse_records: string -> GenBankRecord.t list
+      end
+    end)
     include (Annotations_Tabular: sig module Tabular: Format_t end)
     include (Annotations_Tbl: sig module Tbl: Writer_t end)
     (* A serialisable handle on the three formats, used by the
@@ -192,21 +204,16 @@ include (
         val feature_table: t -> feature_t -> Sequences.Translation.t
         val feature_protein: t -> feature_t -> string
         (* Validation.  Each [validate_*] iterates over the
-           annotation register; on every violation it calls the
+           annotation; on every violation it calls the
            supplied [?on_violation] callback with the violating
            feature's path, the feature's id (or [""] if none was
            parsed), and a human-readable message.  The default
-           callback raises [Validation_failed] with the same
-           payload, which preserves the historical fail-fast
-           behaviour for callers that have not opted in.  Passing
+           callback raises through [Exception], which preserves the
+           fail-fast behaviour for callers that have not opted in.
+           Passing
            a non-raising callback (e.g.\ one that writes to a
-           file) makes the walk run through the whole register and
+           file) makes the walk run through the whole annotation and
            collect every violation. *)
-        exception Validation_failed of {
-          path: string;
-          feature_id: string;
-          message: string
-        }
         type on_violation_t =
           path:string -> feature_id:string -> message:string -> unit
         val validate_sequences_present:
@@ -218,7 +225,6 @@ include (
       end
     = struct
         include Annotations_Base.Annotation
-        (* *)
         (* Bumped for two changes, neither of which an older archive survives:
            [feature_t] gained its [score] slot, so the record shape differs; and
            sibling lists are now stored most-recent-first, so an archive written in
@@ -256,7 +262,6 @@ include (
           let res = of_channel ic in
           close_in ic;
           res
-        (* *)
         (* [Initialize] rather than [Algorithm]: asking for a feature's sequence
            when no reference has been attached is an ordinary mistake by the caller,
            not a broken invariant inside the library.  [Exception.handle] prints the
@@ -315,15 +320,21 @@ include (
           Sequences.Translation.translate
             ~replace_alternative_start_codons_with_methionine:true ~stop_on_first_stop:true
             (feature_table ann feature) coding
-        exception Validation_failed of {
-          path: string;
-          feature_id: string;
-          message: string
-        }
         type on_violation_t =
           path:string -> feature_id:string -> message:string -> unit
+        (* Stop at the first violation, which is what a caller that did not ask
+           for a report wants.  The path and the id go into the message rather
+           than into a payload of their own: the structured form of a violation
+           is the [on_violation] callback, and what the library raises goes
+           through [Exception] like everything else it raises. *)
         let default_on_violation ~path ~feature_id ~message =
-          raise (Validation_failed { path; feature_id; message })
+          let where =
+            if path = "" && feature_id = "" then
+              ""
+            else
+              Printf.sprintf " (at path=%s, feature_id=%S)" path feature_id in
+          Exception.raise __FUNCTION__ IO_Format
+            (Printf.sprintf "Validation failed: %s%s" message where)
         let feature_id_of feature =
           match feature.id with Some s -> s | None -> ""
         let validate_sequences_present
@@ -399,7 +410,7 @@ include (
        annotation what it contains is a library concern rather than a CLI one, so
        that every consumer -- and the test suite -- can do it; AnnoTools adds only
        the command-line spelling of a criterion on top of this.
-       A criterion is evaluated afresh against whatever register it is applied to,
+       A criterion is evaluated afresh against whatever annotation it is applied to,
        rather than resolved once into a set of features: an [Annotation.t] is
        rebuilt wholesale by every replace-style read, so a captured set would go
        stale against the annotation it was meant to describe. *)
@@ -442,7 +453,7 @@ include (
             List.for_all
               (fun (f, re) -> List.exists (Str.matches re) (field_of ann ~path feature f)) l
           | Not t -> not (matches ann ~path feature t)
-        (* Iterate the features a criterion selects, in register order. *)
+        (* Iterate the features a criterion selects, in storage order. *)
         let iter ann selection f =
           iter_paths
             (fun ~path feature -> if matches ann ~path feature selection then f ~path feature) ann
@@ -452,27 +463,36 @@ include (
           !n
       end
   end: sig
+    (* A GenBank flat file as it was parsed, before any of it is interpreted:
+       the header lines as key/value pairs, the feature table as one record per
+       FEATURES entry with its LOCATION string still unparsed, and the ORIGIN
+       sequence when the file carried one.  Returned by [GenBank.parse_records]
+       for callers that want to inspect an input without building an annotation. *)
     module GenBankRecord:
       sig
-        type feature_t =
-          Annotations_Base.GenBankRecord.feature_t = {
+        type feature_t = {
           name: string;
           location: string;
           qualifiers: (string * string) list;
         }
-        type t =
-          Annotations_Base.GenBankRecord.t = {
+        type t = {
           headers: (string * string) list;
           features: feature_t list;
           origin: string option;
         }
       end
+    (* Where a feature sits in the hierarchy, as an interned handle rather than
+       a list of labels: a GENCODE-sized input has millions of features spread
+       over a few thousand distinct paths, so the labels are stored once in a
+       [Table.t] and each feature keeps an integer.  [t] is [private int], so it
+       can be read as an integer but not forged from one; the table it was
+       interned against is the only thing that can turn it back into labels. *)
     module Path:
       sig
-        type t = Annotations_Base.Path.t
+        type t = private int
         module Table:
           sig
-            type t = Annotations_Base.Path.Table.t
+            type t
             val create: unit -> t
             val intern: t -> string list -> int
             val to_list: t -> int -> string list
@@ -480,118 +500,74 @@ include (
           end
         val intern: Table.t -> string list -> t
         val to_list: Table.t -> t -> string list
+        (* [sep] defaults to [/], so that a path prints as [gene/mRNA/CDS]. *)
         val to_string: ?sep:string -> Table.t -> t -> string
         val of_string: ?sep:string -> Table.t -> string -> t
+        (* The last label of the path -- the feature's own category. *)
         val leaf_category: Table.t -> t -> string
         val equal: t -> t -> bool
         val compare: t -> t -> int
         val hash: t -> int
       end
-    module Seq:
+    (* [Seq] and [AttrKey] are the same functor applied twice -- one interning
+       sequence names, the other the column-9 keys -- so they share an interface
+       rather than repeating one.  [Path.Table] deliberately is not this: it
+       interns a list of labels rather than a string, and its [t] stays abstract.
+       Each table is per-annotation, and an id is only meaningful against the
+       table it came from: two annotations will number the same name differently. *)
+    module type Table_t =
+      sig
+        type t = {
+          mutable next_id: int;
+          to_id: (string, int) Better.Hashtbl.t;
+          from_id: (int, string) Better.Hashtbl.t;
+        }
+        val create: unit -> t
+        val intern: t -> string -> int
+        val to_string: t -> int -> string
+        val cardinal: t -> int
+      end
+    module type Intern_t =
       sig
         type t = int
-        module Table:
-          sig
-            type t =
-              Annotations_Base.Seq.Table.t = {
-              mutable next_id: int;
-              to_id: (string, int) Better.Hashtbl.t;
-              from_id: (int, string) Better.Hashtbl.t;
-            }
-            val create: unit -> t
-            val intern: t -> string -> int
-            val to_string: t -> int -> string
-            val cardinal: t -> int
-          end
-        val intern: Table.t -> string -> int
-        val to_string: Table.t -> int -> string
+        module Table: Table_t
+        val intern: Table.t -> string -> t
+        val to_string: Table.t -> t -> string
         val equal: 'a -> 'a -> bool
         val compare: 'a -> 'a -> int
         val hash: 'a -> int
       end
-    module AttrKey:
-      sig
-        type t = int
-        module Table:
-          sig
-            type t =
-              Annotations_Base.AttrKey.Table.t = {
-              mutable next_id: int;
-              to_id: (string, int) Better.Hashtbl.t;
-              from_id: (int, string) Better.Hashtbl.t;
-            }
-            val create: unit -> t
-            val intern: t -> string -> int
-            val to_string: t -> int -> string
-            val cardinal: t -> int
-          end
-        val intern: Table.t -> string -> int
-        val to_string: Table.t -> int -> string
-        val equal: 'a -> 'a -> bool
-        val compare: 'a -> 'a -> int
-        val hash: 'a -> int
-      end
-    module AttrMap:
-      sig
-        type key = Better.Int.t
-        type 'a t = 'a Map.Make(Better.Int).t
-        val empty: 'a t
-        val is_empty: 'a t -> bool
-        val mem: key -> 'a t -> bool
-        val add: key -> 'a -> 'a t -> 'a t
-        val update: key -> ('a option -> 'a option) -> 'a t -> 'a t
-        val singleton: key -> 'a -> 'a t
-        val remove: key -> 'a t -> 'a t
-        val merge:
-          (key -> 'a option -> 'b option -> 'c option) -> 'a t -> 'b t -> 'c t
-        val union: (key -> 'a -> 'a -> 'a option) -> 'a t -> 'a t -> 'a t
-        val compare: ('a -> 'a -> int) -> 'a t -> 'a t -> int
-        val equal: ('a -> 'a -> bool) -> 'a t -> 'a t -> bool
-        val iter: (key -> 'a -> unit) -> 'a t -> unit
-        val fold: (key -> 'a -> 'b -> 'b) -> 'a t -> 'b -> 'b
-        val for_all: (key -> 'a -> bool) -> 'a t -> bool
-        val exists: (key -> 'a -> bool) -> 'a t -> bool
-        val filter: (key -> 'a -> bool) -> 'a t -> 'a t
-        val filter_map: (key -> 'a -> 'b option) -> 'a t -> 'b t
-        val partition: (key -> 'a -> bool) -> 'a t -> 'a t * 'a t
-        val cardinal: 'a t -> int
-        val bindings: 'a t -> (key * 'a) list
-        val min_binding: 'a t -> key * 'a
-        val min_binding_opt: 'a t -> (key * 'a) option
-        val max_binding: 'a t -> key * 'a
-        val max_binding_opt: 'a t -> (key * 'a) option
-        val choose: 'a t -> key * 'a
-        val choose_opt: 'a t -> (key * 'a) option
-        val split: key -> 'a t -> 'a t * 'a option * 'a t
-        val find: key -> 'a t -> 'a
-        val find_opt: key -> 'a t -> 'a option
-        val find_first: (key -> bool) -> 'a t -> key * 'a
-        val find_first_opt: (key -> bool) -> 'a t -> (key * 'a) option
-        val find_last: (key -> bool) -> 'a t -> key * 'a
-        val find_last_opt: (key -> bool) -> 'a t -> (key * 'a) option
-        val map: ('a -> 'b) -> 'a t -> 'b t
-        val mapi: (key -> 'a -> 'b) -> 'a t -> 'b t
-        val to_seq: 'a t -> (key * 'a) Stdlib.Seq.t
-        val to_rev_seq: 'a t -> (key * 'a) Stdlib.Seq.t
-        val to_seq_from: key -> 'a t -> (key * 'a) Stdlib.Seq.t
-        val add_seq: (key * 'a) Stdlib.Seq.t -> 'a t -> 'a t
-        val of_seq: (key * 'a) Stdlib.Seq.t -> 'a t
-        val replace: key -> 'a -> 'a t -> 'a t
-        val iteri: (int -> key -> 'a -> unit) -> 'a t -> unit
-        val bindings_array: 'a t -> (key * 'a) array
-        val find_next: key -> 'a t -> key * 'a
-        val find_next_opt: key -> 'a t -> (key * 'a) option
-      end
+    (* Interned sequence names -- the first column of GFF3 and GTF, the LOCUS of
+       GenBank.  Resolve with [Annotation.seq_name] rather than reaching for the
+       table directly. *)
+    module Seq: Intern_t
+    (* Interned attribute keys: the column-9 names ([ID], [Parent], [gene_id],
+       ...).  GENCODE has some twenty of them across millions of rows. *)
+    module AttrKey: Intern_t
+    (* A feature's attributes, keyed by [AttrKey.t].  The values are an array
+       rather than a single item so that a genuinely repeated qualifier -- a
+       GenBank [/db_xref], a GFF3 comma list -- survives without being joined
+       into one string.  Reach for [Annotation.attr_get] in preference. *)
+    module AttrMap: module type of IntMap
+    (* How an attribute value is held.  A string seen exactly once is kept
+       inline as [String]; one seen twice or more is promoted into the
+       annotation's [ValueTable] and kept as [Hashed].  The distinction is an
+       internal space optimisation and not something a caller need act on:
+       [Annotation.attr_get] and [attr_iter] hand back the original string
+       either way. *)
     module Value:
       sig
         type t =
-          Annotations_Base.Value.t =
-            Hashed of int
+          | Hashed of int
           | String of string
       end
+    (* The promotion table behind [Value.Hashed], one per annotation.  It also
+       carries a Bloom sketch of what has been seen once, which is what makes
+       the promotion decision cheap during a parse; [drop_bloom] releases that
+       sketch when parsing is over and the table is only being read. *)
     module ValueTable:
       sig
-        type t = Annotations_Base.ValueTable.t
+        type t
         val create: unit -> t
         val intern: t -> string -> Value.t
         val to_string: t -> Value.t -> string
@@ -599,11 +575,25 @@ include (
         val cardinal: t -> int
         val drop_bloom: t -> unit
       end
+    (* Override the FASTA line width for every writer at once, which is what
+       [AnnoTools --fasta-width] does.  [None] restores each writer's own
+       default -- 60 for the GFF3 [##FASTA] section, unwrapped for the tabular
+       sidecar -- and [Some 0] means never wrap.  A negative width raises. *)
     val set_fasta_width: int option -> unit
+    (* Render a sequence as the body of a FASTA record, without a trailing
+       newline.  [width] is the caller's default and is overridden by
+       [set_fasta_width] when one has been set; zero returns the sequence
+       whole. *)
     val wrap_sequence: ?width:int -> string -> string
+    (* The schema an annotation is read under: a tree of category labels saying
+       which feature types may nest inside which.  It is what turns a flat file
+       into an annotation with parent links, and it is written and read as an
+       S-expression -- [(gene ((mRNA (exon, CDS)), pseudogene))].  [validate]
+       asks whether a path is legal under it; [children_of] asks what may
+       follow. *)
     module Hierarchy:
       sig
-        type t = Annotations_Base.Hierarchy.t
+        type t
         val node: string -> t list -> t
         val name: t -> string
         val children: t -> t list
@@ -614,31 +604,43 @@ include (
         val of_string: string -> t
         val of_file: string -> t
       end
+    (* Coordinates as the file formats write them, which is not how the library
+       holds them: intervals are 0-based half-open internally and 1-based
+       inclusive on the wire.  [Range (lo, hi)] is the ordinary case; [Between]
+       is the INSDC [lo^hi] site, which names the gap between two adjacent bases
+       and so has no width.  Use these rather than adding and subtracting one at
+       each call site -- the two zero-length conventions do not agree, and that
+       is precisely where the off-by-one lives. *)
     module OneBased:
       sig
         type t =
-          Annotations_Common.OneBased.t =
-            Range of int * int
+          | Range of int * int
           | Between of int * int
         val of_interval: Sequences.Types.simple_interval_t -> t
         val to_interval: t -> Sequences.Types.simple_interval_t
         val to_string: t -> string
         val of_string: string -> t
+        (* The 1-based inclusive endpoints of an interval, for a writer that
+           wants two numbers rather than a [t]. *)
         val bounds: Sequences.Types.simple_interval_t -> int * int
-        val interval_of_bounds:
-          lo:int -> hi:int -> Sequences.Types.simple_interval_t
+        val interval_of_bounds: lo:int -> hi:int -> Sequences.Types.simple_interval_t
       end
+    (* The GenBank LOCATION grammar, parsed rather than pattern-matched: it
+       nests, and [complement(join(...))] does not mean the same as
+       [join(complement(...))].  [Point] and [Range] carry [<] and [>] partial
+       markers as [fuzzy_left] / [fuzzy_right]; [Remote] is a location on
+       another accession.  [intervals] resolves the tree into a flat list, each
+       interval tagged with its accession when it is remote, plus the strand
+       implied by the outermost [Complement]. *)
     module GenBankLocation:
       sig
-        type endpoint_t =
-          Annotations_Base.GenBankLocation.endpoint_t = {
+        type endpoint_t = {
           pos: int;
           fuzzy_left: bool;
           fuzzy_right: bool;
         }
         type t =
-          Annotations_Base.GenBankLocation.t =
-            Point of endpoint_t
+          | Point of endpoint_t
           | Range of endpoint_t * endpoint_t
           | Between of int * int
           | Complement of t
@@ -647,85 +649,162 @@ include (
           | Remote of string * int option * t
         val of_string: string -> t
         val intervals:
-          t ->
-          (string option * Sequences.Types.simple_interval_t) list *
-          Sequences.Types.strand_t option
+          t -> (string option * Sequences.Types.simple_interval_t) list *
+               Sequences.Types.strand_t option
       end
+    (* A whole annotation, format-independent: the hierarchy it was read under,
+       the four interning tables its features refer to, the features themselves,
+       whatever metadata the source file carried, and optionally a reference
+       sequence.  [t] is immutable in the sense that every operation adding
+       something returns a new one; the interning tables inside it are shared
+       and mutable, which is why a [feature_t] is only meaningful together with
+       the annotation it came from. *)
+    module Annotation:
+      sig
+        type feature_t = {
+          seq: Seq.t;
+          source: Value.t option;
+          intervals: Sequences.Types.simple_interval_t list;
+          score: float option;
+          strand: Sequences.Types.strand_t option;
+          phase: int option;
+          id: string option;
+          attributes: Value.t array AttrMap.t;
+        }
+        val empty_feature: feature_t
+        type t
+        val create: Hierarchy.t -> t
+        val hierarchy: t -> Hierarchy.t
+        (* The interning tables.  Needed to resolve a [Path.t] or a [Seq.t] by
+           hand; the accessors below do it for the common cases. *)
+        val paths: t -> Path.Table.t
+        val seqs: t -> Seq.Table.t
+        val attr_keys: t -> AttrKey.Table.t
+        val values: t -> ValueTable.t
+        val seq_name: t -> feature_t -> string
+        val intern_seq: t -> string -> Seq.t
+        val feature_source: t -> feature_t -> string option
+        val intern_source: t -> string -> Value.t
+        (* Attributes by name, with the [Value] representation resolved away.
+           [attr_set] returns a new feature; it does not modify the one given. *)
+        val attr_get: t -> feature_t -> string -> string list option
+        val attr_iter: t -> (string -> string list -> unit) -> feature_t -> unit
+        val attr_set: t -> feature_t -> key:string -> values:string list -> feature_t
+        (* Run at the end of a parse: rewrites in place those [Value.String]s
+           that turned out to be repeated after all, so that afterwards
+           [Value.String s] holds only when [s] occurs exactly once. *)
+        val cleanup_values: t -> unit
+        (* The reference sequence, which the extraction and validation
+           functions below require and which the readers attach when the input
+           carried one (GenBank ORIGIN, a GFF3 [##FASTA] section). *)
+        val reference: t -> Sequences.Reference.t option
+        val set_reference: t -> Sequences.Reference.t -> t
+        (* Whatever the source file said about itself outside the feature
+           table -- pragmas, header lines -- kept so a round trip does not
+           silently drop it. *)
+        val get_metadata: t -> string -> string list
+        val add_metadata: t -> key:string -> value:string -> t
+        val all_metadata: t -> string list Better.StringMap.t
+        (* [add] places a feature at a path, creating the intermediate levels
+           the hierarchy calls for.  The [_paths] variants of the traversals
+           hand the path back as labels rather than as an interned [Path.t],
+           which costs a table lookup per feature and saves the caller one. *)
+        val add: t -> path:string list -> feature_t -> t
+        val iter: (path:Path.t -> feature_t -> unit) -> t -> unit
+        val fold: (path:Path.t -> feature_t -> 'a -> 'a) -> 'a -> t -> 'a
+        val iter_paths: (path:string list -> feature_t -> unit) -> t -> unit
+        val fold_paths: (path:string list -> feature_t -> 'a -> 'a) -> 'a -> t -> 'a
+        val path_to_string: ?sep:string -> string list -> string
+        val path_of_string: ?sep:string -> string -> string list
+        (* Binary archive: a [Marshal]ed value behind a version string, so a
+           annotation that took minutes to parse can be reloaded in seconds.  The
+           version is checked on read and refuses an archive written by an
+           incompatible release rather than misreading it.  The default suffix
+           is [.Annotation], unless the prefix points under [/dev]. *)
+        val to_binary: ?verbose:bool -> t -> string -> unit
+        val of_binary: ?verbose:bool -> string -> t
+        val to_channel: out_channel -> t -> unit
+        val of_channel: in_channel -> t
+        (* Feature sequence.  [feature_dna] stitches a feature's intervals in
+           the order they are stored, reading each on the forward strand and
+           reverse-complementing the whole result once when the feature is on
+           the minus strand.  [feature_table] is the [/transl_table] qualifier
+           when the feature carries one and the reference's per-sequence default
+           otherwise.  [feature_protein] drops the phase bases from the 5' end
+           of [feature_dna] and translates the rest.  All three need a reference
+           and raise when there is none. *)
+        val feature_dna: t -> feature_t -> string
+        val feature_table: t -> feature_t -> Sequences.Translation.t
+        val feature_protein: t -> feature_t -> string
+        (* Validation.  Each [validate_*] walks the annotation and calls
+           [on_violation] with the offending feature's path, its id (or [""])
+           and a message.  The default callback raises, which keeps the
+           fail-fast behaviour; passing one that does not raise makes the walk
+           continue and collect every violation. *)
+        type on_violation_t =
+          path:string -> feature_id:string -> message:string -> unit
+        val validate_sequences_present: ?on_violation:on_violation_t -> t -> unit
+        val validate_feature_bounds: ?on_violation:on_violation_t -> t -> unit
+        val validate_translation: ?on_violation:on_violation_t -> t -> unit
+      end
+    (* The write half of a format, kept separate so that a format which can only
+       be written is expressible.  NCBI's submission feature table is one: it
+       has no source column, no parent link and no metadata, and [table2asn]
+       infers the gene/mRNA/CDS relations from coordinate overlap rather than
+       reading them, so an annotation cannot be recovered from one. *)
     module type Writer_t =
       sig
-        val to_buffer:
-          Buffer.t -> Annotations_Base.Annotation.t -> unit
-        val to_string: Annotations_Base.Annotation.t -> string
-        val to_file: Annotations_Base.Annotation.t -> string -> unit
+        val to_buffer: Buffer.t -> Annotation.t -> unit
+        val to_string: Annotation.t -> string
+        val to_file: Annotation.t -> string -> unit
       end
+    (* A format that round-trips: everything a writer has, plus the readers.
+       [read] and [read_from_file] add to an existing annotation, which is how
+       several files are merged into one; [of_string] and [of_file] start from
+       an empty one under [hierarchy], defaulting to the format's own.
+       [dialects] are the named hierarchies the format knows, head first. *)
     module type Format_t =
       sig
-        val to_buffer:
-          Buffer.t -> Annotations_Base.Annotation.t -> unit
-        val to_string: Annotations_Base.Annotation.t -> string
-        val to_file: Annotations_Base.Annotation.t -> string -> unit
+        include Writer_t
         val dialects: (string * Hierarchy.t) list
         val default_hierarchy: Hierarchy.t
-        val read:
-          Annotations_Base.Annotation.t ->
-          string -> Annotations_Base.Annotation.t
-        val read_from_file:
-          Annotations_Base.Annotation.t ->
-          string -> Annotations_Base.Annotation.t
-        val of_string:
-          ?hierarchy:Hierarchy.t ->
-          string -> Annotations_Base.Annotation.t
-        val of_file:
-          ?hierarchy:Hierarchy.t ->
-          string -> Annotations_Base.Annotation.t
+        val read: Annotation.t -> string -> Annotation.t
+        val read_from_file: Annotation.t -> string -> Annotation.t
+        val of_string: ?hierarchy:Hierarchy.t -> string -> Annotation.t
+        val of_file: ?hierarchy:Hierarchy.t -> string -> Annotation.t
       end
+    (* GFF3.  Structure travels in column 9 as [ID] and [Parent], which are
+       derived from the annotation on the way out rather than echoed from the way
+       in, and rows sharing an [ID] are merged back into one discontinuous
+       feature on the way in.  A [##FASTA] section is read and written. *)
     module GFF3:
       sig
-        val to_buffer:
-          Buffer.t -> Annotations_Base.Annotation.t -> unit
-        val to_string: Annotations_Base.Annotation.t -> string
-        val to_file: Annotations_Base.Annotation.t -> string -> unit
-        val dialects: (string * Hierarchy.t) list
-        val default_hierarchy: Hierarchy.t
-        val read:
-          Annotations_Base.Annotation.t ->
-          string -> Annotations_Base.Annotation.t
-        val read_from_file:
-          Annotations_Base.Annotation.t ->
-          string -> Annotations_Base.Annotation.t
-        val of_string:
-          ?hierarchy:Hierarchy.t ->
-          string -> Annotations_Base.Annotation.t
-        val of_file:
-          ?hierarchy:Hierarchy.t ->
-          string -> Annotations_Base.Annotation.t
+        include Format_t
         val gencode_hierarchy: Hierarchy.t
       end
+    (* GTF, the Ensembl/GENCODE dialect: no [ID]/[Parent], the hierarchy being
+       implied by [gene_id] and [transcript_id] instead. *)
     module GTF: Format_t
+    (* GenBank flat files.  [parse_records] exposes the raw parse for a caller
+       that wants to look at an input without building an annotation from it. *)
     module GenBank:
       sig
-        val to_buffer:
-          Buffer.t -> Annotations_Base.Annotation.t -> unit
-        val to_string: Annotations_Base.Annotation.t -> string
-        val to_file: Annotations_Base.Annotation.t -> string -> unit
-        val dialects: (string * Hierarchy.t) list
-        val default_hierarchy: Hierarchy.t
-        val read:
-          Annotations_Base.Annotation.t ->
-          string -> Annotations_Base.Annotation.t
-        val read_from_file:
-          Annotations_Base.Annotation.t ->
-          string -> Annotations_Base.Annotation.t
-        val of_string:
-          ?hierarchy:Hierarchy.t ->
-          string -> Annotations_Base.Annotation.t
-        val of_file:
-          ?hierarchy:Hierarchy.t ->
-          string -> Annotations_Base.Annotation.t
+        include Format_t
         val parse_records: string -> GenBankRecord.t list
       end
+    (* The library's own tabular format: one feature per line, the hierarchy
+       declared in the document rather than implied, and the sequence in a
+       sidecar.  Being one record per line is the point -- [awk], [cut] and
+       [sort] can take it a line at a time. *)
     module Tabular: Format_t
+    (* NCBI's submission feature table.  Write-only; see [Writer_t]. *)
     module Tbl: Writer_t
+    (* A runtime handle on the formats, for dispatching on one chosen at the
+       command line.  The constructors share their names with the modules but
+       live in their own namespace, so [Format.GFF3] and [GFF3] do not clash.
+       [of_string] accepts the canonical name and the informal spellings people
+       type ([gff], [gb], [table]); [dialect_of] resolves a dialect name against
+       the format's [dialects], case-insensitively. *)
     module Format:
       sig
         type t = GFF3 | GTF | GenBank | Tabular
@@ -735,97 +814,41 @@ include (
         val of_string: string -> t
         val dialect_of: t -> string -> Hierarchy.t
       end
+    (* The same for everything that can be written, which is every format plus
+       the write-only feature table.  Keeping it distinct from [Format.t] is
+       what makes [--from-tbl] inexpressible rather than merely broken: the
+       reading side of a CLI dispatches over [Format.t] and the writing side
+       over this, so the type records which formats can do which. *)
     module Writer:
       sig
-        type t = Format of Format.t | Tbl
+        type t =
+          | Format of Format.t
+          | Tbl
         val all: t list
         val module_of: t -> (module Writer_t)
         val to_string: t -> string
         val of_string: string -> t
       end
-    module Annotation:
-      sig
-        type feature_t =
-          Annotations_Base.Annotation.feature_t = {
-          seq: Annotations_Base.Seq.t;
-          source: Annotations_Base.Value.t option;
-          intervals: Sequences.Types.simple_interval_t list;
-          score: float option;
-          strand: Sequences.Types.strand_t option;
-          phase: int option;
-          id: string option;
-          attributes:
-            Annotations_Base.Value.t array
-            Annotations_Base.AttrMap.t;
-        }
-        val empty_feature: feature_t
-        type t = Annotations_Base.Annotation.t
-        val create: Annotations_Base.Hierarchy.t -> t
-        val hierarchy: t -> Annotations_Base.Hierarchy.t
-        val paths: t -> Annotations_Base.Path.Table.t
-        val seqs: t -> Annotations_Base.Seq.Table.t
-        val attr_keys: t -> Annotations_Base.AttrKey.Table.t
-        val values: t -> Annotations_Base.ValueTable.t
-        val seq_name: t -> feature_t -> string
-        val intern_seq: t -> string -> Annotations_Base.Seq.t
-        val feature_source: t -> feature_t -> string option
-        val intern_source: t -> string -> Annotations_Base.Value.t
-        val attr_get: t -> feature_t -> string -> string list option
-        val attr_iter: t -> (string -> string list -> unit) -> feature_t -> unit
-        val attr_set:
-          t -> feature_t -> key:string -> values:string list -> feature_t
-        val cleanup_values: t -> unit
-        val reference: t -> Sequences.Reference.t option
-        val set_reference: t -> Sequences.Reference.t -> t
-        val get_metadata: t -> string -> string list
-        val add_metadata: t -> key:string -> value:string -> t
-        val all_metadata: t -> string list Better.StringMap.t
-        val add: t -> path:string list -> feature_t -> t
-        val iter:
-          (path:Annotations_Base.Path.t -> feature_t -> unit) ->
-          t -> unit
-        val fold:
-          (path:Annotations_Base.Path.t -> feature_t -> 'a -> 'a) ->
-          'a -> t -> 'a
-        val iter_paths: (path:string list -> feature_t -> unit) -> t -> unit
-        val fold_paths:
-          (path:string list -> feature_t -> 'a -> 'a) -> 'a -> t -> 'a
-        val path_to_string: ?sep:string -> string list -> string
-        val path_of_string: ?sep:string -> string -> string list
-        val to_binary: ?verbose:bool -> t -> string -> unit
-        val of_binary: ?verbose:bool -> string -> t
-        val to_channel: out_channel -> t -> unit
-        val of_channel: in_channel -> t
-        val feature_dna: t -> feature_t -> string
-        val feature_table: t -> feature_t -> Sequences.Translation.t
-        val feature_protein: t -> feature_t -> string
-        exception Validation_failed of { path: string; feature_id: string;
-                    message: string;
-                  }
-        type on_violation_t =
-            path:string -> feature_id:string -> message:string -> unit
-        val validate_sequences_present:
-          ?on_violation:on_violation_t -> t -> unit
-        val validate_feature_bounds: ?on_violation:on_violation_t -> t -> unit
-        val validate_translation: ?on_violation:on_violation_t -> t -> unit
-      end
+    (* A predicate over an annotation's features, in the library rather than in the
+       CLI so that it is not only a command line that can express one.
+       [Labels] matches a feature's label, [Regexps] matches named fields
+       against patterns, and [Not] complements.  The selectable field names are
+       [seq], [path], [type], [source], [strand], [id] and any attribute key; an
+       empty name means the feature label. *)
     module Selection:
       sig
         type t =
-            All
+          | All
           | Labels of Better.StringSet.t
           | Regexps of (string * Better.Str.regexp) list
           | Not of t
         val to_string: t -> string
         val label_of: Annotation.feature_t -> string
         val field_of:
-          Annotation.t ->
-          path:string list -> Annotation.feature_t -> string -> string list
-        val matches:
-          Annotation.t -> path:string list -> Annotation.feature_t -> t -> bool
+          Annotation.t -> path:string list -> Annotation.feature_t -> string -> string list
+        val matches: Annotation.t -> path:string list -> Annotation.feature_t -> t -> bool
         val iter:
-          Annotation.t ->
-          t -> (path:string list -> Annotation.feature_t -> unit) -> unit
+          Annotation.t -> t -> (path:string list -> Annotation.feature_t -> unit) -> unit
         val count: Annotation.t -> t -> int
       end
   end

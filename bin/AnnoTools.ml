@@ -606,6 +606,19 @@ let () =
           (match List.rev path with leaf :: _ -> leaf | [] -> "")
           (location_of feature) in
     let iter_selected f = A.Selection.iter !current !selection f in
+    (* What to do about a violation when the caller did not ask for a report.
+       The library's own default raises and says what went wrong; this one adds
+       the thing only a command line can know, which is the flag that turns the
+       first violation into a full report. *)
+    let on_violation ~path ~feature_id ~message =
+      Printf.eprintf "(%s): Validation failed: %s\n%!" info.Tools.Argv.name message;
+      if path <> "" || feature_id <> "" then
+        Printf.eprintf "(%s):   at path=%s feature_id=%S\n%!"
+          info.Tools.Argv.name path feature_id;
+      Printf.eprintf
+        "(%s): Re-run with '--validate-report <file>' to write every \
+         violation to a tab-separated file.\n%!" info.Tools.Argv.name;
+      exit 1 in
     (* Under -v, say what the selection register now holds every time it
        changes.  A selector is easy to get subtly wrong -- an unanchored regexp,
        a field name that is silently read as an attribute -- and the first sign
@@ -644,15 +657,15 @@ let () =
             let module F = (val A.Writer.module_of fmt) in
             F.to_file !current path)
       | Validate_sequences_present ->
-        A.Annotation.validate_sequences_present !current
+        A.Annotation.validate_sequences_present ~on_violation !current
       | Validate_feature_bounds ->
-        A.Annotation.validate_feature_bounds !current
+        A.Annotation.validate_feature_bounds ~on_violation !current
       | Validate_translation ->
-        A.Annotation.validate_translation !current
+        A.Annotation.validate_translation ~on_violation !current
       | Validate_all ->
-        A.Annotation.validate_sequences_present !current;
-        A.Annotation.validate_feature_bounds !current;
-        A.Annotation.validate_translation !current
+        A.Annotation.validate_sequences_present ~on_violation !current;
+        A.Annotation.validate_feature_bounds ~on_violation !current;
+        A.Annotation.validate_translation ~on_violation !current
       | Validate_report path ->
         (* Run all three checks against the register with a
            non-raising callback that writes one TSV row per
@@ -726,16 +739,6 @@ let () =
       | Summary -> summary ()
     ) program
   with
-  | A.Annotation.Validation_failed { path; feature_id; message } ->
-    Printf.eprintf "(%s): Validation failed: %s\n%!"
-      info.Tools.Argv.name message;
-    if path <> "" || feature_id <> "" then
-      Printf.eprintf "(%s):   at path=%s feature_id=%S\n%!"
-        info.Tools.Argv.name path feature_id;
-    Printf.eprintf
-      "(%s): Re-run with '--validate-report <file>' to write every \
-       violation to a tab-separated file.\n%!" info.Tools.Argv.name;
-    exit 1
   | e ->
     Exception.handle __FUNCTION__ TA.usage (fun () ->
       Printf.peprintf
