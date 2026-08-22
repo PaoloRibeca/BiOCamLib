@@ -15,6 +15,15 @@
 ; whose surface is four lines and is checked against what they declare -- it is
 ; written down; where it is only scaffolding, [include (M: module type of M)]
 ; says "copy, do not alias" without repeating anything.
+;
+; The distinction is between an alias and a manifest, and only the first is
+; fatal.  Annotations.ml is itself sealed, in the house [include (struct ... end:
+; sig ... end)] form, and its signature spells types as [Annotations_Base.X.t =
+; ...]; such an equation resolves for a consumer even though the module it names
+; is private.  Note that this works only from inside lib/, where the private
+; modules can be named at all: re-declaring a component from outside -- [module
+; X: module type of Annotations_Common.X] -- mints a fresh opaque type anchored
+; in a module the consumer cannot see, and fails.
 
 (library
  (libraries zarith)
