@@ -229,7 +229,14 @@ module GFF3:
         | None -> Sequences.Reference.empty in
       ann :=
         Annotation.set_reference !ann
-          (Sequences.Reference.add_from_fasta_string ~linter:Fun.id base sequence)
+          (* Upper-cased, and nothing else.  The codon tables are upper-case
+             only, so a soft-masked genome read in verbatim translates to X
+             throughout; folding to N instead -- which is what the default
+             linter does -- would destroy the ambiguity codes rather than the
+             case.  This is the linter AnnoTools already applies to a reference
+             given as FASTA, and the three ways in should agree. *)
+          (Sequences.Reference.add_from_fasta_string ~linter:String.uppercase_ascii
+             base sequence)
     end;
     cleanup_values !ann;
     !ann

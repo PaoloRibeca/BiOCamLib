@@ -540,8 +540,10 @@ module Tabular: Format_t = struct
         | None -> Sequences.Reference.empty in
       ann :=
         Annotation.set_reference !ann
-          (Sequences.Reference.add_from_fasta_string ~linter:Fun.id ~tables:!tables base
-             reference_fasta)
+          (* Upper-cased and otherwise left alone, as for the other two ways a
+             reference can arrive; see the note in the GFF3 reader. *)
+          (Sequences.Reference.add_from_fasta_string ~linter:String.uppercase_ascii
+             ~tables:!tables base reference_fasta)
     end;
     cleanup_values !ann;
     !ann

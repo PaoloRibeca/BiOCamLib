@@ -267,11 +267,14 @@ module GenBank:
               [add_from_fasta_string] existed: a write and a delete per record,
               failing outright wherever the temporary directory is not
               writable, and leaving the file behind if the process died between
-              the two.  The linter is left at its default, which is what
-              [add_from_fasta] applied here before. *)
+              the two.
+              Upper-cased and otherwise left alone, as for the other two ways a
+              reference can arrive; see the note in the GFF3 reader.  The
+              default linter that the detour used to apply folded every
+              ambiguity code in an ORIGIN block to N. *)
            ref_acc :=
-             Sequences.Reference.add_from_fasta_string !ref_acc
-               (Printf.sprintf ">%s\n%s\n" locus seq))
+             Sequences.Reference.add_from_fasta_string ~linter:String.uppercase_ascii
+               !ref_acc (Printf.sprintf ">%s\n%s\n" locus seq))
       ) records;
       cleanup_values !ann;
       if !any_origin then set_reference !ann !ref_acc else !ann

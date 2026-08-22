@@ -1361,8 +1361,60 @@ let test_one_based () =
     Testing.check_raises "and one with a non-numeric bound"
       (fun () -> ignore (O.of_string "a..b")))
 
+(* How a reference is normalised on the way in.  Three readers can attach one
+   -- GenBank's ORIGIN block, GFF3's ##FASTA directive and the tabular format's
+   sidecar -- and they used to disagree, so the same sequence gave a different
+   answer depending on which door it came through.  GenBank folded every
+   ambiguity code to N; the other two kept the case, so a soft-masked genome
+   translated to X throughout, the codon tables being upper-case only.  All
+   three now upper-case and do nothing else, which is what AnnoTools already
+   did for a reference given as plain FASTA. *)
+
+let test_reference_linting () =
+  Testing.section "Reference normalisation" (fun () ->
+    (* Soft masking and ambiguity codes together: the two things a linter can
+       destroy, and it destroys them in opposite directions. *)
+    let raw = "atgcccgggtaaRYgactagcgcatcgtca" in
+    let expected = "ATGCCCGGGTAARYGACTAGCGCATCGTCA" in
+    let sequence_of ann =
+      match A.Annotation.reference ann with
+      | None -> "(no reference)"
+      | Some r -> Sequences.Reference.find r (T.Forward "demo01") |> fst in
+    let via_genbank = genbank ~seq:raw [] |> A.GenBank.of_string in
+    let via_gff3 =
+      gff3 [ "demo01\tdemo\tgene\t1\t9\t.\t+\t.\tID=g1";
+             "##FASTA"; ">demo01"; raw ]
+      |> A.GFF3.of_string in
+    Testing.check_string "a GenBank ORIGIN is upper-cased and otherwise left alone"
+      ~expected (sequence_of via_genbank);
+    Testing.check_string "a GFF3 ##FASTA section likewise"
+      ~expected (sequence_of via_gff3);
+    Testing.check_string "so the two readers agree on the same sequence"
+      ~expected:(sequence_of via_genbank) (sequence_of via_gff3);
+    (* The tabular sidecar is the third door, reached by rendering and reading
+       back; it has to agree too. *)
+    Testing.check_string "and the tabular sidecar agrees after a round trip"
+      ~expected (sequence_of (A.Tabular.to_string via_genbank |> A.Tabular.of_string));
+    (* What each of the two former behaviours cost, stated as the outputs that
+       used to come out wrong. *)
+    Testing.check "ambiguity codes survive, where GenBank used to fold them to N"
+      (fun () ->
+        let s = sequence_of via_genbank in
+        String.contains s 'R' && String.contains s 'Y');
+    Testing.check_string "and a soft-masked sequence still translates"
+      ~expected:"MPG"
+      (match feature_at via_gff3 "gene" with
+       | Some (_, f) -> A.Annotation.feature_protein via_gff3 f
+       | None -> "(no gene)");
+    Testing.check_string "rather than to X throughout"
+      ~expected:"ATGCCCGGG"
+      (match feature_at via_gff3 "gene" with
+       | Some (_, f) -> A.Annotation.feature_dna via_gff3 f
+       | None -> "(no gene)"))
+
 let run () =
   test_one_based ();
+  test_reference_linting ();
   test_locations ();
   test_genbank_records ();
   test_genbank_round_trip ();
