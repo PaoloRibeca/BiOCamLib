@@ -607,21 +607,23 @@ let test_gff3_fidelity () =
        | None -> 0);
     let written = A.GFF3.to_string joined in
     (* GFF3 spells a discontinuous feature as several rows sharing one [ID],
-       which a reader merges back.  We write the rows and not the [ID], so
-       there is nothing to merge them by; the writer emits one row per interval
-       and [walk_dfs] keys its by-id table with [Hashtbl.replace] and emits per
-       row, so both halves would have to change. *)
-    Testing.check
-      ~known_bug:"no ID= is written, so the rows of a joined feature cannot be rejoined"
-      "a joined CDS is written as rows that can be rejoined"
-      (fun () -> count_substring "\tCDS\t" written = 1);
-    (* [ID] and [Parent] are standard GFF3 -- the format's own mechanism for
-       carrying structure -- and the writer emits neither.  This is the root of
-       the two failures around it, not a limitation of the format. *)
-    Testing.check
-      ~known_bug:"row_of_feature emits neither ID= nor Parent=, though both are standard GFF3"
-      "a feature id derived from /locus_tag is written as ID="
-      (fun () -> count_substring "ID=" written > 0);
+       so two rows is the correct rendering of a joined CDS -- what matters is
+       that they carry the identity that lets a reader put them back together,
+       which for a long time they did not. *)
+    Testing.check_int "a joined CDS is written as one row per interval"
+      ~expected:2 (count_substring "\tCDS\t" written);
+    (* The identity comes from /locus_tag, which takes precedence over /gene. *)
+    Testing.check "a feature id derived from /locus_tag is written as ID="
+      (fun () -> count_substring "ID=DEMO_0001" written > 0);
+    Testing.check "and both rows of the joined CDS carry the same one"
+      (fun () -> count_substring "ID=DEMO_0001" written = 2);
+    (* Which is the property that matters: the rows go back together. *)
+    Testing.check_int "so the rows read back as one feature with two intervals"
+      ~expected:2
+      (let back = A.GFF3.of_string ~hierarchy:(A.Annotation.hierarchy joined) written in
+       match feature_at back "CDS" with
+       | Some (_, f) -> List.length f.A.Annotation.intervals
+       | None -> 0);
     (* Column 8 is per ROW: it says how many bases of that row's first codon sit
        in the rows before it.  Stamping the feature's phase on every row of a
        multi-exon CDS is right only for the first.  With a 10-base first exon
@@ -639,22 +641,28 @@ let test_gff3_fidelity () =
          | _ :: _ :: "CDS" :: _ :: _ :: _ :: _ :: phase :: _ -> Some phase
          | _ -> None)
        |> String.concat ",");
-    (* A GenBank register written to GFF3 does not read back.  The reason is
-       the missing [Parent] above, not anything about GenBank: with no parent
-       link every row lands at the top, so a CDS arrives as [annotation->CDS]
-       rather than [annotation->source->CDS] and the hierarchy check refuses
-       it.  Supplying the register's own hierarchy does not help, which is what
-       the second check establishes -- the schema was never the problem. *)
-    Testing.check_does_not_raise
-      ~known_bug:"no Parent= is written, so every row lands at the top and the path is wrong"
-      "a GenBank register survives a GFF3 round trip"
-      (fun () -> A.GFF3.to_string joined |> A.GFF3.of_string);
-    Testing.check_does_not_raise
-      ~known_bug:"the flattening is caused by the missing Parent=, so the hierarchy cannot fix it"
-      "it survives when read back under its own hierarchy"
+    (* A GenBank register now keeps its shape through GFF3, because the writer
+       derives [Parent] from the forest.  It has to be read back under the
+       hierarchy it was written from: a GenBank register hangs everything off a
+       [source] feature, and GFF3's default schema has no [source], so the two
+       genuinely disagree.  That is a schema to supply, not a defect -- which is
+       what [--hierarchy] and [--dialect] are for. *)
+    Testing.check_does_not_raise "a GenBank register survives a GFF3 round trip"
       (fun () ->
         A.GFF3.to_string joined
-        |> A.GFF3.of_string ~hierarchy:(A.Annotation.hierarchy joined)))
+        |> A.GFF3.of_string ~hierarchy:(A.Annotation.hierarchy joined));
+    Testing.check_string "and comes back at the same path"
+      ~expected:"annotation->source->CDS"
+      (let back =
+         A.GFF3.to_string joined
+         |> A.GFF3.of_string ~hierarchy:(A.Annotation.hierarchy joined) in
+       match feature_at back "CDS" with
+       | Some (path, _) -> A.Annotation.path_to_string path
+       | None -> "(no CDS)");
+    (* Read under GFF3's own default instead and it is refused, which is the
+       correct answer rather than a silent reshaping. *)
+    Testing.check_raises "reading it under GFF3's default hierarchy is refused"
+      (fun () -> ignore (A.GFF3.to_string joined |> A.GFF3.of_string)))
 
 (* Attribute ordering. *)
 

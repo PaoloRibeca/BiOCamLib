@@ -303,17 +303,33 @@ module GFF3:
      lexer treats a space as a token separator: encoding it is what makes
      [product=hypothetical protein] survive being written and read again. *)
   let column_9_reserved = ";=&, "
-  let attribute_string ann feature =
+  (* [ID] and [Parent] are where GFF3 keeps structure, and the register keeps
+     the same thing in its forest.  They are written from the forest here, and
+     any [ID] or [Parent] sitting among the attributes -- left there by a GFF3
+     reader, which stores column 9 whole as well as reading the structure out of
+     it -- is deliberately dropped rather than echoed.  Echoing them was what
+     the writer used to do, and it only looked right: they are a second copy of
+     what the forest says, and the moment a register is edited or merged they
+     are a stale one, so the file would assert a shape the register no longer
+     had.  A register that never came from GFF3, a GenBank one for instance, has
+     no such attributes at all, which is why its structure used to vanish. *)
+  let attribute_string ann ~id ~parent feature =
     let encode = Annotations_Lex.url_encode ~reserved:column_9_reserved in
+    let structural =
+      (match id with Some i -> [ "ID=" ^ encode i ] | None -> [])
+      @ (match parent with Some p -> [ "Parent=" ^ encode p ] | None -> []) in
     let s =
-      attribute_pairs ann feature
-      |> List.map (fun (k, vs) -> encode k ^ "=" ^ (List.map encode vs |> String.concat ","))
+      structural
+      @ (attribute_pairs ann feature
+         |> List.filter (fun (k, _) -> k <> "ID" && k <> "Parent")
+         |> List.map (fun (k, vs) ->
+              encode k ^ "=" ^ (List.map encode vs |> String.concat ",")))
       |> String.concat ";" in
     (* Column 9 is mandatory in GFF3 and uses [.] as the
        attribute-less placeholder; an empty string is not
        valid. *)
     if s = "" then "." else s
-  let row_of_feature ann path feature =
+  let row_of_feature ann ~id ~parent path feature =
     let ftype = match List.rev path with [] -> "" | x :: _ -> x in
     let seq = seq_name ann feature
     and src =
@@ -325,7 +341,7 @@ module GFF3:
       | Some Sequences.Types.Forward _ -> "+"
       | Some Sequences.Types.Reverse _ -> "-"
       | None -> "."
-    and attrs = attribute_string ann feature in
+    and attrs = attribute_string ann ~id ~parent feature in
     (* Column 8 is per ROW, not per feature: it says how many bases of the first
        codon of THIS row lie in the previous rows.  Stamping the feature's phase
        on every row of a multi-exon CDS is right only for the first.  Intervals
@@ -354,8 +370,45 @@ module GFF3:
         Printf.bprintf buf "##%s %s\n" k v
       ) vs
     ) (all_metadata ann);
+    (* Identifiers already in the register, so that a synthesised one cannot
+       collide with a real one. *)
+    let used = Hashtbl.create 64 in
+    iter_paths (fun ~path:_ feature ->
+      match feature.id with
+      | Some i when i <> "" -> Hashtbl.replace used i ()
+      | _ -> ()) ann;
+    let counter = ref 0 in
+    let rec fresh () =
+      incr counter;
+      let candidate = Printf.sprintf "feature%d" !counter in
+      if Hashtbl.mem used candidate then fresh ()
+      else begin
+        Hashtbl.replace used candidate ();
+        candidate
+      end in
+    (* [id_of_path] remembers the identifier of the most recent feature seen at
+       each path prefix which, the walk being in DFS pre-order, is exactly the
+       parent of whatever comes next one level below -- the same device the
+       tabular writer uses for its parent column. *)
+    let id_of_path = Hashtbl.create 64 in
     iter_paths (fun ~path feature ->
-      let rows = row_of_feature ann path feature in
+      let depth = List.length path in
+      (* Depth 2 is a feature directly under the root, which has no parent to
+         name.  A feature deeper than that takes the identifier standing at its
+         path minus its own category. *)
+      let parent =
+        if depth <= 2 then None
+        else Hashtbl.find_opt id_of_path (List.filteri (fun i _ -> i < depth - 1) path) in
+      (* Its own identifier where it has one, so that what a file said about
+         itself survives; a synthesised one otherwise, since without it a
+         feature spanning several intervals could not be rejoined and its
+         children would have nothing to point at. *)
+      let id =
+        match feature.id with
+        | Some i when i <> "" -> i
+        | _ -> fresh () in
+      Hashtbl.replace id_of_path path id;
+      let rows = row_of_feature ann ~id:(Some id) ~parent path feature in
       List.iter (fun r ->
         Buffer.add_string buf r;
         Buffer.add_char buf '\n'
