@@ -36,6 +36,7 @@ open Better
 
 module S = Tools.ArrayStack
 module MM = Tools.Multimap (ComparableInt) (ComparableInt)
+module TC = Tools.TransitiveClosure.Make (ComparableInt)
 
 (* Helpers. *)
 
@@ -219,7 +220,63 @@ let test_multimap () =
     Testing.check "asking for a missing key returns None"
       (fun () -> MM.find_min_elt_opt 9 m = None))
 
+(* Transitive closure: equivalence classes built by merging the sets they are
+   declared in.  [iter] calls its argument once per class to obtain a callback
+   for that class, which is what lets a caller group without collecting. *)
+
+let test_transitive_closure () =
+  Testing.section "Transitive closure" (fun () ->
+    let closure_of sets =
+      let tc = TC.empty () in
+      List.iter (fun l -> TC.add_equivalences tc (IntSet.of_list l)) sets;
+      tc in
+    (* The shape of the partition, as "members/members", classes sorted so the
+       comparison does not depend on the order they come out in. *)
+    let partition tc =
+      let classes = ref [] in
+      TC.iter
+        (fun () ->
+          let cls = ref [] in
+          List.accum classes cls;
+          fun e -> List.accum cls e)
+        tc;
+      List.rev !classes
+      |> List.map (fun cls -> List.sort compare !cls |> List.map string_of_int
+                              |> String.concat ",")
+      |> List.sort compare |> String.concat "/" in
+    Testing.check_int "an empty closure holds nothing"
+      ~expected:0 (TC.cardinal (closure_of []));
+    Testing.check_string "and has no classes" ~expected:"" (partition (closure_of []));
+    Testing.check_int "a declared pair contributes two elements"
+      ~expected:2 (TC.cardinal (closure_of [ [ 1; 2 ] ]));
+    Testing.check_string "which form one class"
+      ~expected:"1,2" (partition (closure_of [ [ 1; 2 ] ]));
+    (* The point of the structure: two overlapping declarations are one class. *)
+    Testing.check_string "overlapping pairs merge into one class"
+      ~expected:"1,2,3" (partition (closure_of [ [ 1; 2 ]; [ 2; 3 ] ]));
+    Testing.check_int "and the elements are counted once each"
+      ~expected:3 (TC.cardinal (closure_of [ [ 1; 2 ]; [ 2; 3 ] ]));
+    Testing.check_string "disjoint pairs stay apart"
+      ~expected:"1,2/4,5" (partition (closure_of [ [ 1; 2 ]; [ 4; 5 ] ]));
+    (* A later declaration can join two classes that were separate. *)
+    Testing.check_string "a bridging declaration merges two classes"
+      ~expected:"1,2,4,5" (partition (closure_of [ [ 1; 2 ]; [ 4; 5 ]; [ 1; 4 ] ]));
+    Testing.check_string "merging is not order-dependent"
+      ~expected:(partition (closure_of [ [ 1; 2 ]; [ 4; 5 ]; [ 1; 4 ] ]))
+      (partition (closure_of [ [ 1; 4 ]; [ 4; 5 ]; [ 1; 2 ] ]));
+    Testing.check_string "declaring the same pair twice changes nothing"
+      ~expected:"1,2" (partition (closure_of [ [ 1; 2 ]; [ 1; 2 ] ]));
+    Testing.check_string "a singleton declaration is its own class"
+      ~expected:"1,2/9" (partition (closure_of [ [ 1; 2 ]; [ 9 ] ]));
+    (* A declaration of three at once is one class, not three pairs. *)
+    Testing.check_string "a set of three is a single class"
+      ~expected:"1,2,3" (partition (closure_of [ [ 1; 2; 3 ] ]));
+    Testing.check_string "a chain closes transitively"
+      ~expected:"1,2,3,4,5"
+      (partition (closure_of [ [ 1; 2 ]; [ 2; 3 ]; [ 3; 4 ]; [ 4; 5 ] ])))
+
 let run () =
   test_arraystack ();
   test_trie ();
-  test_multimap ()
+  test_multimap ();
+  test_transitive_closure ()
