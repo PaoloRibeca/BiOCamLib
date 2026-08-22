@@ -63,8 +63,13 @@ include (
             | Str.Text s :: Str.Delim d :: tl -> (* Can only happen at the beginning *)
               assert (res = []);
               process_rec (Str.Delim "" :: Str.Text s :: Str.Delim d :: tl) res acc_seq_len acc_len
-            | Str.Delim _ :: [] -> rem
-            | Str.Delim _ :: Str.Text _ :: [] -> rem
+            (* [res] holds what has already been cleared, in reverse, and the
+               remainder is still forward, which is why the two are combined this
+               way -- exactly as the bail-out below does.  Returning [rem] alone
+               dropped the whole prefix, and for an aligned line that is not a
+               truncation one can recover from: every column past the cut shifts. *)
+            | Str.Delim _ :: [] | Str.Delim _ :: Str.Text _ :: [] ->
+              List.rev_append rem res
             | Str.Delim d_1 :: Str.Text s :: Str.Delim d_2 :: tl ->
               (* Not that at this point the first gap has already been processed *)
               let l_d_1 = String.length d_1 and l_s = String.length s and l_d_2 = String.length d_2 in

@@ -45,5 +45,7 @@ let () =
   Tests_Tools.run ();
   Tests_Sequences.run ();
   Tests_Annotations.run ();
+  Tests_Consensus.run ();
+  Tests_Processes.run ();
   Testing.summary ()
 
