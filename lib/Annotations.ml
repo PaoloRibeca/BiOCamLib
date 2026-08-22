@@ -5,16 +5,17 @@
     a number of the bioinformatics tools I developed are built.
 
     Annotations.ml is the public API of the annotation subsystem.  It
-    re-exports [Annotations_Formats] whole -- the [Hierarchy] parser,
-    [GenBankLocation], the [Writer_t] / [Format_t] interfaces, the
-    [GFF3], [GTF], [GenBank], [Tabular] and [Tbl] modules and their
-    [Format] / [Writer] dispatchers -- and the [Path], [Seq],
-    [AttrKey], [AttrMap], [Value] and [ValueTable] interning modules
-    from [Annotations_Base], so that a consumer needs one import.  To
-    those it adds what does not belong to any single format: the
-    [Annotation] AST extended with binary I/O, the validation actions
-    and the DNA/protein extraction primitives, plus [Selection], the
-    predicate that picks a subset of a register's features.
+    re-exports [Annotations_Common] whole -- the [Hierarchy] parser,
+    [GenBankLocation], the field codecs and the [Writer_t] /
+    [Format_t] interfaces -- names the five per-format modules that
+    live in files of their own, dispatches over them through [Format]
+    and [Writer], and re-exports the [Path], [Seq], [AttrKey],
+    [AttrMap], [Value] and [ValueTable] interning modules from
+    [Annotations_Base], so that a consumer needs one import.  To those
+    it adds what belongs to no single format: the [Annotation] AST
+    extended with binary I/O, the validation actions and the
+    DNA/protein extraction primitives, plus [Selection], the predicate
+    that picks a subset of a register's features.
 
     This program was designed and developed by the author(s),
     with the assistance of the following AI tool(s):
@@ -38,11 +39,96 @@
 
 open Better
 open Annotations_Base
-(* The formats, their scaffolding and their dispatchers, re-exported so that
-   [Annotations.GFF3], [Annotations.Format] and friends keep working from one
-   import.  The [include] also carries the shared helpers the extensions below
-   are built on, [read_file] among them. *)
-include Annotations_Formats
+(* The scaffolding every format module is built on -- the file and buffer
+   plumbing, the FASTA renderer, the [Hierarchy] parser, the field codecs, the
+   [GenBankLocation] AST and the [Writer_t] / [Format_t] interfaces -- re-exported
+   so that a consumer of [Annotations] reaches all of it from one import.  It
+   cannot live in this file: the per-format modules below sit between it and
+   here, so folding it in would make the dependency circular. *)
+include Annotations_Common
+
+(* The per-format readers and writers, each in its own file because together
+   they were seven eighths of what this module used to be. *)
+module GFF3 = Annotations_GFF3.GFF3
+module GTF = Annotations_GTF.GTF
+module GenBank = Annotations_GenBank.GenBank
+module Tabular = Annotations_Tabular.Tabular
+module Tbl = Annotations_Tbl.Tbl
+
+(* A serialisable handle on the three formats, used by the
+   [AnnoTools] CLI and by any caller that wants to dispatch on
+   format at runtime.  The constructor names mirror the module
+   names but live in their own namespace ([Format.GFF3] vs
+   [GFF3]), so the two never clash. *)
+module Format = struct
+  type t = GFF3 | GTF | GenBank | Tabular
+  let all = [ GFF3; GTF; GenBank; Tabular ]
+  let module_of: t -> (module Format_t) = function
+    | GFF3 -> (module GFF3)
+    | GTF -> (module GTF)
+    | GenBank -> (module GenBank)
+    | Tabular -> (module Tabular)
+  let to_string = function
+    | GFF3 -> "gff3"
+    | GTF -> "gtf"
+    | GenBank -> "genbank"
+    | Tabular -> "tsv"
+  (* Match the canonical name (lower-cased) plus a small set of
+     the informal spellings users tend to type on the command
+     line. *)
+  let of_string s =
+    match String.lowercase_ascii s with
+    | "gff3" | "gff" -> GFF3
+    | "gtf" -> GTF
+    | "genbank" | "gb" -> GenBank
+    | "tsv" | "tabular" | "table" -> Tabular
+    | _ ->
+      Exception.raise __FUNCTION__ Initialize
+        (Printf.sprintf "Unknown annotation format %S (have: %s)"
+           s (String.concat ", " (List.map to_string all)))
+  (* Resolve a dialect name against the format's
+     [Format_t.dialects] association list, raising if the name
+     is unknown.  Comparison is case-insensitive on the dialect
+     key, which lets the CLI accept both [gencode] and
+     [Gencode]. *)
+  let dialect_of f name =
+    let module F = (val module_of f) in
+    let q = String.lowercase_ascii name in
+    match List.find_opt
+      (fun (k, _) -> String.lowercase_ascii k = q) F.dialects with
+    | Some (_, h) -> h
+    | None ->
+      Exception.raise __FUNCTION__ Initialize
+        (Printf.sprintf "Unknown dialect %S for format %s (have: %s)"
+           name (to_string f)
+           (String.concat ", " (List.map fst F.dialects)))
+end
+
+(* A serialisable handle on everything that can be WRITTEN, which is every
+   format plus the write-only feature table.  Keeping it distinct from
+   [Format.t] is what stops [--from-tbl] being expressible: the reading side of
+   the CLI dispatches over [Format.t] and the writing side over this, so the
+   type system records which formats can do which. *)
+module Writer = struct
+  type t =
+    | Format of Format.t
+    | Tbl
+  let all = List.map (fun f -> Format f) Format.all @ [ Tbl ]
+  let module_of: t -> (module Writer_t) = function
+    | Format f ->
+      (* [Format_t] includes [Writer_t], so a format's module is already a
+         writer; this only narrows the packed signature. *)
+      let module F = (val Format.module_of f) in
+      (module F: Writer_t)
+    | Tbl -> (module Tbl)
+  let to_string = function
+    | Format f -> Format.to_string f
+    | Tbl -> "tbl"
+  let of_string s =
+    match String.lowercase_ascii s with
+    | "tbl" | "feature-table" | "featuretable" -> Tbl
+    | _ -> Format (Format.of_string s)
+end
 
 (* Re-export base interning modules under [Annotations] so callers
    need only one import. *)
