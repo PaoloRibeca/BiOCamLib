@@ -183,6 +183,15 @@ module GTF: Format_t = struct
                   "On line %d: transcript row missing transcript_id"
                   r.gtf_lnum) in
          let key_t = r.gtf_seq, gid, tid in
+         (* Register the transcript in its own right, and not only when some
+            child row happens to mention it.  [tx_order] is what the emit loop
+            below walks, so a transcript declared with no exons -- legal GTF,
+            and the shape a gene with a single unspliced product takes -- was
+            otherwise dropped without a word. *)
+         if not (Hashtbl.mem by_tx key_t) then begin
+           Hashtbl.add by_tx key_t [];
+           List.accum tx_order key_t
+         end;
          Hashtbl.replace tx_explicit key_t r
        | _ ->
          match r.gtf_tx_id with
@@ -199,7 +208,7 @@ module GTF: Format_t = struct
     let gene_order = List.rev !gene_order in
     let tx_order = List.rev !tx_order in
     let acc = ref [] in
-    let emit (path : string list) (feature : feature_t) =
+    let emit (path: string list) (feature: feature_t) =
       if not (Hierarchy.validate hierarchy ~path) then
         Exception.raise __FUNCTION__ IO_Format
           (Printf.sprintf

@@ -65,7 +65,6 @@ module GFF3:
     "standard", default_hierarchy;
     "gencode", gencode_hierarchy
   ]
-  (* *)
   let parse_attributes s =
     let lexbuf = Lexing.from_string ~with_positions:true s in
     Annotations_Parse.gff_attribute_list Annotations_Lex.gff_attributes lexbuf

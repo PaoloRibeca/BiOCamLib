@@ -1566,6 +1566,287 @@ let test_file_io () =
         (List.length (features (A.GFF3.read_from_file (A.GFF3.of_string one_row) path)))))
 
 
+(* Binary archives.  The on-disk form is a version string followed by a
+   [Marshal]led value, and the version is the whole of the compatibility story:
+   an archive written by a release whose [feature_t] had a different shape must
+   be refused rather than read back as nonsense, because [Marshal] will happily
+   reinterpret the bytes.  Nothing checked any of this before. *)
+
+let with_temp_prefix f =
+  let prefix = Filename.temp_file "BiOCamLib_Tests_" "" in
+  Sys.remove prefix;
+  Fun.protect
+    ~finally:(fun () ->
+      List.iter (fun p -> if Sys.file_exists p then Sys.remove p)
+        [ prefix; prefix ^ ".Annotation" ])
+    (fun () -> f prefix)
+
+let test_binary_io () =
+  Testing.section "Binary archives" (fun () ->
+    let ann = A.GFF3.of_string demo_gff3 in
+    (* A round trip has to preserve what the text formats would show AND the
+       interning tables underneath, since a feature is only meaningful together
+       with the tables its ids point into. *)
+    with_temp_prefix (fun prefix ->
+      A.Annotation.to_binary ann prefix;
+      let back = A.Annotation.of_binary prefix in
+      Testing.check_string "an archive round-trips to the same GFF3"
+        ~expected:(A.GFF3.to_string ann) (A.GFF3.to_string back);
+      Testing.check_int "the path table survives the round trip"
+        ~expected:(A.Path.Table.cardinal (A.Annotation.paths ann))
+        (A.Path.Table.cardinal (A.Annotation.paths back));
+      Testing.check_int "the sequence table survives the round trip"
+        ~expected:(A.Seq.Table.cardinal (A.Annotation.seqs ann))
+        (A.Seq.Table.cardinal (A.Annotation.seqs back));
+      Testing.check_string "metadata survives the round trip"
+        ~expected:"chr1 1 1000"
+        (String.concat "," (A.Annotation.get_metadata back "sequence-region")));
+    (* The suffix rule: a prefix gains [.Annotation], and a [/dev] path is used
+       as given so that an archive can be piped. *)
+    with_temp_prefix (fun prefix ->
+      A.Annotation.to_binary ann prefix;
+      Testing.check_bool "to_binary appends .Annotation to a prefix" ~expected:true
+        (Sys.file_exists (prefix ^ ".Annotation"));
+      Testing.check_bool "and writes nothing at the bare prefix" ~expected:false
+        (Sys.file_exists prefix));
+    (* The channel-level pair, which is what a caller composing archives uses. *)
+    with_temp_file "" (fun path ->
+      let oc = open_out path in
+      A.Annotation.to_channel oc ann;
+      close_out oc;
+      let ic = open_in path in
+      let back = A.Annotation.of_channel ic in
+      close_in ic;
+      Testing.check_string "to_channel and of_channel are inverse"
+        ~expected:(A.GFF3.to_string ann) (A.GFF3.to_string back));
+    (* An archive stamped by another release must be refused.  Writing the stamp
+       by hand is the only way to state this without a second build of the
+       library. *)
+    with_temp_file "" (fun path ->
+      let oc = open_out path in
+      output_value oc "1999-01-01";
+      output_value oc ann;
+      close_out oc;
+      Testing.check_raises ~re:"Incompatible archive version"
+        "an archive from another release is refused, not misread"
+        (fun () ->
+          let ic = open_in path in
+          Fun.protect ~finally:(fun () -> close_in ic)
+            (fun () -> A.Annotation.of_channel ic))))
+
+(* Format and Writer.  These are the runtime handles a command line dispatches
+   on, and the distinction between them is load-bearing: everything can be
+   written that can be read, plus the feature table, which cannot.  That
+   asymmetry is what makes [--from-tbl] inexpressible rather than merely
+   broken, and it is worth a check that says so. *)
+
+let test_format_dispatch () =
+  Testing.section "Format and Writer dispatch" (fun () ->
+    Testing.check_int "there are four readable formats" ~expected:4
+      (List.length A.Format.all);
+    Testing.check_int "and five things that can be written" ~expected:5
+      (List.length A.Writer.all);
+    Testing.check_string "the canonical names"
+      ~expected:"gff3,gtf,genbank,tsv"
+      (List.map A.Format.to_string A.Format.all |> String.concat ",");
+    List.iter (fun f ->
+      let name = A.Format.to_string f in
+      Testing.check_string (Printf.sprintf "%S survives of_string then to_string" name)
+        ~expected:name (A.Format.to_string (A.Format.of_string name)))
+      A.Format.all;
+    (* The informal spellings a user actually types. *)
+    List.iter (fun (typed, canonical) ->
+      Testing.check_string (Printf.sprintf "%S names the %s format" typed canonical)
+        ~expected:canonical (A.Format.to_string (A.Format.of_string typed)))
+      [ "gff", "gff3"; "GFF3", "gff3"; "gb", "genbank"; "GenBank", "genbank";
+        "table", "tsv"; "tabular", "tsv" ];
+    Testing.check_raises ~re:"Unknown annotation format" "an unknown format is refused"
+      (fun () -> A.Format.of_string "sam");
+    (* The asymmetry. *)
+    Testing.check_raises ~re:"Unknown annotation format"
+      "the feature table is not a readable format"
+      (fun () -> A.Format.of_string "tbl");
+    Testing.check_string "but it is a writer" ~expected:"tbl"
+      (A.Writer.to_string (A.Writer.of_string "tbl"));
+    Testing.check_string "and so is every readable format" ~expected:"gff3"
+      (A.Writer.to_string (A.Writer.of_string "gff3"));
+    (* Dispatching through [module_of] must land on the very module whose name
+       was given, which is the one thing a table of first-class modules can get
+       silently wrong. *)
+    let ann = A.GFF3.of_string demo_gff3 in
+    List.iter (fun (f, direct) ->
+      let module F = (val A.Format.module_of f) in
+      Testing.check_string
+        (Printf.sprintf "module_of %s writes what %s writes"
+           (A.Format.to_string f) (A.Format.to_string f))
+        ~expected:(direct ann) (F.to_string ann))
+      [ A.Format.GFF3, A.GFF3.to_string; A.Format.GTF, A.GTF.to_string;
+        A.Format.GenBank, A.GenBank.to_string; A.Format.Tabular, A.Tabular.to_string ];
+    let module W = (val A.Writer.module_of A.Writer.Tbl) in
+    Testing.check_string "and module_of Tbl writes what Tbl writes"
+      ~expected:(A.Tbl.to_string ann) (W.to_string ann);
+    (* Dialects are resolved against the format's own list, case-insensitively. *)
+    Testing.check_string "a dialect is matched without regard to case"
+      ~expected:(A.Hierarchy.to_string A.GFF3.gencode_hierarchy)
+      (A.Hierarchy.to_string (A.Format.dialect_of A.Format.GFF3 "GenCode"));
+    Testing.check_string "and the head of the list is the format's default"
+      ~expected:(A.Hierarchy.to_string A.GFF3.default_hierarchy)
+      (A.Hierarchy.to_string (A.Format.dialect_of A.Format.GFF3 "standard"));
+    Testing.check_raises ~re:"Unknown dialect" "an unknown dialect is refused"
+      (fun () -> A.Format.dialect_of A.Format.GFF3 "nonesuch"))
+
+(* The hierarchy, which is the schema every reader hangs its rows off.  It
+   carries an implicit root named [annotation]: paths are rooted there, and
+   [to_string] strips it so that [of_string (to_string h)] is the identity. *)
+
+let test_hierarchy () =
+  Testing.section "Hierarchy" (fun () ->
+    let h = A.GFF3.default_hierarchy in
+    Testing.check_string "of_string and to_string are inverse"
+      ~expected:(A.Hierarchy.to_string h)
+      (A.Hierarchy.to_string (A.Hierarchy.of_string (A.Hierarchy.to_string h)));
+    Testing.check_string "a hand-written schema survives the same trip"
+      ~expected:"(gene ((mRNA (exon, CDS)))), region"
+      (A.Hierarchy.to_string
+         (A.Hierarchy.of_string "(gene ((mRNA (exon, CDS)))), region"));
+    (* Paths are rooted at the implicit root: a path that omits it is not a
+       path into this schema at all. *)
+    Testing.check_bool "a path is rooted at the implicit root" ~expected:true
+      (A.Hierarchy.validate h ~path:[ "annotation"; "gene"; "mRNA"; "CDS" ]);
+    Testing.check_bool "a path that omits the root does not validate" ~expected:false
+      (A.Hierarchy.validate h ~path:[ "gene"; "mRNA" ]);
+    Testing.check_bool "nor does one the schema has no place for" ~expected:false
+      (A.Hierarchy.validate h ~path:[ "annotation"; "gene"; "gene" ]);
+    Testing.check_bool "the empty path validates against nothing" ~expected:false
+      (A.Hierarchy.validate h ~path:[]);
+    Testing.check_string "what a gene may contain"
+      ~expected:"mRNA,transcript,lncRNA,miRNA,rRNA,tRNA,snoRNA,snRNA,ncRNA"
+      (String.concat "," (A.Hierarchy.children_of h ~path:[ "annotation"; "gene" ]));
+    Testing.check_string "a leaf contains nothing" ~expected:""
+      (String.concat ","
+         (A.Hierarchy.children_of h ~path:[ "annotation"; "gene"; "mRNA"; "CDS" ]));
+    Testing.check_string "and an unknown path is empty rather than an error" ~expected:""
+      (String.concat "," (A.Hierarchy.children_of h ~path:[ "annotation"; "nonesuch" ]));
+    Testing.check_bool "find returns nothing for an unknown path" ~expected:true
+      (A.Hierarchy.find h ~path:[ "annotation"; "nonesuch" ] = None);
+    (* The constructor, which is how a caller builds a schema without going
+       through the S-expression syntax. *)
+    let built =
+      A.Hierarchy.node "annotation"
+        [ A.Hierarchy.node "gene" [ A.Hierarchy.node "exon" [] ] ] in
+    Testing.check_string "a schema built by hand prints like a parsed one"
+      ~expected:"(gene (exon))" (A.Hierarchy.to_string built);
+    Testing.check_string "and its accessors agree" ~expected:"gene"
+      (String.concat "," (List.map A.Hierarchy.name (A.Hierarchy.children built))))
+
+(* GTF, whose hierarchy is implicit in [gene_id] and [transcript_id] rather
+   than in a parent link.  That is the whole difference from GFF3, so the
+   checks are about what the grouping does and what it refuses. *)
+
+let test_gtf () =
+  Testing.section "GTF specifics" (fun () ->
+    let gtf rows = lines (rows @ [ "" ]) in
+    let two_genes =
+      gtf [
+        "chr1\td\tgene\t100\t500\t.\t+\t.\tgene_id \"g1\";";
+        "chr1\td\ttranscript\t100\t500\t.\t+\t.\tgene_id \"g1\"; transcript_id \"t1\";";
+        "chr1\td\texon\t100\t200\t.\t+\t.\tgene_id \"g1\"; transcript_id \"t1\";";
+        "chr1\td\tgene\t600\t900\t.\t-\t.\tgene_id \"g2\";";
+        "chr1\td\ttranscript\t600\t900\t.\t-\t.\tgene_id \"g2\"; transcript_id \"t2\";" ] in
+    let ann = A.GTF.of_string two_genes in
+    Testing.check_string "gene_id and transcript_id build the hierarchy"
+      ~expected:(lines [
+        "annotation->gene";
+        "annotation->gene->transcript";
+        "annotation->gene->transcript->exon";
+        "annotation->gene";
+        "annotation->gene->transcript" ])
+      (features ann |> List.map (fun (p, _) -> A.Annotation.path_to_string p) |> lines);
+    Testing.check_int "two distinct gene_ids give two genes" ~expected:2
+      (List.length
+         (List.filter (fun (p, _) -> p = [ "annotation"; "gene" ]) (features ann)));
+    Testing.check_string "a GTF round trip is stable"
+      ~expected:(A.GTF.to_string ann)
+      (A.GTF.to_string (A.GTF.of_string (A.GTF.to_string ann)));
+    (* What it refuses, and with a line number, since a GTF is long and the
+       message is the only thing pointing at the offending row. *)
+    Testing.check_raises ~re:"missing gene_id" "a row with no gene_id is refused"
+      (fun () -> A.GTF.of_string (gtf [ "chr1\td\tgene\t1\t9\t.\t+\t.\tgene_name \"x\";" ]));
+    Testing.check_raises ~re:"On line 2" "and the message says which row"
+      (fun () ->
+        A.GTF.of_string
+          (gtf [ "chr1\td\tgene\t1\t9\t.\t+\t.\tgene_id \"g1\";";
+                 "chr1\td\tgene\t1\t9\t.\t+\t.\tgene_name \"x\";" ]));
+    Testing.check_raises ~re:"missing transcript_id"
+      "a transcript row with no transcript_id is refused"
+      (fun () ->
+        A.GTF.of_string
+          (gtf [ "chr1\td\tgene\t1\t9\t.\t+\t.\tgene_id \"g1\";";
+                 "chr1\td\ttranscript\t1\t9\t.\t+\t.\tgene_id \"g1\";" ]));
+    Testing.check_string "GTF declares one dialect, its standard" ~expected:"standard"
+      (String.concat "," (List.map fst A.GTF.dialects)))
+
+(* Attributes and metadata after parsing.  [attr_set] is the only way a caller
+   changes a feature, and it is worth pinning that it returns a new one rather
+   than mutating in place: the interning tables are shared and mutable, but a
+   [feature_t] is not. *)
+
+let test_mutation () =
+  Testing.section "Attribute and metadata mutation" (fun () ->
+    let ann = A.GFF3.of_string demo_gff3 in
+    let feature =
+      match feature_at ann "gene" with
+      | Some (_, f) -> f
+      | None -> A.Annotation.empty_feature in
+    let updated = A.Annotation.attr_set ann feature ~key:"Note" ~values:[ "hello" ] in
+    Testing.check_string "attr_set makes the value readable by attr_get"
+      ~expected:"hello"
+      (String.concat "," (Option.value ~default:[] (A.Annotation.attr_get ann updated "Note")));
+    Testing.check_bool "and leaves the feature it was given alone" ~expected:true
+      (A.Annotation.attr_get ann feature "Note" = None);
+    Testing.check_string "several values are kept as several" ~expected:"a,b,c"
+      (String.concat ","
+         (Option.value ~default:[]
+            (A.Annotation.attr_get ann
+               (A.Annotation.attr_set ann feature ~key:"db_xref" ~values:[ "a"; "b"; "c" ])
+               "db_xref")));
+    Testing.check_string "setting an existing key replaces it" ~expected:"XYZ1"
+      (String.concat ","
+         (Option.value ~default:[]
+            (A.Annotation.attr_get ann
+               (A.Annotation.attr_set ann feature ~key:"Name" ~values:[ "XYZ1" ])
+               "Name")));
+    (* Metadata accumulates under a key rather than replacing. *)
+    let ann = A.Annotation.add_metadata ann ~key:"comment" ~value:"first" in
+    let ann = A.Annotation.add_metadata ann ~key:"comment" ~value:"second" in
+    Testing.check_string "metadata accumulates under its key" ~expected:"first,second"
+      (String.concat "," (A.Annotation.get_metadata ann "comment"));
+    Testing.check_string "and an absent key reads as nothing" ~expected:""
+      (String.concat "," (A.Annotation.get_metadata ann "nonesuch"));
+    Testing.check_bool "all_metadata carries the keys the file had" ~expected:true
+      (StringMap.mem "gff-version" (A.Annotation.all_metadata ann));
+    (* The promotion invariant [cleanup_values] establishes: a value seen once
+       stays inline, a value seen more than once is promoted into the table.
+       [find_id] is what makes the distinction visible from outside. *)
+    let repeated =
+      gff3 [
+        "chr1\td\tgene\t1\t9\t.\t+\t.\tID=a;Note=shared";
+        "chr1\td\tgene\t20\t29\t.\t+\t.\tID=b;Note=shared";
+        "chr1\td\tgene\t40\t49\t.\t+\t.\tID=c;Note=unique" ] in
+    let ann = A.GFF3.of_string repeated in
+    A.Annotation.cleanup_values ann;
+    Testing.check_bool "a value seen twice is promoted into the table" ~expected:true
+      (A.ValueTable.find_id (A.Annotation.values ann) "shared" <> None);
+    Testing.check_bool "a value seen once is not" ~expected:true
+      (A.ValueTable.find_id (A.Annotation.values ann) "unique" = None);
+    Testing.check_string "and either way the caller sees the string"
+      ~expected:"shared,shared,unique"
+      (features ann
+        |> List.map (fun (_, f) ->
+             String.concat "," (Option.value ~default:[] (A.Annotation.attr_get ann f "Note")))
+        |> String.concat ","))
+
+
 let run () =
   test_one_based ();
   test_reference_linting ();
@@ -1585,5 +1866,10 @@ let run () =
   test_add_invariants ();
   test_insertion_cost ();
   test_extraction_prerequisites ();
-  test_file_io ()
+  test_file_io ();
+  test_binary_io ();
+  test_format_dispatch ();
+  test_hierarchy ();
+  test_gtf ();
+  test_mutation ()
 
