@@ -28,6 +28,15 @@
 
 open Better
 
+(* A node name as Newick has to spell it: quoted exactly when leaving it bare
+   would not read back, with an embedded quote doubled.  Exported because it is
+   part of what writing Newick means -- a caller assembling a tree by hand needs
+   it for the same reason both writers here do -- and because it is worth being
+   able to check directly: it once flagged a space as requiring quotes and then
+   dropped the character, so the name came back short and the round trip still
+   passed. *)
+let quote_name = Trees_Lex.quote_string_if_needed
+
 module Exception =
   struct
     include Exception

@@ -308,7 +308,7 @@ let test_negative_branches () =
 
 let test_quoting () =
   Testing.section "Label quoting" (fun () ->
-    let q = Trees_Lex.quote_string_if_needed in
+    let q = Trees.quote_name in
     Testing.check_string "an ordinary label is left bare" ~expected:"abc" (q "abc");
     Testing.check_string "a label with an underscore is left bare"
       ~expected:"Homo_sapiens" (q "Homo_sapiens");

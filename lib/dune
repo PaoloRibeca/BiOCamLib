@@ -3,7 +3,26 @@
  (flags --dump --explain --automaton-graph --cmly))
 (ocamllex Trees_Lex Annotations_Lex)
 
+; The lexers and parsers are private: nothing outside this library has business
+; with them, and unlike the rest of the internals nothing re-exports them, which
+; is the condition for sealing anything here.  A module that IS re-exported --
+; by an alias or by an include, which amount to the same thing -- cannot be
+; made private: the re-export is an alias, and an alias into a sealed module
+; does not resolve.  So Annotations_Base, Annotations_Common and the five
+; per-format modules stay visible whether or not anyone should use them; the
+; alternative is to go back to writing out each re-export with an explicit
+; signature, which forces a copy rather than an alias, and which is exactly the
+; hand-kept list that had already drifted and left GenBankRecord unnameable.
+; Nothing outside lib/ reaches them today, and Trees.quote_name exists because
+; the one thing that did -- a check on the label-quoting helper, which had
+; earned its place by catching a real defect -- deserved a front door.
+
 (library
  (libraries zarith)
  (public_name BiOCamLib)
- (name BiOCamLib))
+ (name BiOCamLib)
+ (private_modules
+   Annotations_Lex
+   Annotations_Parse
+   Trees_Lex
+   Trees_Parse))

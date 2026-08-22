@@ -52,12 +52,14 @@ open Better
 include Annotations_Common
 
 (* The per-format readers and writers, each in its own file because together
-   they were seven eighths of what this module used to be. *)
-module GFF3 = Annotations_GFF3.GFF3
-module GTF = Annotations_GTF.GTF
-module GenBank = Annotations_GenBank.GenBank
-module Tabular = Annotations_Tabular.Tabular
-module Tbl = Annotations_Tbl.Tbl
+   they were seven eighths of what this module used to be.  Each file holds
+   exactly one module, so including it says that this module's contents are
+   part of ours without naming what those contents are. *)
+include Annotations_GFF3
+include Annotations_GTF
+include Annotations_GenBank
+include Annotations_Tabular
+include Annotations_Tbl
 
 (* A serialisable handle on the three formats, used by the
    [AnnoTools] CLI and by any caller that wants to dispatch on
