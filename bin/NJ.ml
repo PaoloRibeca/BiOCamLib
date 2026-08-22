@@ -58,7 +58,7 @@ module Parameters =
 
 let info = {
   Tools.Argv.name = "NJ";
-  version = "1";
+  version = "2";
   date = "22-Aug-2026"
 } and authors = [
   "2026", "Paolo Ribeca", "paolo.ribeca@gmail.com"
