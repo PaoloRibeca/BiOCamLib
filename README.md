@@ -11,10 +11,11 @@ As a bonus, BiOCamLib comes bundled with a few programs:
 * `FASTools`, which is a Swiss-knife tool for the manipulation of FASTA/FASTQ files. It supports all formats (FASTA, single- and paired-end FASTQ, interleaved FASTQ) and a simpler tabular format whereby FASTA/FASTQ records are represented as tab-separated lines. It facilitates format interconversions and other manipulations.
 * `TREx`, which finds exact tandem repeats in all the sequences of a FASTA file. The output is a tab-separated table of repeats with their position, length, and unit, suitable for downstream filtering or annotation.
 * `Cophenetic`, which reads a Newick tree on standard input and writes the cophenetic-distance matrix between every pair of labelled nodes (leaves and internal alike) to standard output. By default the matrix carries shortest-path distances along branch lengths; an option switches to longest-path distances, which is the right convention when branch lengths encode partial quantities (e.g. allele frequencies).
+* `NJ`, which goes the other way from `Cophenetic`: it reads a matrix of pairwise distances and writes the neighbour-joining tree those distances imply, in Newick format. The tree is unrooted, as neighbour joining's is; an option re-roots it at the midpoint of its longest tip-to-tip path, which is the usual stand-in for an outgroup when none is available. A matrix that is not quite symmetric is averaged across the diagonal by default, and the negative branch lengths a non-additive matrix yields can be kept, flattened to zero, or made an error.
 * `Yggdrasill`, which builds a phylogenetic tree from a register of weighted splits. It loads a `.PhyloSplits` file (binary or tabular), greedy-filters the splits for pairwise compatibility in order of decreasing weight, and emits a Newick tree assembled via the Buneman construction. The incompatible residual is retained for further inspection or iterative refinement, and a dropped-weight ratio is emitted to stderr as a measure of how tree-like the input split system is. This is the natural downstream tool for [KPop](https://github.com/PaoloRibeca/KPop/)'s `KPopTwistDB --splits` output.
-* `AnnoTools`, which ia a Swiss-knife tool for the manipulation of annotation files. It can read and write GFF3, GTF, and GenBank files, attach a multi-FASTA reference, validate that an annotation is consistent with the reference, select features and extract their DNA or protein sequences. Native lossless formats (either a compact binary archive that loads orders of magnitude faster than reparsing the source, or a lossless set of tab-separated tables you can `diff` or manipulate with regular Unix tools) are also supported.
+* `AnnoTools`, which is a Swiss-knife tool for the manipulation of annotation files. It can read and write GFF3, GTF, and GenBank files, attach a multi-FASTA reference, validate that an annotation is consistent with the reference, select features and extract their DNA or protein sequences. Native lossless formats (either a compact binary archive that loads orders of magnitude faster than reparsing the source, or a lossless set of tab-separated tables you can `diff` or manipulate with regular Unix tools) are also supported.
 
-## Installing `RC`, `Octopus`, `Parallel`, `FASTools`, `TREx`, `Cophenetic`, `Yggdrasill`, and `AnnoTools`
+## Installing `RC`, `Octopus`, `Parallel`, `FASTools`, `TREx`, `Cophenetic`, `NJ`, `Yggdrasill`, and `AnnoTools`
 
 :warning: Note that the only operating systems we officially support are Linux and MacOS. :warning:
 
@@ -42,7 +43,7 @@ Note that the binaries are generated according to the recipe described [here](ht
 
 ### Manual install
 
-Alternatively, you can install `RC`, `Octopus`, `Parallel`, `FASTools`, `TREx`, `Cophenetic`, `Yggdrasill`, and `AnnoTools` manually by cloning and compiling the BiOCamLib sources. You'll need an up-to-date distribution of the OCaml compiler and the [Dune package manager](https://github.com/ocaml/dune) for that. Both can be installed through [OPAM](https://opam.ocaml.org/), the official OCaml distribution system. Once you have a working OPAM distribution you'll also have a working OCaml compiler, and Dune can be installed with the command
+Alternatively, you can install `RC`, `Octopus`, `Parallel`, `FASTools`, `TREx`, `Cophenetic`, `NJ`, `Yggdrasill`, and `AnnoTools` manually by cloning and compiling the BiOCamLib sources. You'll need an up-to-date distribution of the OCaml compiler and the [Dune package manager](https://github.com/ocaml/dune) for that. Both can be installed through [OPAM](https://opam.ocaml.org/), the official OCaml distribution system. Once you have a working OPAM distribution you'll also have a working OCaml compiler, and Dune can be installed with the command
 ```bash
 opam install dune
 ```
@@ -53,7 +54,7 @@ Then go to the directory into which you have downloaded the latest BiOCamLib sou
 ./BUILD
 ```
 
-This should generate the executables `RC`, `Octopus`, `Parallel`, `FASTools`, `TREx`, `Cophenetic`, `Yggdrasill`, and `AnnoTools`. Copy them to some favourite location in your PATH, for instance `~/.local/bin`.
+This should generate the executables `RC`, `Octopus`, `Parallel`, `FASTools`, `TREx`, `Cophenetic`, `NJ`, `Yggdrasill`, and `AnnoTools`. Copy them to some favourite location in your PATH, for instance `~/.local/bin`.
 
 ## Using `RC`
 
@@ -534,6 +535,71 @@ Cophenetic [OPTIONS]
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
 | `-t`<br>`-T`<br>`--threads` | _&lt;computing\_threads&gt;_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_4_</mark></ins> |
+| `-v`<br>`--verbose` |  |  set verbose execution \(global option\) | <ins>default=<mark>_false_</mark></ins> |
+| `-V`<br>`--version` |  |  print version and exit |  |
+| `-h`<br>`--help` |  |  print syntax and exit |  |
+
+## Using `NJ`
+
+`NJ` reads a matrix of pairwise distances and writes the neighbour-joining tree those distances imply. It is the counterpart of `Cophenetic`, and reads back the same tab-separated matrix format the rest of this suite writes &mdash; a header line of column names preceded by an empty field, then one row per name. Both axes must carry the same names in the same order.
+
+```bash
+NJ -i distances.tsv -o tree.nwk
+```
+
+The algorithm is Saitou and Nei's, in Studier and Keppler's formulation, which is what makes each of the *n* joining steps cost O(*n*&sup2;) rather than O(*n*&sup3;): a matrix of 764 taxa goes through in about a second, reading included. Given an additive matrix &mdash; one that some tree's branch lengths generated &mdash; it recovers that tree exactly, branch by branch.
+
+The tree it writes is **unrooted**, as neighbour joining's is: the last three subtrees are resolved in closed form into a trifurcation, so the node Newick has to put first adds no bipartition of its own. `-m`/`--midpoint` re-roots the tree at the midpoint of its longest tip-to-tip path &mdash; the point equidistant from the two most distant tips &mdash; which is what one roots at when no outgroup is available:
+
+```bash
+NJ -m -i distances.tsv -o rooted.nwk
+```
+
+Rooting moves no distance between tips and neither creates nor loses branch length: the edge holding the midpoint is split in two, and a node the re-rooting leaves with one parent, one child and no name of its own &mdash; the old root of a tree that was already rooted &mdash; is spliced out with its two edges merged. Rooting an already-rooted tree is therefore rooting it once.
+
+Two things a real distance matrix tends to do that a textbook one does not:
+* it is often not quite symmetric. `-a`/`--asymmetry` chooses between replacing both cells with their mean (`average`, the default) and refusing the matrix (`error`). Under `-v` the largest disagreement found is reported together with the pair it was found on, so that "not quite" can be checked rather than assumed.
+* it is often not additive, and neighbour joining then yields branches of negative length. `-n`/`--negative-branches` chooses between keeping them (`ok`, the default &mdash; the undefined-length sentinel is not a negative number, so they are unambiguous, and they measure how far from additive the matrix is), flattening them to zero (`zero`), and refusing the matrix (`error`).
+
+The output is plain Newick, which is what most other programs expect. `-r`/`--rich-format` emits the dialect this suite understands instead, which tags the tree as rooted (`[&R]`) or unrooted (`[&U]`).
+
+### Command line options for `NJ`
+
+
+```
+This is NJ version 1 [22-Aug-2026]
+ compiled against: BiOCamLib version 637 [21-Aug-2026]
+ (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
+```
+*Usage:*
+```
+NJ [OPTIONS]
+```
+
+**Input/Output\.**
+The distance matrix is the tab\-separated form the rest of this suite reads and
+ writes: a header line of column names preceded by an empty field, and one row
+ per name\.  Both axes must carry the same names in the same order
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-i`<br>`--input` | _&lt;distance\_matrix&gt;_ |  name of the file containing the matrix of pairwise distances | <ins>default=<mark>_/dev/stdin_</mark></ins> |
+| `-o`<br>`--output` | _&lt;newick\_file&gt;_ |  name of the file the resulting tree should be written to | <ins>default=<mark>_/dev/stdout_</mark></ins> |
+| `-r`<br>`--rich-format` |  |  emit the rich Newick dialect this suite understands, which tags the  tree as rooted or unrooted and carries dictionaries and hybrid  nodes; plain Newick is what most other programs expect | <ins>default=<mark>_false_</mark></ins> |
+
+**Algorithm**
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-m`<br>`--midpoint`<br>`--midpoint-root` |  |  re\-root the tree at the midpoint of its longest tip\-to\-tip path,  rather than leaving it unrooted as neighbour joining produces it | <ins>default=<mark>_false_</mark></ins> |
+| `-a`<br>`--asymmetry` | _'average'&#124;'error'_ |  what to do when the matrix disagrees with itself across the  diagonal: replace both cells with their mean, or refuse the matrix | <ins>default=<mark>_average_</mark></ins> |
+| `-n`<br>`--negative-branches` | _'ok'&#124;'zero'&#124;'error'_ |  what to do about the branches of negative length a matrix that is  not additive yields: keep them, flatten them to zero, or refuse  the matrix | <ins>default=<mark>_ok_</mark></ins> |
+
+**Miscellaneous**
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-t`<br>`-T`<br>`--threads` | _&lt;computing\_threads&gt;_ |  number of concurrent computing threads to be spawned  \(used when reading the matrix; the joining itself is sequential\)  \(default automatically detected from your configuration\) | <ins>default=<mark>_4_</mark></ins> |
 | `-v`<br>`--verbose` |  |  set verbose execution \(global option\) | <ins>default=<mark>_false_</mark></ins> |
 | `-V`<br>`--version` |  |  print version and exit |  |
 | `-h`<br>`--help` |  |  print syntax and exit |  |
