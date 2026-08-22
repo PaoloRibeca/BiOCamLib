@@ -285,8 +285,7 @@ module GFF3:
       | Some p -> string_of_int (((p - consumed) mod 3 + 3) mod 3) in
     let _, rows =
       List.fold_left (fun (consumed, acc) (ivl: Sequences.Types.simple_interval_t) ->
-        let lo = ivl.low + 1
-        and hi = ivl.low + ivl.length in
+        let lo, hi = OneBased.bounds ivl in
         consumed + ivl.length,
         Printf.sprintf "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s"
           seq src ftype lo hi score strand (phase_of consumed) attrs :: acc)

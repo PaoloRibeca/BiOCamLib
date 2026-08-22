@@ -348,7 +348,7 @@ module GTF: Format_t = struct
       if s = "" then "" else s ^ ";" in
     let _, rows =
       List.fold_left (fun (consumed, acc) (i: Sequences.Types.simple_interval_t) ->
-        let lo = i.low + 1 and hi = i.low + i.length in
+        let lo, hi = OneBased.bounds i in
         consumed + i.length,
         Printf.sprintf
           "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s"

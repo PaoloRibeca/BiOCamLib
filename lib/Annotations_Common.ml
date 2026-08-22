@@ -193,29 +193,111 @@ let field_of_score_exact = function
   | None -> "."
   | Some f -> Printf.sprintf "%.17g" f
 
-(* GFF3/GTF ranges are 1-based inclusive in the source; the
-   AST stores 0-based half-open. *)
-let interval_of_1_based ~lo ~hi : Sequences.Types.simple_interval_t =
-  (* Positions are 1-based, so anything below 1 is not a coordinate.  Left
-     unchecked, a [lo] of 0 yields [low = -1], which every writer then re-emits
-     happily -- GFF3 [0 500], GenBank [0..500] -- and which only surfaces much
-     later, and as an internal error rather than a diagnosis, when the reference
-     is finally indexed. *)
-  if lo < 1 then
-    Exception.raise __FUNCTION__ IO_Format
-      (Printf.sprintf "Invalid 1-based coordinate %d (positions start at 1)" lo);
-  (* [hi = lo - 1] is the one legal inversion: it is how a zero-length site --
-     the position between two consecutive bases, GenBank's [lo^hi] -- comes back
-     from a format that has only a 1-based inclusive pair to spell it with.  It
-     denotes the 0-based half-open interval [lo - 1, lo - 1), which is exactly
-     what [GenBankLocation.intervals] stores for [Between]. *)
-  if hi = lo - 1 then { low = lo - 1; length = 0 }
-  else begin
-    if hi < lo then
-      Exception.raise __FUNCTION__ IO_Format
-        (Printf.sprintf "Invalid interval (lo=%d, hi=%d)" lo hi);
-    { low = lo - 1; length = hi - lo + 1 }
+(* An interval as a text format writes it.  Everything in the AST is 0-based
+   half-open and everything on the wire is 1-based, so this is the whole of the
+   boundary -- and it is worth having in one place because the two conventions
+   the formats use are not the same, and the difference is easy to get wrong
+   silently.
+   A run of bases is [lo..hi], both 1-based and inclusive.  A zero-length site
+   -- the position between two consecutive bases -- has no bases to number, and
+   the formats split on how to say so.  GenBank and the tabular format spell it
+   [n^m] with [m = n + 1], where [n] is the 0-based coordinate; GFF3, GTF and
+   the feature table have only a 1-based inclusive pair and so spell it as the
+   inverted pair [lo..lo-1].  Both come back to the same interval, but through
+   different arithmetic, and neither is derivable from the other by eye. *)
+module OneBased:
+  sig
+    type t =
+      | Range of int * int
+      | Between of int * int
+    (* The [lo..hi] / [n^m] spelling, as GenBank, the tabular format and the
+       extraction actions write it. *)
+    val of_interval: Sequences.Types.simple_interval_t -> t
+    val to_interval: t -> Sequences.Types.simple_interval_t
+    val to_string: t -> string
+    val of_string: string -> t
+    (* The plain 1-based inclusive pair, as GFF3, GTF and the feature table
+       write it, where a zero-length interval comes out inverted. *)
+    val bounds: Sequences.Types.simple_interval_t -> int * int
+    val interval_of_bounds: lo:int -> hi:int -> Sequences.Types.simple_interval_t
   end
+= struct
+    type t =
+      | Range of int * int
+      | Between of int * int
+    let bounds (i: Sequences.Types.simple_interval_t) = i.low + 1, i.low + i.length
+    let of_interval (i: Sequences.Types.simple_interval_t) =
+      if i.length = 0 then
+        (* [low] is quoted as it stands, where [Range] shifts by one: for a
+           zero-length interval [low] is the position after 1-based base [low],
+           so the two readings coincide and no adjustment is wanted. *)
+        Between (i.low, i.low + 1)
+      else
+        let lo, hi = bounds i in
+        Range (lo, hi)
+    let interval_of_bounds ~lo ~hi : Sequences.Types.simple_interval_t =
+      (* Positions are 1-based, so anything below 1 is not a coordinate.  Left
+         unchecked, a [lo] of 0 yields [low = -1], which every writer then
+         re-emits happily -- GFF3 [0 500], GenBank [0..500] -- and which only
+         surfaces much later, and as an internal error rather than a diagnosis,
+         when the reference is finally indexed. *)
+      if lo < 1 then
+        Exception.raise __FUNCTION__ IO_Format
+          (Printf.sprintf "Invalid 1-based coordinate %d (positions start at 1)" lo);
+      (* [hi = lo - 1] is the one legal inversion, and is what [bounds] produces
+         for a zero-length interval.  It denotes the 0-based half-open interval
+         [lo - 1, lo - 1), which is exactly what [GenBankLocation.intervals]
+         stores for [Between]. *)
+      if hi = lo - 1 then { low = lo - 1; length = 0 }
+      else begin
+        if hi < lo then
+          Exception.raise __FUNCTION__ IO_Format
+            (Printf.sprintf "Invalid interval (lo=%d, hi=%d)" lo hi);
+        { low = lo - 1; length = hi - lo + 1 }
+      end
+    let to_interval = function
+      | Range (lo, hi) ->
+        if hi < lo then
+          Exception.raise __FUNCTION__ IO_Format
+            (Printf.sprintf "Invalid interval (lo=%d, hi=%d)" lo hi);
+        interval_of_bounds ~lo ~hi
+      | Between (lo, hi) ->
+        (* Only consecutive positions denote a between-bases site.  Accepting
+           any [hi] meant [100^999] parsed happily and was then re-emitted as
+           [100^101], so a hand-edited file was silently rewritten rather than
+           diagnosed -- and hand editing is what the tabular format is for. *)
+        if hi <> lo + 1 then
+          Exception.raise __FUNCTION__ IO_Format
+            (Printf.sprintf "Invalid between-bases site %d^%d (positions must be consecutive)"
+               lo hi);
+        if lo < 1 then
+          Exception.raise __FUNCTION__ IO_Format
+            (Printf.sprintf "Invalid 1-based coordinate %d (positions start at 1)" lo);
+        { low = lo; length = 0 }
+    let to_string = function
+      | Range (lo, hi) -> Printf.sprintf "%d..%d" lo hi
+      | Between (lo, hi) -> Printf.sprintf "%d^%d" lo hi
+    let of_string s =
+      let two sep =
+        match String.Split.as_list (Str.regexp_string sep) s with
+        | [ a; b ] ->
+          (match int_of_string_opt a, int_of_string_opt b with
+           | Some a, Some b -> Some (a, b)
+           | _ -> None)
+        | _ -> None in
+      match two ".." with
+      | Some (lo, hi) -> Range (lo, hi)
+      | None ->
+        match two "^" with
+        | Some (lo, hi) -> Between (lo, hi)
+        | None ->
+          Exception.raise __FUNCTION__ IO_Format
+            (Printf.sprintf "Malformed interval %S (expected lo..hi or lo^hi)" s)
+  end
+
+(* Retained under its old name because the readers spell the GFF3/GTF
+   convention this way throughout; it is [OneBased.interval_of_bounds]. *)
+let interval_of_1_based = OneBased.interval_of_bounds
 
 (* Extended [GenBankLocation]: the base AST module from
    [Annotations_Base] plus the LOCATION-string parser

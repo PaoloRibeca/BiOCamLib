@@ -283,14 +283,11 @@ module GenBank:
      is emitted when a [Sequences.Reference] is attached. *)
   let format_intervals_strand intervals strand =
     let parts =
-      List.map (fun (i : Sequences.Types.simple_interval_t) ->
-        (* A zero-length site is INSDC's [lo^hi], the position between two
-           consecutive bases.  Running it through the ordinary formula would
-           emit the reversed range [low+1..low], which this reader rejects and
-           no other tool would accept either. *)
-        if i.length = 0 then Printf.sprintf "%d^%d" i.low (i.low + 1)
-        else Printf.sprintf "%d..%d" (i.low + 1) (i.low + i.length)
-      ) intervals in
+      (* [OneBased] carries the zero-length case: a site between two bases is
+         INSDC's [lo^hi], and running it through the ordinary formula would
+         emit the reversed range [low+1..low] instead, which this reader
+         rejects and no other tool would accept either. *)
+      List.map (fun i -> OneBased.(of_interval i |> to_string)) intervals in
     let body =
       match parts with
       | [] -> "1"

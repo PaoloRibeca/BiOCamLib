@@ -1288,7 +1288,81 @@ let test_fasta_wrapping () =
        | None -> "(no reference)"
        | Some r -> Sequences.Reference.find r (T.Forward "chr1") |> fst))
 
+(* The 1-based boundary.  Everything in the AST is 0-based half-open and
+   everything on the wire is 1-based, and [OneBased] is the whole of the
+   conversion.  Now that both directions have names, the property that matters
+   can be stated: they are inverse, including over the zero-length site, which
+   is the case each of the six writers used to re-derive for itself. *)
+
+let test_one_based () =
+  Testing.section "The 1-based boundary" (fun () ->
+    let module O = A.OneBased in
+    let ivl low length : T.simple_interval_t = { low; length } in
+    let show (i: T.simple_interval_t) = Printf.sprintf "%d+%d" i.low i.length in
+    (* Outbound: a run of bases is 1-based inclusive. *)
+    Testing.check_string "a one-base interval spans one 1-based position"
+      ~expected:"1..1" (O.(of_interval (ivl 0 1) |> to_string));
+    Testing.check_string "a longer interval spans its length"
+      ~expected:"100..999" (O.(of_interval (ivl 99 900) |> to_string));
+    (* A zero-length site is the other spelling entirely. *)
+    Testing.check_string "a zero-length site is written as a between-bases pair"
+      ~expected:"100^101" (O.(of_interval (ivl 100 0) |> to_string));
+    (* Inbound and outbound are inverse, which is the point of having both. *)
+    Testing.check "the two directions are inverse over ordinary intervals"
+      (fun () ->
+        List.for_all
+          (fun i -> show O.(of_interval i |> to_interval) = show i)
+          [ ivl 0 1; ivl 0 10; ivl 99 900; ivl 5 3; ivl 1000000 1 ]);
+    Testing.check "and over a zero-length site"
+      (fun () ->
+        List.for_all
+          (fun i -> show O.(of_interval i |> to_interval) = show i)
+          [ ivl 1 0; ivl 100 0; ivl 999 0 ]);
+    (* The text form is inverse too, so what a format writes it reads. *)
+    Testing.check "the text form round-trips a range"
+      (fun () -> O.(of_string (to_string (Range (7, 9)))) = O.Range (7, 9));
+    Testing.check "and a between-bases site"
+      (fun () -> O.(of_string (to_string (Between (7, 8)))) = O.Between (7, 8));
+    Testing.check_string "an interval survives being rendered and read back"
+      ~expected:"99+900"
+      (show O.(of_interval (ivl 99 900) |> to_string |> of_string |> to_interval));
+    Testing.check_string "and so does a zero-length site"
+      ~expected:"100+0"
+      (show O.(of_interval (ivl 100 0) |> to_string |> of_string |> to_interval));
+    (* The other convention: the plain pair, where a zero-length interval comes
+       out inverted because GFF3 and GTF have no other way to spell it. *)
+    Testing.check_string "the bounds of an ordinary interval"
+      ~expected:"100,999" (let lo, hi = O.bounds (ivl 99 900) in
+                           Printf.sprintf "%d,%d" lo hi);
+    Testing.check_string "the bounds of a zero-length interval are inverted"
+      ~expected:"101,100" (let lo, hi = O.bounds (ivl 100 0) in
+                           Printf.sprintf "%d,%d" lo hi);
+    Testing.check "bounds and interval_of_bounds are inverse"
+      (fun () ->
+        List.for_all
+          (fun i ->
+            let lo, hi = O.bounds i in
+            show (O.interval_of_bounds ~lo ~hi) = show i)
+          [ ivl 0 1; ivl 99 900; ivl 5 3 ]);
+    Testing.check "including over the inverted zero-length pair"
+      (fun () ->
+        let i = ivl 100 0 in
+        let lo, hi = O.bounds i in
+        show (O.interval_of_bounds ~lo ~hi) = show i);
+    (* What each direction refuses. *)
+    Testing.check_raises "a coordinate below one is refused"
+      (fun () -> ignore (O.interval_of_bounds ~lo:0 ~hi:500));
+    Testing.check_raises "a reversed range that is not the zero-length pair is refused"
+      (fun () -> ignore (O.interval_of_bounds ~lo:10 ~hi:5));
+    Testing.check_raises "a between-bases site whose positions are not consecutive is refused"
+      (fun () -> ignore (O.to_interval (O.Between (100, 999))));
+    Testing.check_raises "a malformed interval string is refused"
+      (fun () -> ignore (O.of_string "not-an-interval"));
+    Testing.check_raises "and one with a non-numeric bound"
+      (fun () -> ignore (O.of_string "a..b")))
+
 let run () =
+  test_one_based ();
   test_locations ();
   test_genbank_records ();
   test_genbank_round_trip ();

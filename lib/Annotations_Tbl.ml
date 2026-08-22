@@ -79,7 +79,7 @@ module Tbl: Writer_t = struct
                 (Printf.sprintf
                    "Feature %S on %S is zero-length, which a feature table has no way to spell"
                    category seq);
-            let lo = iv.low + 1 and hi = iv.low + iv.length in
+            let lo, hi = OneBased.bounds iv in
             let a, b = if reverse then hi, lo else lo, hi in
             if i = 0 then Printf.bprintf buf "%d\t%d\t%s\n" a b category
             else Printf.bprintf buf "%d\t%d\n" a b) ivs;

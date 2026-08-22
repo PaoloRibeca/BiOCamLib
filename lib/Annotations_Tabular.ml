@@ -94,42 +94,18 @@ module Tabular: Format_t = struct
     match intervals with
     | [] -> "."
     | _ ->
-      List.map (fun (i: Sequences.Types.simple_interval_t) ->
-        if i.length = 0 then Printf.sprintf "%d^%d" i.low (i.low + 1)
-        else Printf.sprintf "%d..%d" (i.low + 1) (i.low + i.length)) intervals
+      List.map (fun i -> OneBased.(of_interval i |> to_string)) intervals
       |> String.concat ","
+  (* The exact inverse of the above, so that what this format writes is what it
+     reads.  [OneBased] is what refuses a between-bases site whose positions are
+     not consecutive: accepting any [hi] meant [100^999] parsed happily and was
+     then re-emitted as [100^101], so a hand-edited file was silently rewritten
+     rather than diagnosed -- and hand editing is what this format is for. *)
   let intervals_of_field = function
     | "." | "" -> []
     | s ->
       String.Split.on_char_as_list ',' s
-      |> List.map (fun piece ->
-        let two sep =
-          match String.Split.as_list (Str.regexp_string sep) piece with
-          | [ a; b ] ->
-            (match int_of_string_opt a, int_of_string_opt b with
-             | Some a, Some b -> Some (a, b)
-             | _ -> None)
-          | _ -> None in
-        match two ".." with
-        | Some (lo, hi) -> interval_of_1_based ~lo ~hi
-        | None ->
-          (match two "^" with
-           (* Only consecutive positions denote a between-bases site.  Accepting
-              any [hi] meant [100^999] parsed happily and was then re-emitted as
-              [100^101], so a hand-edited file was silently rewritten rather
-              than diagnosed -- and hand editing is what this format is for. *)
-           | Some (lo, hi) when hi = lo + 1 ->
-             if lo < 1 then
-               Exception.raise __FUNCTION__ IO_Format
-                 (Printf.sprintf "Invalid 1-based coordinate %d (positions start at 1)" lo);
-             { Sequences.Types.low = lo; length = 0 }
-           | Some (lo, hi) ->
-             Exception.raise __FUNCTION__ IO_Format
-               (Printf.sprintf
-                  "Invalid between-bases site %d^%d: the two positions must be consecutive" lo hi)
-           | None ->
-             Exception.raise __FUNCTION__ IO_Format
-               (Printf.sprintf "Invalid interval %S (expected lo..hi or lo^hi)" piece)))
+      |> List.map (fun piece -> OneBased.(of_string piece |> to_interval))
   let strand_to_field = function
     | Some (Sequences.Types.Forward _) -> "+"
     | Some (Sequences.Types.Reverse _) -> "-"

@@ -591,9 +591,7 @@ let () =
        LOCATION; a zero-length site is written lo^hi rather than as the reversed
        range a naive lo+1..lo+length would produce. *)
     let location_of feature =
-      List.map (fun (i: Sequences.Types.simple_interval_t) ->
-        if i.length = 0 then Printf.sprintf "%d^%d" i.low (i.low + 1)
-        else Printf.sprintf "%d..%d" (i.low + 1) (i.low + i.length))
+      List.map (fun i -> A.OneBased.(of_interval i |> to_string))
         feature.A.Annotation.intervals
       |> String.concat "," in
     (* A feature need not carry an id: GenBank derives one from /locus_tag when
