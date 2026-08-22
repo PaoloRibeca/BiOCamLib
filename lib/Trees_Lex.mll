@@ -8,7 +8,11 @@
     String.iter
       (function
         | '\'' -> Buffer.add_string res "''"
-        | ' ' | ':' -> needs_quotes := true
+        (* These force the quoted form -- and still have to be written out.
+           Flagging them without emitting them deleted the very character that
+           made the quoting necessary, so a name with a space in it came back
+           with the space gone. *)
+        | (' ' | ':') as c -> needs_quotes := true; Buffer.add_char res c
         | c -> Buffer.add_char res c)
       s;
     Buffer.add_char res '\'';

@@ -191,7 +191,10 @@ module Newick:
         (fun node num_edges ->
           if num_edges > 0 then
             Buffer.add_char buf ')';
-          get_node_name node |> Buffer.add_string buf;
+          (* Quoted when it has to be, or a name carrying a space or a colon
+             renders as something this library's own reader then rejects.  The
+             Splits writer has always done this; the Newick one did not. *)
+          get_node_name node |> Trees_Lex.quote_string_if_needed |> Buffer.add_string buf;
           get_node_hybrid node |> add_hybrid_info buf;
           get_node_dict node |> add_dict_info buf)
         t;
