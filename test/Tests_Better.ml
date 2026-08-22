@@ -137,12 +137,12 @@ let test_misc () =
       (fun () -> String.compare_lexicolength "abc" "abd" < 0);
     Testing.check "a string compares equal to itself"
       (fun () -> String.compare_lexicolength "abc" "abc" = 0);
-    Testing.check_string "rounding goes to the nearest integer"
-      ~expected:"3." (string_of_float (Float.round 2.6));
-    Testing.check_string "a half rounds away from zero"
-      ~expected:"3." (string_of_float (Float.round 2.5));
-    Testing.check_string "and so does a negative half"
-      ~expected:"-3." (string_of_float (Float.round (-2.5)));
+    Testing.check_float "rounding goes to the nearest integer"
+      ~expected:3. (Float.round 2.6);
+    Testing.check_float "a half rounds away from zero"
+      ~expected:3. (Float.round 2.5);
+    Testing.check_float "and so does a negative half"
+      ~expected:(-3.) (Float.round (-2.5));
     (* The terminal helpers have to leave the text itself intact, since a
        message is often matched on by the test suite of a companion tool. *)
     Testing.check "bold contains the string it decorates"

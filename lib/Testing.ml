@@ -123,6 +123,16 @@ include (
       check_equal ?known_bug name ~to_string:string_of_int ~expected got
     let check_bool ?known_bug name ~expected got =
       check_equal ?known_bug name ~to_string:string_of_bool ~expected got
+    (* Floats are compared through [Float.check] rather than [=], which for a
+       computed quantity is almost never the question being asked.  The failure
+       carries both values at full precision and the discrepancy, since with a
+       tolerance in play "not equal" on its own says nothing about whether the
+       answer was nearly right or entirely wrong. *)
+    let check_float ?known_bug ?tolerance name ~expected got =
+      verify ?known_bug name (fun () ->
+        Float.check ?tolerance expected got,
+        Printf.sprintf "expected %.17g, got %.17g, differing by %.17g"
+          expected got (Float.abs (got -. expected)))
     (* [f] must raise.  When [~re] is given the stringified exception must also
        match it, which is how we pin the *reason* a malformed input is rejected
        rather than merely that it is. *)
@@ -189,6 +199,10 @@ include (
     val check_string: ?known_bug:string -> string -> expected:string -> string -> unit
     val check_int: ?known_bug:string -> string -> expected:int -> int -> unit
     val check_bool: ?known_bug:string -> string -> expected:bool -> bool -> unit
+    (* Compared through [Better.Float.check], so within a tolerance rather than
+       exactly; see there for what the tolerance means. *)
+    val check_float:
+      ?known_bug:string -> ?tolerance:float -> string -> expected:float -> float -> unit
     val check_raises: ?known_bug:string -> ?re:string -> string -> (unit -> 'a) -> unit
     val check_does_not_raise: ?known_bug:string -> string -> (unit -> 'a) -> unit
     val summary: unit -> unit

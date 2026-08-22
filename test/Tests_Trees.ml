@@ -169,7 +169,7 @@ let check_is_midpoint ?known_bug name t =
           let d = distances flat i in
           Array.fold_left (fun acc (j, _) -> max acc (Float.Array.get d j)) acc all)
         neg_infinity all in
-    Float.abs (deepest -. diameter /. 2.) < 1e-9,
+    Float.check deepest (diameter /. 2.),
     Printf.sprintf "the furthest tip is %.17g from the root, half the longest path is %.17g"
       deepest (diameter /. 2.))
 
@@ -364,10 +364,10 @@ let test_construction () =
     Testing.check_string "an internal node can be named"
       ~expected:"inner" (N.get_name (N.join ~name:"inner" [| N.edge (), N.leaf "A" |]));
     (* Edge values are three separate slots with their own sentinels. *)
-    Testing.check_string "an edge carries its length"
-      ~expected:"2.5" (string_of_float (N.get_edge_length (N.edge ~length:2.5 ())));
-    Testing.check_string "and its bootstrap"
-      ~expected:"0.9" (string_of_float (N.get_edge_bootstrap (N.edge ~bootstrap:0.9 ())));
+    Testing.check_float "an edge carries its length"
+      ~expected:2.5 (N.get_edge_length (N.edge ~length:2.5 ()));
+    Testing.check_float "and its bootstrap"
+      ~expected:0.9 (N.get_edge_bootstrap (N.edge ~bootstrap:0.9 ()));
     Testing.check "an edge is not a ghost unless it is made one"
       (fun () -> not (N.get_edge_is_ghost (N.edge ~length:1. ())));
     Testing.check "and is one when it is"
@@ -402,13 +402,12 @@ let test_traversal () =
     (* Dijkstra from the root: the distances above, by construction. *)
     let d = N.dijkstra flat 0 in
     let dist name = Better.Float.Array.get d (index_of name) in
-    Testing.check_string "A is two from the root" ~expected:"2." (string_of_float (dist "A"));
-    Testing.check_string "the inner node is three" ~expected:"3."
-      (string_of_float (dist "inner"));
-    Testing.check_string "B is four" ~expected:"4." (string_of_float (dist "B"));
-    Testing.check_string "C is seven" ~expected:"7." (string_of_float (dist "C"));
-    Testing.check_string "and the root is zero from itself" ~expected:"0."
-      (string_of_float (Better.Float.Array.get d 0));
+    Testing.check_float "A is two from the root" ~expected:2. (dist "A");
+    Testing.check_float "the inner node is three" ~expected:3. (dist "inner");
+    Testing.check_float "B is four" ~expected:4. (dist "B");
+    Testing.check_float "C is seven" ~expected:7. (dist "C");
+    Testing.check_float "and the root is zero from itself"
+      ~expected:0. (Better.Float.Array.get d 0);
     (* The leaf-to-leaf matrix, which is what a phylogeny consumer wants. *)
     (* The matrix covers every node rather than just the leaves, and names each
        one by its position in the flattened array followed by its name -- so
@@ -422,11 +421,10 @@ let test_traversal () =
       (fun () -> m.Matrix.row_names = m.Matrix.col_names);
     let between a b =
       Better.Float.Array.get m.Matrix.data.(index_of a) (index_of b) in
-    Testing.check_string "A to B is six" ~expected:"6." (string_of_float (between "A" "B"));
-    Testing.check_string "A to C is nine" ~expected:"9." (string_of_float (between "A" "C"));
-    Testing.check_string "B to C is five" ~expected:"5." (string_of_float (between "B" "C"));
-    Testing.check_string "a leaf is zero from itself" ~expected:"0."
-      (string_of_float (between "A" "A"));
+    Testing.check_float "A to B is six" ~expected:6. (between "A" "B");
+    Testing.check_float "A to C is nine" ~expected:9. (between "A" "C");
+    Testing.check_float "B to C is five" ~expected:5. (between "B" "C");
+    Testing.check_float "a leaf is zero from itself" ~expected:0. (between "A" "A");
     Testing.check "the matrix is symmetric"
       (fun () -> between "A" "C" = between "C" "A"))
 
@@ -551,7 +549,7 @@ let test_midpoint_rooting_invariants () =
         Testing.verify (Printf.sprintf "rooting %s creates and loses no branch length" what)
           (fun () ->
             let before = total_length t and after = total_length rooted in
-            Float.abs (before -. after) < 1e-9,
+            Float.check before after,
             Printf.sprintf "total branch length went from %.17g to %.17g" before after);
         (* Rooting an already-rooted tree has to splice out the root it finds,
            or a chain of them would build up one per call *)
@@ -559,7 +557,7 @@ let test_midpoint_rooting_invariants () =
           (fun () ->
             let twice = N.midpoint_root rooted in
             let gap, where = worst_gap (tip_distances rooted) (tip_distances twice) in
-            gap < 1e-9 && Float.abs (total_length twice -. total_length rooted) < 1e-9,
+            gap < 1e-9 && Float.check (total_length twice) (total_length rooted),
             Printf.sprintf "distances differ by %g (worst at '%s'), total length %.17g vs %.17g"
               gap where (total_length twice) (total_length rooted));
         check_is_midpoint (Printf.sprintf "the root of %s is its midpoint" what) rooted)

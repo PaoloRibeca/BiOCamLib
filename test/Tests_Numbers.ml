@@ -40,12 +40,6 @@ module LF = Numbers.LinearFit (Numbers.FloatArrayVector)
 
 (* Helpers. *)
 
-(* Compare to a fixed number of decimals, so that a failure reports both
-   numbers rather than just [false]. *)
-let check_float ?(digits = 9) name ~expected got =
-  Testing.check_string name
-    ~expected:(Printf.sprintf "%.*f" digits expected) (Printf.sprintf "%.*f" digits got)
-
 let stats_of l =
   let s = Stats.make () in
   List.iter (Stats.add s) l;
@@ -59,23 +53,23 @@ let test_online_stats () =
       ~expected:0 (Stats.count (Stats.make ()));
     let s = stats_of [ 1.; 2.; 3.; 4. ] in
     Testing.check_int "count is the number of values added" ~expected:4 (Stats.count s);
-    check_float "the mean is the arithmetic mean" ~expected:2.5 (Stats.mean s);
+    Testing.check_float "the mean is the arithmetic mean" ~expected:2.5 (Stats.mean s);
     (* Population variance divides by n; the sample variance by n - 1.  For
        1,2,3,4 the squared deviations sum to 5. *)
-    check_float "the population variance divides by n" ~expected:1.25 (Stats.variance s);
-    check_float "the sample variance divides by n - 1"
+    Testing.check_float "the population variance divides by n" ~expected:1.25 (Stats.variance s);
+    Testing.check_float "the sample variance divides by n - 1"
       ~expected:(5. /. 3.) (Stats.sample_variance s);
-    check_float "the standard deviation is the root of the variance"
+    Testing.check_float "the standard deviation is the root of the variance"
       ~expected:(sqrt 1.25) (Stats.standard_deviation s);
-    check_float "the sample standard deviation likewise"
+    Testing.check_float "the sample standard deviation likewise"
       ~expected:(sqrt (5. /. 3.)) (Stats.sample_standard_deviation s);
-    check_float "the coefficient of variation is the deviation over the mean"
+    Testing.check_float "the coefficient of variation is the deviation over the mean"
       ~expected:(sqrt 1.25 /. 2.5) (Stats.coefficient_of_variation s);
     (* The sample coefficient of variation is not simply the sample deviation
        over the mean: it carries the (1 + 1/4n) small-sample bias correction,
        which for n = 4 is a 6.25% adjustment.  Worth pinning, because the
        uncorrected form is what a reader would assume. *)
-    check_float "the sample coefficient of variation carries a bias correction"
+    Testing.check_float "the sample coefficient of variation carries a bias correction"
       ~expected:((1. +. 1. /. 16.) *. sqrt (5. /. 3.) /. 2.5)
       (Stats.sample_coefficient_of_variation s);
     Testing.check "the correction shrinks as the sample grows"
@@ -88,31 +82,31 @@ let test_online_stats () =
         ratio 100 < ratio 10 && ratio 10 < ratio 4);
     (* Both coefficients are defined as zero when the mean is, rather than
        raising or returning an infinity. *)
-    check_float "a zero mean yields a zero coefficient of variation"
+    Testing.check_float "a zero mean yields a zero coefficient of variation"
       ~expected:0. (Stats.sample_coefficient_of_variation (stats_of [ -1.; 1. ]));
     (* Order must not matter. *)
-    check_float "the mean does not depend on the order values arrive in"
+    Testing.check_float "the mean does not depend on the order values arrive in"
       ~expected:(Stats.mean s) (Stats.mean (stats_of [ 4.; 1.; 3.; 2. ]));
-    check_float "nor does the variance"
+    Testing.check_float "nor does the variance"
       ~expected:(Stats.variance s) (Stats.variance (stats_of [ 4.; 1.; 3.; 2. ]));
     (* A constant sample has no spread at all. *)
-    check_float "a constant sample has zero variance"
+    Testing.check_float "a constant sample has zero variance"
       ~expected:0. (Stats.variance (stats_of [ 7.; 7.; 7. ]));
-    check_float "and its mean is that constant"
+    Testing.check_float "and its mean is that constant"
       ~expected:7. (Stats.mean (stats_of [ 7.; 7.; 7. ]));
     (* One value: the population variance is defined and zero. *)
     Testing.check_int "a single value counts as one"
       ~expected:1 (Stats.count (stats_of [ 42. ]));
-    check_float "a single value has zero population variance"
+    Testing.check_float "a single value has zero population variance"
       ~expected:0. (Stats.variance (stats_of [ 42. ]));
     (* This is why the accumulator is Welford's and not sum-of-squares: the same
        four values displaced by 1e9.  Summing squares would compute a difference
        of two numbers around 1e18 and keep none of the answer. *)
     let offset = 1e9 in
-    check_float ~digits:6 "the variance survives a large offset"
+    Testing.check_float "the variance survives a large offset"
       ~expected:1.25 (Stats.variance (stats_of [ offset +. 1.; offset +. 2.;
                                                  offset +. 3.; offset +. 4. ]));
-    check_float ~digits:6 "and so does the sample variance"
+    Testing.check_float "and so does the sample variance"
       ~expected:(5. /. 3.)
       (Stats.sample_variance (stats_of [ offset +. 1.; offset +. 2.;
                                          offset +. 3.; offset +. 4. ]));
@@ -120,7 +114,7 @@ let test_online_stats () =
        allocating a new one. *)
     Testing.check_int "clear forgets everything"
       ~expected:0 (let s = stats_of [ 1.; 2. ] in Stats.clear s; Stats.count s);
-    check_float "and the accumulator is reusable afterwards"
+    Testing.check_float "and the accumulator is reusable afterwards"
       ~expected:10. (let s = stats_of [ 1.; 2. ] in
                      Stats.clear s;
                      Stats.add s 10.;
@@ -156,9 +150,9 @@ let test_scalars () =
     let module F = Numbers.Float in
     Testing.check_string "a float round-trips through its string form"
       ~expected:"2.5" (F.to_string (F.of_string "2.5"));
-    check_float "float addition" ~expected:0.3 (F.add 0.1 0.2);
-    check_float "rounding goes to the nearest integer" ~expected:3. (F.round 2.6);
-    check_float "and rounds a negative number away from zero"
+    Testing.check_float "float addition" ~expected:0.3 (F.add 0.1 0.2);
+    Testing.check_float "rounding goes to the nearest integer" ~expected:3. (F.round 2.6);
+    Testing.check_float "and rounds a negative number away from zero"
       ~expected:(-3.) (F.round (-2.6)))
 
 (* Least-squares line fitting.  The interesting cases are the ones with an
@@ -173,33 +167,33 @@ let test_linear_fit () =
     let shows l = List.map (Printf.sprintf "%.6f") l |> String.concat "," in
     (* y = 2x + 1, exactly. *)
     let m, prediction, residuals = fit [ 0.; 1.; 2.; 3. ] [ 1.; 3.; 5.; 7. ] in
-    check_float ~digits:6 "an exact line recovers its slope" ~expected:2. (LF.get_slope m);
-    check_float ~digits:6 "and its intercept" ~expected:1. (LF.get_intercept m);
+    Testing.check_float "an exact line recovers its slope" ~expected:2. (LF.get_slope m);
+    Testing.check_float "and its intercept" ~expected:1. (LF.get_intercept m);
     Testing.check_string "the predictions reproduce the data"
       ~expected:"1.000000,3.000000,5.000000,7.000000" (shows prediction);
     Testing.check_string "and the residuals are zero"
       ~expected:"0.000000,0.000000,0.000000,0.000000" (shows residuals);
     (* A horizontal line: no slope, and the intercept is the common value. *)
     let m, _, _ = fit [ 0.; 1.; 2. ] [ 5.; 5.; 5. ] in
-    check_float ~digits:6 "a horizontal line has no slope" ~expected:0. (LF.get_slope m);
-    check_float ~digits:6 "and its intercept is the common value"
+    Testing.check_float "a horizontal line has no slope" ~expected:0. (LF.get_slope m);
+    Testing.check_float "and its intercept is the common value"
       ~expected:5. (LF.get_intercept m);
     (* A negative slope, still exact. *)
     let m, _, _ = fit [ 0.; 1.; 2. ] [ 4.; 2.; 0. ] in
-    check_float ~digits:6 "a descending line has a negative slope"
+    Testing.check_float "a descending line has a negative slope"
       ~expected:(-2.) (LF.get_slope m);
     (* Points that do not lie on a line: worked out by hand, the least-squares
        fit through (0,0) (1,0) (2,2) (3,2) has slope 4/5 and intercept -1/5. *)
     let m, _, residuals = fit [ 0.; 1.; 2.; 3. ] [ 0.; 0.; 2.; 2. ] in
-    check_float ~digits:6 "a scattered set gets its least-squares slope"
+    Testing.check_float "a scattered set gets its least-squares slope"
       ~expected:0.8 (LF.get_slope m);
-    check_float ~digits:6 "and its least-squares intercept"
+    Testing.check_float "and its least-squares intercept"
       ~expected:(-0.2) (LF.get_intercept m);
     (* The defining property of a least-squares fit: the residuals sum to zero.
-       Compared as a magnitude, because the sum lands a rounding error either
-       side of zero and a negative one would render as "-0.000000". *)
-    check_float ~digits:6 "the residuals of a least-squares fit sum to zero"
-      ~expected:0. (abs_float (List.fold_left ( +. ) 0. residuals));
+       It lands a rounding error either side of it, which is exactly what the
+       tolerance is for. *)
+    Testing.check_float "the residuals of a least-squares fit sum to zero"
+      ~expected:0. (List.fold_left ( +. ) 0. residuals);
     (* predict is the same model applied to fresh abscissae. *)
     let m, _, _ = fit [ 0.; 1.; 2.; 3. ] [ 1.; 3.; 5.; 7. ] in
     Testing.check_string "the model predicts beyond the data it was fitted on"
@@ -242,18 +236,18 @@ let test_frequencies () =
       ~expected:1 (FV.frequency (a ()) 3.5);
     Testing.check_int "a value that never occurs has a count of zero"
       ~expected:0 (FV.frequency (a ()) 99.);
-    check_float "the sum is of every element, not of the distinct ones"
+    Testing.check_float "the sum is of every element, not of the distinct ones"
       ~expected:13. (FV.sum (a ()));
-    check_float "and the mean divides by the number of elements"
+    Testing.check_float "and the mean divides by the number of elements"
       ~expected:(13. /. 7.) (FV.mean (a ()));
-    check_float "sum_abs agrees with sum on a non-negative vector"
+    Testing.check_float "sum_abs agrees with sum on a non-negative vector"
       ~expected:13. (FV.sum_abs (a ()));
     (* The ends of the order, which is where the two instantiations differ. *)
-    check_float "first is the smallest under the natural order"
+    Testing.check_float "first is the smallest under the natural order"
       ~expected:0. (FV.first (a ()));
-    check_float "and the largest under the reverse one"
+    Testing.check_float "and the largest under the reverse one"
       ~expected:4. (RFV.first (RFV.of_floatarray ~non_negative:true init));
-    check_float "last mirrors it" ~expected:4. (FV.last (a ()));
+    Testing.check_float "last mirrors it" ~expected:4. (FV.last (a ()));
     (* The vector was declared non-negative, so it refuses to become
        otherwise rather than quietly holding a value it promised not to. *)
     Testing.check "a vector declared non-negative says so"
@@ -279,22 +273,22 @@ let test_frequencies () =
     (* The median walks the counts rather than a materialised list, so the
        cases worth stating are an odd count, an even one, and a median that
        falls inside a repeated value. *)
-    check_float "the median of an odd number of elements is the middle one"
+    Testing.check_float "the median of an odd number of elements is the middle one"
       ~expected:1. (FV.median (a ()));
-    check_float "and does not depend on the direction of the order"
+    Testing.check_float "and does not depend on the direction of the order"
       ~expected:1. (RFV.median (RFV.of_floatarray ~non_negative:true init));
     (* An even count straddles two elements and takes their mean -- 0.5 and 1
        here -- rather than picking one of them. *)
-    check_float "an even count interpolates between the two middle elements"
+    Testing.check_float "an even count interpolates between the two middle elements"
       ~expected:0.75 (let v = a () in FV.add v 0.5; FV.median v);
-    check_float "unless the two fall inside one repeated value"
+    Testing.check_float "unless the two fall inside one repeated value"
       ~expected:0.5 (let v = a () in FV.add v 0.5; FV.add v 0.5; FV.median v);
-    check_float "a single element is its own median"
+    Testing.check_float "a single element is its own median"
       ~expected:7. (let v = FV.make () in FV.add v 7.; FV.median v);
     (* An empty vector answers zero rather than raising, although the interface
        says it can fail.  Pinned as it behaves, the two being worth
        reconciling. *)
-    check_float "an empty vector answers zero" ~expected:0. (FV.median (FV.make ()));
+    Testing.check_float "an empty vector answers zero" ~expected:0. (FV.median (FV.make ()));
     (* [threshold_accum_abs] keeps elements while the absolute mass accumulated
        so far is under the given fraction of the total, and zeroes the rest --
        preserving the number of elements rather than dropping any.  It walks in
