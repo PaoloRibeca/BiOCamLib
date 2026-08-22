@@ -582,7 +582,7 @@ let () =
         info.Tools.Argv.name
         (A.Hierarchy.name (A.Annotation.hierarchy !current))
         !n_feat
-        (Annotations_Base.Path.Table.cardinal (A.Annotation.paths !current))
+        (A.Path.Table.cardinal (A.Annotation.paths !current))
         (match A.Annotation.reference !current with
          | None -> "(none)"
          | Some _ -> "(loaded)") in

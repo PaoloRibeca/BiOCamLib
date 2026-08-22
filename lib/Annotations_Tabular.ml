@@ -30,7 +30,6 @@
 *)
 
 open Better
-open Annotations_Base
 open Annotations_Common
 (* The base AST, unqualified, as every format reader and writer uses it. *)
 open Annotation

@@ -38,13 +38,17 @@
 *)
 
 open Better
-open Annotations_Base
-(* The scaffolding every format module is built on -- the file and buffer
-   plumbing, the FASTA renderer, the [Hierarchy] parser, the field codecs, the
-   [GenBankLocation] AST and the [Writer_t] / [Format_t] interfaces -- re-exported
-   so that a consumer of [Annotations] reaches all of it from one import.  It
-   cannot live in this file: the per-format modules below sit between it and
-   here, so folding it in would make the dependency circular. *)
+(* [Annotations_Common] itself includes [Annotations_Base], so this one line
+   carries the whole spine: the AST and its interning tables from the base, and
+   on top of them the file and buffer plumbing, the FASTA renderer, the
+   [Hierarchy] parser, the field codecs, the [GenBankLocation] AST and the
+   [Writer_t] / [Format_t] interfaces.  A consumer of [Annotations] therefore
+   reaches all of it from one import, and there is no list of re-exports to
+   drift out of step with what the base holds -- which is what happened to the
+   list this replaces, [GenBankRecord] having been left out of it although
+   [GenBank.parse_records] returns one.
+   The scaffolding cannot live in this file: the per-format modules below sit
+   between it and here, so folding it in would close a cycle. *)
 include Annotations_Common
 
 (* The per-format readers and writers, each in its own file because together
@@ -129,15 +133,6 @@ module Writer = struct
     | "tbl" | "feature-table" | "featuretable" -> Tbl
     | _ -> Format (Format.of_string s)
 end
-
-(* Re-export base interning modules under [Annotations] so callers
-   need only one import. *)
-module Path = Annotations_Base.Path
-module Seq = Annotations_Base.Seq
-module AttrKey = Annotations_Base.AttrKey
-module AttrMap = Annotations_Base.AttrMap
-module Value = Annotations_Base.Value
-module ValueTable = Annotations_Base.ValueTable
 
 (* Annotation: the AST module from [Annotations_Base], extended
    with binary I/O (mirroring [Trees.Splits.{to,of}_binary]: the

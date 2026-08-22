@@ -33,7 +33,13 @@
 *)
 
 open Better
-open Annotations_Base
+(* Included rather than opened, so that this module is the base plus the
+   scaffolding rather than a separate thing sitting beside it.  Everything
+   downstream -- the five format modules, and [Annotations] through them --
+   then reaches the base through here, and no hand-kept list of re-exports can
+   drift out of step with what the base actually holds.  The extended
+   [Hierarchy] below shadows the base's, which is the intended reading. *)
+include Annotations_Base
 
 (* Read an entire file into memory.  All format readers below
    are string-based (they keep the whole input around for
