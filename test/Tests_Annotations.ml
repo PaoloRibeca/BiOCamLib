@@ -666,7 +666,22 @@ let test_gff3_fidelity () =
     (* Read under GFF3's own default instead and it is refused, which is the
        correct answer rather than a silent reshaping. *)
     Testing.check_raises "reading it under GFF3's default hierarchy is refused"
-      (fun () -> ignore (A.GFF3.to_string joined |> A.GFF3.of_string)))
+      (fun () -> ignore (A.GFF3.to_string joined |> A.GFF3.of_string));
+    (* Which is the difference the tabular format exists for.  GFF3 carries the
+       edges between features and never the schema those edges satisfy, so it
+       has to be told; a tabular document states its hierarchy in its metadata
+       and so reads back knowing nothing about it.  The same register, the same
+       absence of an explicit hierarchy, opposite outcomes. *)
+    Testing.check_string "a tabular document reads back without being told its hierarchy"
+      ~expected:"annotation->source->CDS"
+      (let back = A.Tabular.to_string joined |> A.Tabular.of_string in
+       match feature_at back "CDS" with
+       | Some (path, _) -> A.Annotation.path_to_string path
+       | None -> "(no CDS)");
+    Testing.check_string "and brings the hierarchy itself back with it"
+      ~expected:(A.Hierarchy.to_string (A.Annotation.hierarchy joined))
+      (A.Hierarchy.to_string
+         (A.Annotation.hierarchy (A.Tabular.to_string joined |> A.Tabular.of_string))))
 
 (* Attribute ordering. *)
 
