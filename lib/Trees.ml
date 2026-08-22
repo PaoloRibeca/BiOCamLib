@@ -283,14 +283,14 @@ module Splits:
       if Array.length trees = 0 then
         Exception.raise __FUNCTION__ IO_Format
           (Printf.sprintf "No Newick trees in %S" path);
-      let reg = Trees_Base.Splits.of_newick ?weight_kind trees.(0) in
+      let reg = of_newick ?weight_kind trees.(0) in
       for i = 1 to Array.length trees - 1 do
-        Trees_Base.Splits.add_newick ?weight_kind reg trees.(i)
+        add_newick ?weight_kind reg trees.(i)
       done;
       reg
     let add_newick_file ?(negative_branches = Newick.NegativeBranchesPolicy.OK) ?weight_kind reg path =
       let trees = Newick.array_of_file ~negative_branches path in
-      Array.iter (fun t -> Trees_Base.Splits.add_newick ?weight_kind reg t) trees
+      Array.iter (fun t -> add_newick ?weight_kind reg t) trees
     (* Output *)
     let add_to_buffer ?(precision = 15) buf t =
       let names = get_names t in
