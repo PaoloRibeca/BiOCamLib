@@ -261,13 +261,17 @@ module GenBank:
          | None -> ()
          | Some seq ->
            any_origin := true;
-           let tmp = Filename.temp_file "gbk_origin_" ".fa" in
-           let oc = open_out tmp in
-           Printf.fprintf oc ">%s\n%s\n" locus seq;
-           close_out oc;
+           (* The bytes are already in memory, so they are handed straight to
+              the loader.  This used to go out to a temporary file and come
+              back, which was the only way in before
+              [add_from_fasta_string] existed: a write and a delete per record,
+              failing outright wherever the temporary directory is not
+              writable, and leaving the file behind if the process died between
+              the two.  The linter is left at its default, which is what
+              [add_from_fasta] applied here before. *)
            ref_acc :=
-             Sequences.Reference.add_from_fasta !ref_acc tmp;
-           (try Sys.remove tmp with _ -> ()))
+             Sequences.Reference.add_from_fasta_string !ref_acc
+               (Printf.sprintf ">%s\n%s\n" locus seq))
       ) records;
       cleanup_values !ann;
       if !any_origin then set_reference !ann !ref_acc else !ann
