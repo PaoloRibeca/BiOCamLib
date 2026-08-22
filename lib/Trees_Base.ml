@@ -121,6 +121,18 @@ module Newick:
     val dijkstra: flat_t array -> int -> Float.Array.t
     val get_min_distance_matrix: ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> Matrix.t
     val get_max_distance_matrix: ?threads:int -> ?elements_per_step:int -> ?verbose:bool -> t -> Matrix.t
+    (* Rooting.  [midpoint_root] returns the tree re-rooted at the midpoint of
+       its longest tip-to-tip path -- the point equidistant from the two most
+       distant tips -- which is what one roots at when no outgroup is available,
+       as for a neighbour-joining tree.  The edge holding that point is split in
+       two and the chain of edges from the old top node down to it is reversed;
+       total branch length is preserved, since the split halves sum to the edge
+       and a node the reversal leaves with one parent, one child and no name of
+       its own (the old root of an already-rooted tree) is spliced out with its
+       two edges merged.  Ghost edges are not descended, as everywhere else
+       here.  Every edge must carry a length: without one there is no midpoint
+       to find, and saying so is better than inventing a zero *)
+    val midpoint_root: t -> t
   end
 = struct
     (* The array describes the progeny of the node.
@@ -407,6 +419,140 @@ module Newick:
       _get_distance_matrix ~invert:false ~threads ~elements_per_step ~verbose t
     let get_max_distance_matrix ?(threads = 1) ?(elements_per_step = 1000) ?(verbose = false) t =
       _get_distance_matrix ~invert:true ~threads ~elements_per_step ~verbose t
+    (* Rooting.
+       The longest tip-to-tip path is found in one post-order pass.  At a node we
+        know, for each child, how far the deepest tip in that child's subtree is;
+        the longest path whose HIGHEST node is this one is therefore the sum of
+        the two largest of those distances, and a tip contributes a zero-length
+        candidate for itself, which is what lets a path end at the node rather
+        than below it.  The largest such sum over all nodes is the tree's
+        longest tip-to-tip path -- every path has exactly one highest node, so
+        the scan misses none and counts none twice.
+       A path is recorded as the list of child indices that walks it, so the
+        apex and its two descents are enough to find the edge holding the
+        midpoint and to re-root there.  Branch lengths may be negative
+        (neighbour joining produces them), which is why the descent looks for
+        the first edge whose span CONTAINS the target distance instead of
+        assuming that the distance from the apex grows as we go down *)
+    let midpoint_root t =
+      let best = ref None in
+      let rec descend prefix (Node (nd, children)) =
+        let candidates =
+          (* A tip closes a path at itself.  The top node of a rooted leaf is a
+             tip as well, even though it carries a stem *)
+          ref begin
+            if Array.length children = 0 || (nd.node_is_root && Array.length children = 1) then
+              [ 0., [] ]
+            else
+              []
+          end in
+        Array.iteri
+          (fun i (edge, child) ->
+            if not edge.edge_is_ghost then begin
+              if edge.edge_length = neg_infinity then
+                Exception.raise __FUNCTION__ Initialize
+                  "Cannot midpoint-root a tree whose branches carry no length";
+              let down, path = descend (i :: prefix) child in
+              candidates := (edge.edge_length +. down, i :: path) :: !candidates
+            end)
+          children;
+        match List.sort (fun (a, _) (b, _) -> compare b a) !candidates with
+        | [] ->
+          (* Every edge of this node is a ghost, so it reaches no tip of its own
+             and no path can pass through it *)
+          neg_infinity, []
+        | ((deepest, _) as first) :: rest ->
+          begin match rest with
+          | (d_b, p_b) :: _ ->
+            let d_a, p_a = first in
+            let total = d_a +. d_b in
+            if match !best with None -> true | Some (t, _, _, _) -> total > t then
+              best := Some (total, List.rev prefix, (d_a, p_a), (d_b, p_b))
+          | [] -> ()
+          end;
+          deepest, snd first in
+      ignore (descend [] t);
+      match !best with
+      | None ->
+        (* One tip, or nothing but ghosts: there is no path to halve *)
+        set_is_root t true
+      | Some (total, apex, (d_a, p_a), _) ->
+        let follow node path = List.fold_left (fun (Node (_, ch)) i -> snd ch.(i)) node path in
+        (* The edges of the descent towards the further of the two tips, paired
+           with the child index that takes each of them *)
+        let rec collect node = function
+          | [] -> []
+          | i :: rest ->
+            let Node (_, ch) = node in
+            let edge, child = ch.(i) in
+            (i, edge.edge_length) :: collect child rest in
+        let steps = collect (follow t apex) p_a
+        (* The midpoint sits [total /. 2.] from either tip, hence this far from
+           the apex down the descent we are about to walk *)
+        and target = d_a -. total /. 2. in
+        let rec locate prefix cumul = function
+          | [] -> Exception.raise __FUNCTION__ Algorithm "The longest tip-to-tip path has no edge"
+          | (i, length) :: rest ->
+            let below = cumul +. length in
+            if target >= min cumul below && target <= max cumul below then
+              List.rev (i :: prefix), target -. cumul
+            else if rest = [] then
+              (* Negative branches can leave the midpoint outside the span of
+                 every edge; the far end of the last one is then as close as the
+                 tree gets to it *)
+              List.rev (i :: prefix), length
+            else
+              locate (i :: prefix) below rest in
+        let descent, offset = locate [] 0. steps in
+        (* Reverse the chain of edges from the top node down to the edge named by
+           [apex @ descent].  Each node on the chain keeps its degree -- it loses
+           the child it was descended through and gains its former parent as a
+           child -- except the old top node, which has no parent to gain and so
+           can be left with a single child; that one is spliced out below *)
+        let rec pull node path pending =
+          let Node (nd, ch) = node in
+          match path with
+          | [] -> Exception.raise __FUNCTION__ Algorithm "Empty re-rooting path"
+          | i :: rest ->
+            let edge, child = ch.(i) in
+            let others =
+              Array.append (Array.sub ch 0 i) (Array.sub ch (i + 1) (Array.length ch - i - 1)) in
+            let me =
+              Node ({ nd with node_is_root = false },
+                match pending with
+                | None -> others
+                | Some pending -> Array.append others [| pending |]) in
+            if rest = [] then
+              edge, child, me
+            else
+              pull child rest (Some (edge, me)) in
+        let edge, below, above = pull t (apex @ descent) None in
+        (* Both halves of the split edge induce the same bipartition as the edge
+           did, so both keep its support values *)
+        let root =
+          Node ({ node_is_root = true; node_hybrid = None; node_name = "";
+                  node_dict = StringMap.empty },
+            [| set_edge_length edge (edge.edge_length -. offset), below;
+               set_edge_length edge offset, above |]) in
+        (* The two edges that a spliced-out node separated induce the same
+           bipartition too, so the lower one's values survive and the lengths are
+           summed -- no branch length is created or lost *)
+        let rec splice (Node (nd, ch)) =
+          Node (nd,
+            Array.map
+              (fun (edge, child) ->
+                if edge.edge_is_ghost then
+                  edge, child
+                else
+                  match splice child with
+                  | Node (child_nd, [| child_edge, grandchild |])
+                    when not child_nd.node_is_root && child_nd.node_hybrid = None
+                         && child_nd.node_name = "" && not child_edge.edge_is_ghost ->
+                    set_edge_length child_edge (edge.edge_length +. child_edge.edge_length),
+                      grandchild
+                  | child -> edge, child)
+              ch) in
+        splice root
   end
 
 module type Splits_base =

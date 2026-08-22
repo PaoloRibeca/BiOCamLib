@@ -9,6 +9,6 @@
   (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static))))
 
 (executables
- (public_names Parallel Octopus RC FASTools AnnoTools TREx Cophenetic Yggdrasill)
- (names Parallel Octopus RC FASTools AnnoTools TREx Cophenetic Yggdrasill)
+ (public_names Parallel Octopus RC FASTools AnnoTools TREx Cophenetic NJ Yggdrasill)
+ (names Parallel Octopus RC FASTools AnnoTools TREx Cophenetic NJ Yggdrasill)
  (libraries str unix BiOCamLib zarith))

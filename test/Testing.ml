@@ -179,6 +179,11 @@ include (
       end
     val group: string -> unit
     val section: string -> (unit -> unit) -> unit
+    (* [f] returns [true, detail] when the property holds; [detail] explains the
+       failure and is ignored on success.  Every check below funnels through
+       this one, and a check with something of its own to say about a failure --
+       a computed discrepancy, say -- is written against it directly *)
+    val verify: ?known_bug:string -> string -> (unit -> bool * string) -> unit
     val check: ?known_bug:string -> string -> (unit -> bool) -> unit
     val check_equal:
       ?known_bug:string -> string -> to_string:('a -> string) -> expected:'a -> 'a -> unit

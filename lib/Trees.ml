@@ -665,3 +665,217 @@ include (struct
     val of_clades: ?verbose:bool -> string array -> (int array * float) list -> Newick.t
   end)
 
+(* Neighbour joining (Saitou and Nei 1987) with the Studier and Keppler 1988
+   formulation of the criterion, which is what makes each step O(m^2) rather
+   than O(m^3): the row sums are kept as we go instead of being recomputed.
+   The tree it returns is UNROOTED -- the last three subtrees are resolved in
+   closed form into a trifurcation, which is where an unrooted tree's arbitrary
+   Newick top node belongs -- so a caller that wants a rooted one should follow
+   with [Newick.midpoint_root]. *)
+module NeighbourJoining:
+  sig
+    (* What to do when the matrix disagrees with itself across the diagonal.
+       Neighbour joining is defined on a symmetric matrix, and a real one often
+       is not quite: [Average] replaces both cells with their mean, [Error]
+       refuses the matrix instead.  Canonical CLI forms are 'average'|'error' *)
+    module AsymmetryPolicy:
+      sig
+        type t =
+          | Average
+          | Error
+        val of_string: string -> t
+        val to_string: t -> string
+      end
+    (* [negative_branches] says what to do about the negative branch lengths a
+       non-additive matrix yields; the sentinel for an undefined length is
+       [neg_infinity], so keeping them ([OK], the default) is unambiguous *)
+    val of_matrix: ?asymmetry:AsymmetryPolicy.t ->
+                   ?negative_branches:Newick.NegativeBranchesPolicy.t -> ?verbose:bool ->
+                   Matrix.t -> Newick.t
+  end
+= struct
+    module AsymmetryPolicy =
+      struct
+        type t =
+          | Average
+          | Error
+        let of_string = function
+          | "average" -> Average
+          | "error" -> Error
+          | s -> Exception.raise_unrecognized_initializer __FUNCTION__ "asymmetry policy" s
+        let to_string = function
+          | Average -> "average"
+          | Error -> "error"
+      end
+    let of_matrix ?(asymmetry = AsymmetryPolicy.Average)
+                  ?(negative_branches = Newick.NegativeBranchesPolicy.OK) ?(verbose = false)
+                  matrix =
+      let names = matrix.Matrix.row_names and cols = matrix.Matrix.col_names in
+      let n = Array.length names in
+      if n = 0 then
+        Exception.raise_object_is_empty __FUNCTION__ "distance matrix";
+      if Array.length cols <> n then
+        Exception.raise __FUNCTION__ IO_Format
+          (Printf.sprintf "A distance matrix must be square (found %d rows and %d columns)"
+            n (Array.length cols));
+      Array.iteri
+        (fun i name ->
+          if cols.(i) <> name then
+            Exception.raise __FUNCTION__ IO_Format
+              (Printf.sprintf
+                "A distance matrix must carry the same names on both axes and in the same order \
+                 (at position %d there is row '%s' but column '%s')" (i + 1) name cols.(i)))
+        names;
+      (* A working copy, so that the caller's matrix is left alone and the
+         asymmetry policy is applied once and for all.  The diagonal is never
+         read by what follows, hence zeroed rather than believed *)
+      let d = Array.init n (fun _ -> Float.Array.make n 0.) and worst = ref 0. and worst_at = ref (0, 0) in
+      for i = 0 to n - 1 do
+        for j = i + 1 to n - 1 do
+          let above = Float.Array.get matrix.Matrix.data.(i) j
+          and below = Float.Array.get matrix.Matrix.data.(j) i in
+          let gap = Float.abs (above -. below) in
+          if gap > !worst then begin
+            worst := gap;
+            worst_at := i, j
+          end;
+          let value = (above +. below) /. 2. in
+          Float.Array.set d.(i) j value;
+          Float.Array.set d.(j) i value
+        done
+      done;
+      if !worst > 0. then begin
+        let i, j = !worst_at in
+        match asymmetry with
+        | AsymmetryPolicy.Error ->
+          Exception.raise __FUNCTION__ IO_Format
+            (Printf.sprintf
+              "The distance matrix is not symmetric: '%s' and '%s' disagree by %.10g"
+              names.(i) names.(j) !worst)
+        | AsymmetryPolicy.Average ->
+          if verbose then
+            Printf.eprintf
+              "(%s): Averaged across the diagonal (largest disagreement %.10g, '%s' vs '%s')\n%!"
+              __FUNCTION__ !worst names.(i) names.(j)
+      end;
+      (* [node.(i)] is the subtree standing at active slot [i] and [r.(i)] the
+         sum of its distances to every other active slot.  Slots are kept
+         compact -- the active ones are always [0, m) -- so that every scan runs
+         over contiguous memory *)
+      let node = Array.init n (fun i -> Newick.leaf names.(i)) and r = Float.Array.make n 0. in
+      for i = 0 to n - 1 do
+        let sum = ref 0. in
+        for j = 0 to n - 1 do
+          sum := !sum +. Float.Array.get d.(i) j
+        done;
+        Float.Array.set r i !sum
+      done;
+      let negatives = ref 0 in
+      let branch length =
+        if length >= 0. then
+          length
+        else begin
+          incr negatives;
+          match negative_branches with
+          | Newick.NegativeBranchesPolicy.OK -> length
+          | Newick.NegativeBranchesPolicy.Zero -> 0.
+          | Newick.NegativeBranchesPolicy.Error ->
+            Exception.raise __FUNCTION__ IO_Format
+              (Printf.sprintf
+                "Neighbour joining produced a branch of negative length (%.10g), which means the \
+                 distance matrix is not additive" length)
+        end in
+      let m = ref n and step = max 1 (n / 100) in
+      if verbose then
+        Printf.eprintf "(%s): Joining %d %s...\n%!"
+          __FUNCTION__ n (String.pluralize_int ~plural:"taxa" "taxon" n);
+      while !m > 3 do
+        let active = !m in
+        (* Studier and Keppler's Q, minimised.  The (m-2) scaling and the row
+           sums are what keep the criterion consistent as the matrix shrinks *)
+        let scale = float_of_int (active - 2) in
+        let best = ref infinity and best_i = ref 0 and best_j = ref 1 in
+        for i = 0 to active - 1 do
+          let d_i = d.(i) and r_i = Float.Array.get r i in
+          for j = i + 1 to active - 1 do
+            let q = scale *. Float.Array.get d_i j -. r_i -. Float.Array.get r j in
+            if q < !best then begin
+              best := q;
+              best_i := i;
+              best_j := j
+            end
+          done
+        done;
+        let i = !best_i and j = !best_j in
+        let d_ij = Float.Array.get d.(i) j in
+        (* The two branch lengths add up to [d_ij] before the policy sees them,
+           so a clamp shortens one branch and does not lengthen the other *)
+        let length_i = d_ij /. 2. +. (Float.Array.get r i -. Float.Array.get r j) /. (2. *. scale) in
+        let joined =
+          Newick.join
+            [| Newick.edge ~length:(branch length_i) (), node.(i);
+               Newick.edge ~length:(branch (d_ij -. length_i)) (), node.(j) |] in
+        (* The joined node takes slot [i].  Reading [d.(i).(k)] before writing it
+           is safe because each [k] is touched once, and [k <> i] keeps the
+           symmetric write out of the row being rewritten *)
+        let sum = ref 0. in
+        for k = 0 to active - 1 do
+          if k <> i && k <> j then begin
+            let d_ik = Float.Array.get d.(i) k and d_jk = Float.Array.get d.(j) k in
+            let d_uk = (d_ik +. d_jk -. d_ij) /. 2. in
+            Float.Array.set d.(i) k d_uk;
+            Float.Array.set d.(k) i d_uk;
+            Float.Array.set r k (Float.Array.get r k -. d_ik -. d_jk +. d_uk);
+            sum := !sum +. d_uk
+          end
+        done;
+        Float.Array.set d.(i) i 0.;
+        Float.Array.set r i !sum;
+        node.(i) <- joined;
+        (* Slot [j] is retired by moving the last active slot into it *)
+        let last = active - 1 in
+        if j <> last then begin
+          node.(j) <- node.(last);
+          Float.Array.set r j (Float.Array.get r last);
+          for k = 0 to last - 1 do
+            let value = Float.Array.get d.(last) k in
+            Float.Array.set d.(j) k value;
+            Float.Array.set d.(k) j value
+          done;
+          Float.Array.set d.(j) j 0.
+        end;
+        decr m;
+        if verbose && (n - !m) mod step = 0 then
+          Printf.eprintf "%s\r(%s): Joined %d/%d nodes%!"
+            String.TermIO.clear __FUNCTION__ (n - !m) (n - 3)
+      done;
+      if verbose then
+        Printf.eprintf "%s\r(%s): Joined %d/%d nodes.\n%!"
+          String.TermIO.clear __FUNCTION__ (n - !m) (max 0 (n - 3));
+      if verbose && !negatives > 0 then
+        Printf.eprintf "(%s): %d %s out negative (%s)\n%!"
+          __FUNCTION__ !negatives
+          (String.pluralize_int ~plural:"branches came" "branch came" !negatives)
+          (match negative_branches with
+           | Newick.NegativeBranchesPolicy.Zero -> "flattened to zero"
+           | Newick.NegativeBranchesPolicy.OK | Newick.NegativeBranchesPolicy.Error -> "kept as they are");
+      (* What is left resolves in closed form.  Three subtrees are an unrooted
+         tree's natural top -- the trifurcation adds no bipartition of its own --
+         and two are a single branch, which we halve so that neither leaf is
+         arbitrarily privileged *)
+      match !m with
+      | 1 -> node.(0)
+      | 2 ->
+        let half = Float.Array.get d.(0) 1 /. 2. in
+        Newick.join
+          [| Newick.edge ~length:(branch half) (), node.(0);
+             Newick.edge ~length:(branch half) (), node.(1) |]
+      | _ ->
+        let d_01 = Float.Array.get d.(0) 1 and d_02 = Float.Array.get d.(0) 2
+        and d_12 = Float.Array.get d.(1) 2 in
+        Newick.join
+          [| Newick.edge ~length:(branch ((d_01 +. d_02 -. d_12) /. 2.)) (), node.(0);
+             Newick.edge ~length:(branch ((d_01 +. d_12 -. d_02) /. 2.)) (), node.(1);
+             Newick.edge ~length:(branch ((d_02 +. d_12 -. d_01) /. 2.)) (), node.(2) |]
+  end
+

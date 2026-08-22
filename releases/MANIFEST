@@ -7,4 +7,5 @@ README.pdf	README.pdf
 .build/AnnoTools	AnnoTools
 .build/TREx	TREx
 .build/Cophenetic	Cophenetic
+.build/NJ	NJ
 .build/Yggdrasill	Yggdrasill
