@@ -141,6 +141,52 @@ module GFF3:
      [Parent] sit at top level; their path is just
      [[row_type]].  Rows with a parent need the parent's path,
      so a topological pass over [Parent=]-edges is required. *)
+  (* GFF3 spells a discontinuous feature -- a CDS across two exons, say -- as
+     several rows sharing one [ID].  They are one feature with several
+     intervals, and reading them as several features produced a register in
+     which two features claimed the same identity, which is not a thing an
+     [Annotation.t] should be able to hold.  The rows are combined here, before
+     the walk, so that everything downstream sees one row per identity.
+     A row carrying no [ID] has nothing to be combined on and stands alone. *)
+  let coalesce_rows rows =
+    let cells = Hashtbl.create 64 and order = ref [] in
+    List.iter (fun (lnum, r) ->
+      match r.row_id with
+      | None -> List.accum order (lnum, ref r)
+      | Some id ->
+        match Hashtbl.find_opt cells id with
+        | None ->
+          let cell = ref r in
+          Hashtbl.add cells id cell;
+          List.accum order (lnum, cell)
+        | Some cell ->
+          let prev = !cell in
+          (* The spec has the rows of one feature agreeing on everything but
+             their coordinates.  Disagreeing on the sequence, the type or the
+             strand means the file is saying two different things under one
+             name, which is worth refusing rather than silently picking one. *)
+          if prev.row_type <> r.row_type then
+            Exception.raise __FUNCTION__ IO_Format
+              (Printf.sprintf
+                 "On line %d: ID=%s was already used for a %s, and this row is a %s"
+                 lnum id prev.row_type r.row_type);
+          if prev.row_feature.seq <> r.row_feature.seq then
+            Exception.raise __FUNCTION__ IO_Format
+              (Printf.sprintf "On line %d: ID=%s appears on two different sequences" lnum id);
+          if prev.row_feature.strand <> r.row_feature.strand then
+            Exception.raise __FUNCTION__ IO_Format
+              (Printf.sprintf "On line %d: ID=%s appears on two different strands" lnum id);
+          (* Intervals accumulate in file order, which for a reverse feature is
+             the order the writer put them in.  Phase, score and attributes are
+             the first row's: the feature carries one of each, and the writer
+             recomputes the per-row phase from it. *)
+          cell :=
+            { prev with
+              row_feature =
+                { prev.row_feature with
+                  intervals = prev.row_feature.intervals @ r.row_feature.intervals } }
+    ) rows;
+    List.rev !order |> List.map (fun (lnum, cell) -> lnum, !cell)
   let walk_dfs hierarchy rows =
     let root_name = Hierarchy.name hierarchy in
     let by_id = Hashtbl.create 64 in
@@ -210,7 +256,7 @@ module GFF3:
       read_rows
         ~seqs:(seqs !ann) ~attr_keys:(attr_keys !ann)
         ~values:(values !ann) s in
-    add_dfs_with_seq_bloom ann (walk_dfs hierarchy rows);
+    add_dfs_with_seq_bloom ann (walk_dfs hierarchy (coalesce_rows rows));
     List.iter (fun pragma ->
       match String.index_opt pragma ' ' with
       | None -> ann := add_metadata !ann ~key:pragma ~value:""
