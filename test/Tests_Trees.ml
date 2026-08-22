@@ -143,7 +143,36 @@ let test_negative_branches () =
         let s = N.of_string ~negative_branches:P.OK neg |> N.to_string in
         List.exists (fun c -> c = '-') (List.init (String.length s) (String.get s))))
 
+(* The quoting helper itself, which both the Newick and the Splits writers go
+   through.  Testing it here rather than only through a round trip states what
+   it owes its callers: a faithful string, quoted exactly when leaving it bare
+   would not read back. *)
+
+let test_quoting () =
+  Testing.section "Label quoting" (fun () ->
+    let q = Trees_Lex.quote_string_if_needed in
+    Testing.check_string "an ordinary label is left bare" ~expected:"abc" (q "abc");
+    Testing.check_string "a label with an underscore is left bare"
+      ~expected:"Homo_sapiens" (q "Homo_sapiens");
+    Testing.check_string "a label with a space is quoted, and keeps the space"
+      ~expected:"'Homo sapiens'" (q "Homo sapiens");
+    Testing.check_string "a label with a colon is quoted, and keeps the colon"
+      ~expected:"'a:b'" (q "a:b");
+    Testing.check_string "an embedded quote is doubled"
+      ~expected:"'O''Brien'" (q "O'Brien");
+    Testing.check_string "the empty label is left bare" ~expected:"" (q "");
+    (* Whatever comes out has to read back as what went in, which is the whole
+       contract; a helper that quotes but drops the character fails it. *)
+    Testing.check "quoting a label never loses a character"
+      (fun () ->
+        List.for_all
+          (fun s ->
+            let quoted = q s in
+            String.length quoted >= String.length s)
+          [ "abc"; "Homo sapiens"; "a:b"; "O'Brien"; "a b c d" ]))
+
 let run () =
+  test_quoting ();
   test_newick ();
   test_newick_arrays ();
   test_negative_branches ()
