@@ -561,14 +561,21 @@ Two things a real distance matrix tends to do that a textbook one does not:
 * it is often not quite symmetric. `-a`/`--asymmetry` chooses between replacing both cells with their mean (`average`, the default) and refusing the matrix (`error`). Under `-v` the largest disagreement found is reported together with the pair it was found on, so that "not quite" can be checked rather than assumed.
 * it is often not additive, and neighbour joining then yields branches of negative length. `-n`/`--negative-branches` chooses between keeping them (`ok`, the default &mdash; the undefined-length sentinel is not a negative number, so they are unambiguous, and they measure how far from additive the matrix is), flattening them to zero (`zero`), and refusing the matrix (`error`).
 
+Both are things to check rather than assume, which is what `-S`/`--statistics` is for: it writes a two-line table describing the matrix itself &mdash; its shape, whether it can be joined at all, how far it disagrees with itself across the diagonal (on average, at worst, and on which pair), how far its diagonal is from zero, how many of its cells are negative, its range, and, for the tree, how many branches came out negative and what the branches add up to.
+
+```bash
+NJ -S stats.tsv -i distances.tsv -o tree.nwk
+```
+
+It is written **even for a matrix that is then refused**, which is when a description is worth the most: a table reading `#rows 764`, `#columns 3` explains the refusal that follows it, where the refusal alone only reports it. That also makes it the natural way to survey a family of matrices and pick one worth joining &mdash; run `NJ -S` over each and read down the negative-branch column.
+
 The output is plain Newick, which is what most other programs expect. `-r`/`--rich-format` emits the dialect this suite understands instead, which tags the tree as rooted (`[&R]`) or unrooted (`[&U]`).
 
 ### Command line options for `NJ`
 
-
 ```
 This is NJ version 1 [22-Aug-2026]
- compiled against: BiOCamLib version 637 [21-Aug-2026]
+ compiled against: BiOCamLib version 741 [22-Aug-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -585,6 +592,7 @@ The distance matrix is the tab\-separated form the rest of this suite reads and
 |-|-|-|-|
 | `-i`<br>`--input` | _&lt;distance\_matrix&gt;_ |  name of the file containing the matrix of pairwise distances | <ins>default=<mark>_/dev/stdin_</mark></ins> |
 | `-o`<br>`--output` | _&lt;newick\_file&gt;_ |  name of the file the resulting tree should be written to | <ins>default=<mark>_/dev/stdout_</mark></ins> |
+| `-S`<br>`--statistics` | _&lt;statistics\_file&gt;_ |  also write a two\-line table of what the distance matrix is: its  shape, whether it can be joined at all, how far it disagrees with  itself across the diagonal and where, how many cells are negative  \(a distance is not, so those are however the matrix writes 'not  measured'\), and, for the tree, how many branches came out negative  and what they add up to\.  Written even for a matrix that is then  refused, that being when a description is worth the most |  |
 | `-r`<br>`--rich-format` |  |  emit the rich Newick dialect this suite understands, which tags the  tree as rooted or unrooted and carries dictionaries and hybrid  nodes; plain Newick is what most other programs expect | <ins>default=<mark>_false_</mark></ins> |
 
 **Algorithm**
