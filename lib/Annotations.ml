@@ -52,14 +52,26 @@ open Better
 include Annotations_Common
 
 (* The per-format readers and writers, each in its own file because together
-   they were seven eighths of what this module used to be.  Each file holds
-   exactly one module, so including it says that this module's contents are
-   part of ours without naming what those contents are. *)
-include Annotations_GFF3
-include Annotations_GTF
-include Annotations_GenBank
-include Annotations_Tabular
-include Annotations_Tbl
+   they were seven eighths of what this module used to be.
+   Each include is CONSTRAINED, and deliberately so: including a module path
+   unconstrained re-exports its contents as aliases, and an alias into a module
+   that dune has made private does not resolve, so the file could not then be
+   sealed.  Naming the signature copies it instead, which both closes the door
+   behind each format module and writes down what it offers -- and, since these
+   signatures are the ones the modules already declare, saying so twice costs
+   four lines and is checked by the compiler. *)
+include (Annotations_GFF3: sig
+    module GFF3: sig include Format_t val gencode_hierarchy: Hierarchy.t end
+  end)
+include (Annotations_GTF: sig module GTF: Format_t end)
+include (Annotations_GenBank: sig
+    module GenBank: sig
+        include Format_t
+        val parse_records: string -> GenBankRecord.t list
+      end
+  end)
+include (Annotations_Tabular: sig module Tabular: Format_t end)
+include (Annotations_Tbl: sig module Tbl: Writer_t end)
 
 (* A serialisable handle on the three formats, used by the
    [AnnoTools] CLI and by any caller that wants to dispatch on

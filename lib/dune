@@ -22,6 +22,11 @@
  (public_name BiOCamLib)
  (name BiOCamLib)
  (private_modules
+   Annotations_GFF3
+   Annotations_GTF
+   Annotations_GenBank
+   Annotations_Tabular
+   Annotations_Tbl
    Annotations_Lex
    Annotations_Parse
    Trees_Lex
