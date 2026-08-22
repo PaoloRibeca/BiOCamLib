@@ -171,8 +171,111 @@ let test_quoting () =
             String.length quoted >= String.length s)
           [ "abc"; "Homo sapiens"; "a:b"; "O'Brien"; "a b c d" ]))
 
+(* Building a tree rather than parsing one, and then walking it.  A small tree
+   with branch lengths chosen so that every distance can be worked out by hand:
+
+       root --2.0-- A
+            --3.0-- inner --1.0-- B
+                          --4.0-- C
+
+   so that A is 2 from the root, B is 4, C is 7, and the leaf-to-leaf distances
+   are A-B 6, A-C 9, B-C 5. *)
+
+let built () =
+  let e length = N.edge ~length () in
+  N.join
+    [| e 2., N.leaf "A";
+       e 3., N.join ~name:"inner" [| e 1., N.leaf "B"; e 4., N.leaf "C" |] |]
+
+let test_construction () =
+  Testing.section "Newick construction" (fun () ->
+    let t = built () in
+    (* A tree built this way is unrooted until it is told otherwise, which the
+       rich format spells [&U]. *)
+    Testing.check_string "a constructed tree renders, and is unrooted"
+      ~expected:"[&U](A:2,(B:1,C:4)inner:3);" (N.to_string t);
+    Testing.check_string "and says so once it is rooted"
+      ~expected:"[&R](A:2,(B:1,C:4)inner:3);" (N.to_string (N.set_is_root t true));
+    Testing.check_string "and renders the same after a round trip"
+      ~expected:(N.to_string t) (N.to_string (N.of_string (N.to_string t)));
+    (* The plain format drops the rooting marker the rich one carries. *)
+    Testing.check_string "the plain format omits the rich-format marker"
+      ~expected:"(A:2,(B:1,C:4)inner:3);" (N.to_string ~rich_format:false t);
+    Testing.check_string "a leaf carries the name it was built with"
+      ~expected:"A" (N.get_name (N.leaf "A"));
+    Testing.check_string "an internal node can be named"
+      ~expected:"inner" (N.get_name (N.join ~name:"inner" [| N.edge (), N.leaf "A" |]));
+    (* Edge values are three separate slots with their own sentinels. *)
+    Testing.check_string "an edge carries its length"
+      ~expected:"2.5" (string_of_float (N.get_edge_length (N.edge ~length:2.5 ())));
+    Testing.check_string "and its bootstrap"
+      ~expected:"0.9" (string_of_float (N.get_edge_bootstrap (N.edge ~bootstrap:0.9 ())));
+    Testing.check "an edge is not a ghost unless it is made one"
+      (fun () -> not (N.get_edge_is_ghost (N.edge ~length:1. ())));
+    Testing.check "and is one when it is"
+      (fun () -> N.get_edge_is_ghost (N.edge ~length:1. ~is_ghost:true ()));
+    (* Rooting and hybrid marks are node properties that the rich format
+       renders and the plain one does not. *)
+    Testing.check "a tree can be told it is rooted"
+      (fun () -> N.get_is_root (N.set_is_root (built ()) true));
+    Testing.check "a node carries no hybrid mark unless given one"
+      (fun () -> N.get_hybrid (built ()) = None);
+    Testing.check "and carries one when given"
+      (fun () -> N.get_hybrid (N.set_hybrid (built ()) (Some (N.Recombination 1)))
+                 = Some (N.Recombination 1)))
+
+(* Flattening and distances. *)
+
+let test_traversal () =
+  Testing.section "Newick traversal and distances" (fun () ->
+    let t = built () in
+    let flat = N.dfs_flatten t in
+    Testing.check_int "flattening yields one entry per node"
+      ~expected:5 (Array.length flat);
+    (* Look nodes up by name rather than by position, so that the checks do not
+       depend on the order the walk happens to produce. *)
+    let index_of name =
+      let res = ref (-1) in
+      Array.iteri (fun i (_, _, node, _) ->
+        if N.get_node_name node = name then res := i) flat;
+      !res in
+    Testing.check "every node is reachable by name"
+      (fun () -> List.for_all (fun n -> index_of n >= 0) [ "A"; "B"; "C"; "inner" ]);
+    (* Dijkstra from the root: the distances above, by construction. *)
+    let d = N.dijkstra flat 0 in
+    let dist name = Better.Float.Array.get d (index_of name) in
+    Testing.check_string "A is two from the root" ~expected:"2." (string_of_float (dist "A"));
+    Testing.check_string "the inner node is three" ~expected:"3."
+      (string_of_float (dist "inner"));
+    Testing.check_string "B is four" ~expected:"4." (string_of_float (dist "B"));
+    Testing.check_string "C is seven" ~expected:"7." (string_of_float (dist "C"));
+    Testing.check_string "and the root is zero from itself" ~expected:"0."
+      (string_of_float (Better.Float.Array.get d 0));
+    (* The leaf-to-leaf matrix, which is what a phylogeny consumer wants. *)
+    (* The matrix covers every node rather than just the leaves, and names each
+       one by its position in the flattened array followed by its name -- so
+       the unnamed root is "0_".  That means a row is found at the same index
+       the flattening gave it. *)
+    let m = N.get_min_distance_matrix t in
+    Testing.check_string "the matrix names every node, indexed as it was flattened"
+      ~expected:"0_,1_A,2_inner,3_B,4_C"
+      (Array.to_list m.Matrix.row_names |> String.concat ",");
+    Testing.check "and is square over them"
+      (fun () -> m.Matrix.row_names = m.Matrix.col_names);
+    let between a b =
+      Better.Float.Array.get m.Matrix.data.(index_of a) (index_of b) in
+    Testing.check_string "A to B is six" ~expected:"6." (string_of_float (between "A" "B"));
+    Testing.check_string "A to C is nine" ~expected:"9." (string_of_float (between "A" "C"));
+    Testing.check_string "B to C is five" ~expected:"5." (string_of_float (between "B" "C"));
+    Testing.check_string "a leaf is zero from itself" ~expected:"0."
+      (string_of_float (between "A" "A"));
+    Testing.check "the matrix is symmetric"
+      (fun () -> between "A" "C" = between "C" "A"))
+
 let run () =
   test_quoting ();
+  test_construction ();
+  test_traversal ();
   test_newick ();
   test_newick_arrays ();
   test_negative_branches ()

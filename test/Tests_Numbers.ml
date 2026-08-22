@@ -211,7 +211,110 @@ let test_linear_fit () =
     Testing.check_raises "and so is a single point"
       (fun () -> ignore (fit [ 1. ] [ 1. ])))
 
+(* Frequency vectors: a multiset kept as distinct values with their counts,
+   ordered by the scalar it is built over.  The reverse-comparable
+   instantiation orders the other way, which is what makes [first], [last] and
+   the running [median] worth stating separately for each. *)
+
+let test_frequencies () =
+  Testing.section "Frequency vectors" (fun () ->
+    let module FV = Numbers.FloatFreqsVector in
+    let module RFV = Numbers.RFloatFreqsVector in
+    (* 0 twice, 0.5, 1, 3.5, 4 twice: seven values, five of them distinct. *)
+    let init = Better.Float.Array.of_list [ 1.; 0.; 4.; 0.5; 0.; 3.5; 4. ] in
+    let show fv =
+      let acc = ref [] in
+      FV.iter (fun v n -> List.accum acc (Printf.sprintf "%g*%d" v n)) fv;
+      List.rev !acc |> String.concat "," in
+    let rshow fv =
+      let acc = ref [] in
+      RFV.iter (fun v n -> List.accum acc (Printf.sprintf "%g*%d" v n)) fv;
+      List.rev !acc |> String.concat "," in
+    let a () = FV.of_floatarray ~non_negative:true init in
+    Testing.check_string "values are held once each, with their counts, in order"
+      ~expected:"0*2,0.5*1,1*1,3.5*1,4*2" (show (a ()));
+    Testing.check_string "the reverse ordering holds the same values the other way round"
+      ~expected:"4*2,3.5*1,1*1,0.5*1,0*2"
+      (rshow (RFV.of_floatarray ~non_negative:true init));
+    Testing.check_int "a repeated value is counted, not stored twice"
+      ~expected:2 (FV.frequency (a ()) 0.);
+    Testing.check_int "and a value that occurs once has a count of one"
+      ~expected:1 (FV.frequency (a ()) 3.5);
+    Testing.check_int "a value that never occurs has a count of zero"
+      ~expected:0 (FV.frequency (a ()) 99.);
+    check_float "the sum is of every element, not of the distinct ones"
+      ~expected:13. (FV.sum (a ()));
+    check_float "and the mean divides by the number of elements"
+      ~expected:(13. /. 7.) (FV.mean (a ()));
+    check_float "sum_abs agrees with sum on a non-negative vector"
+      ~expected:13. (FV.sum_abs (a ()));
+    (* The ends of the order, which is where the two instantiations differ. *)
+    check_float "first is the smallest under the natural order"
+      ~expected:0. (FV.first (a ()));
+    check_float "and the largest under the reverse one"
+      ~expected:4. (RFV.first (RFV.of_floatarray ~non_negative:true init));
+    check_float "last mirrors it" ~expected:4. (FV.last (a ()));
+    (* The vector was declared non-negative, so it refuses to become
+       otherwise rather than quietly holding a value it promised not to. *)
+    Testing.check "a vector declared non-negative says so"
+      (fun () -> FV.is_non_negative (a ()));
+    Testing.check_raises "and refuses a negative element"
+      (fun () -> FV.add (a ()) (-1.));
+    Testing.check_string "adding a value that is already there only raises its count"
+      ~expected:"0*2,0.5*2,1*1,3.5*1,4*2"
+      (let v = a () in FV.add v 0.5; show v);
+    Testing.check_string "and a new value takes its place in the order"
+      ~expected:"0*2,0.5*1,1*1,2*1,3.5*1,4*2"
+      (let v = a () in FV.add v 2.; show v);
+    Testing.check_int "clear empties it" ~expected:0
+      (let v = a () in FV.clear v; FV.length v);
+    (* Round trip through a plain array, which sorts as a side effect of the
+       vector holding its values in order. *)
+    Testing.check_string "to_floatarray yields the elements in order"
+      ~expected:"0,0,0.5,1,3.5,4,4"
+      (FV.to_floatarray (a ()) |> Better.Float.Array.to_list
+       |> List.map (Printf.sprintf "%g") |> String.concat ",");
+    Testing.check_string "pow_abs raises every element"
+      ~expected:"0*2,0.25*1,1*1,12.25*1,16*2" (show (FV.pow_abs 2. (a ())));
+    (* The median walks the counts rather than a materialised list, so the
+       cases worth stating are an odd count, an even one, and a median that
+       falls inside a repeated value. *)
+    check_float "the median of an odd number of elements is the middle one"
+      ~expected:1. (FV.median (a ()));
+    check_float "and does not depend on the direction of the order"
+      ~expected:1. (RFV.median (RFV.of_floatarray ~non_negative:true init));
+    (* An even count straddles two elements and takes their mean -- 0.5 and 1
+       here -- rather than picking one of them. *)
+    check_float "an even count interpolates between the two middle elements"
+      ~expected:0.75 (let v = a () in FV.add v 0.5; FV.median v);
+    check_float "unless the two fall inside one repeated value"
+      ~expected:0.5 (let v = a () in FV.add v 0.5; FV.add v 0.5; FV.median v);
+    check_float "a single element is its own median"
+      ~expected:7. (let v = FV.make () in FV.add v 7.; FV.median v);
+    (* An empty vector answers zero rather than raising, although the interface
+       says it can fail.  Pinned as it behaves, the two being worth
+       reconciling. *)
+    check_float "an empty vector answers zero" ~expected:0. (FV.median (FV.make ()));
+    (* [threshold_accum_abs] keeps elements while the absolute mass accumulated
+       so far is under the given fraction of the total, and zeroes the rest --
+       preserving the number of elements rather than dropping any.  It walks in
+       the vector's own order, so the two instantiations do opposite things
+       with it, and that is what the reverse-comparable one is for: ascending
+       keeps the small elements, descending keeps the dominant ones. *)
+    Testing.check_string "thresholding ascending keeps the small elements"
+      ~expected:"0*3,0.5*1,1*1,3.5*1,4*1" (show (FV.threshold_accum_abs 0.5 (a ())));
+    Testing.check_string "and descending keeps the dominant ones"
+      ~expected:"4*2,0*5"
+      (rshow (RFV.threshold_accum_abs 0.5 (RFV.of_floatarray ~non_negative:true init)));
+    Testing.check_int "either way the number of elements is unchanged"
+      ~expected:7 (FV.length (FV.threshold_accum_abs 0.5 (a ())));
+    Testing.check_string "a threshold of one changes nothing"
+      ~expected:(show (a ())) (show (FV.threshold_accum_abs 1. (a ())));
+    Testing.check_raises "a threshold outside zero to one is refused"
+      (fun () -> ignore (FV.threshold_accum_abs 1.5 (a ()))))
+
 let run () =
   test_online_stats ();
+  test_frequencies ();
   test_scalars ();
   test_linear_fit ()
