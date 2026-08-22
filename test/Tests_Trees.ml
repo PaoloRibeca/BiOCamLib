@@ -524,6 +524,80 @@ let test_neighbour_joining_negative_branches () =
     Testing.check_does_not_raise "the strict policy accepts an additive matrix"
       (fun () -> NJ.of_matrix ~negative_branches:N.NegativeBranchesPolicy.Error wiki))
 
+let test_neighbour_joining_statistics () =
+  Testing.section "Trees: neighbour joining, matrix statistics" (fun () ->
+    let stats = NJ.Statistics.of_matrix wiki in
+    Testing.check_bool "a proper distance matrix is joinable" ~expected:true stats.NJ.Statistics.square;
+    Testing.check_int "with as many rows as it has taxa" ~expected:5 stats.NJ.Statistics.rows;
+    Testing.check_int "and as many columns" ~expected:5 stats.NJ.Statistics.columns;
+    Testing.check_int "no cell of it is negative" ~expected:0 stats.NJ.Statistics.negative_cells;
+    Testing.check "its diagonal is zero"
+      (fun () -> stats.NJ.Statistics.diagonal_max = 0.);
+    Testing.check "and it does not disagree with itself"
+      (fun () -> stats.NJ.Statistics.asymmetry_max = 0. && stats.NJ.Statistics.asymmetry_mean = 0.);
+    (* The extremes are over the OFF-diagonal cells: a diagonal of zeros would
+       otherwise make every minimum zero and say nothing *)
+    Testing.check "the extremes skip the diagonal"
+      (fun () -> stats.NJ.Statistics.minimum = 3. && stats.NJ.Statistics.maximum = 10.);
+    (* One pair off by two, over 3 pairs: a mean of 2/3 and a max of 2, and the
+       pair itself named -- which is what a curation pass needs and a bare
+       "not symmetric" does not give *)
+    let lopsided =
+      { Matrix.col_names = [| "p"; "q"; "r" |];
+        row_names = [| "p"; "q"; "r" |];
+        data = [| Float.Array.of_list [ 0.; 2.; 4. ];
+                  Float.Array.of_list [ 4.; 0.; 5. ];
+                  Float.Array.of_list [ 4.; 5.; 0. ] |] } in
+    let lop = NJ.Statistics.of_matrix lopsided in
+    Testing.check "the largest disagreement is measured"
+      (fun () -> lop.NJ.Statistics.asymmetry_max = 2.);
+    Testing.check "and averaged over every pair"
+      (fun () -> Float.abs (lop.NJ.Statistics.asymmetry_mean -. 2. /. 3.) < 1e-12);
+    Testing.check_string "and the pair it was found on is named"
+      ~expected:"p/q"
+      (let one, other = lop.NJ.Statistics.asymmetry_at in one ^ "/" ^ other);
+    (* A matrix that cannot be joined is still described.  This is the case the
+       statistics exist for: the description is what says why it was refused *)
+    let rectangular =
+      { Matrix.col_names = [| "a"; "b"; "c" |];
+        row_names = [| "x"; "y" |];
+        data = [| Float.Array.of_list [ 0.; 1.; 2. ]; Float.Array.of_list [ 1.; 0.; 3. ] |] } in
+    let rect = NJ.Statistics.of_matrix rectangular in
+    Testing.check_does_not_raise "a matrix that is not square is described, not refused"
+      (fun () -> NJ.Statistics.of_matrix rectangular);
+    Testing.check_bool "and reported as not joinable" ~expected:false rect.NJ.Statistics.square;
+    Testing.check_int "with the shape that says why" ~expected:2 rect.NJ.Statistics.rows;
+    Testing.check_int "on both axes" ~expected:3 rect.NJ.Statistics.columns;
+    (* Without a diagonal to skip, every cell is an ordinary measurement, and
+       the symmetry fields are undefined rather than zero -- zero would read as
+       "perfectly symmetric", which is the opposite of what is known *)
+    Testing.check "the symmetry of a non-square matrix is undefined, not zero"
+      (fun () ->
+        Float.is_nan rect.NJ.Statistics.asymmetry_mean
+        && Float.is_nan rect.NJ.Statistics.asymmetry_max);
+    Testing.check "and its extremes cover every cell, the would-be diagonal included"
+      (fun () -> rect.NJ.Statistics.minimum = 0. && rect.NJ.Statistics.maximum = 3.);
+    (* [square] is the condition [of_matrix] imposes, and is what tells a caller
+       in advance whether joining will succeed *)
+    Testing.check_raises "a matrix the statistics call unjoinable is refused by the join"
+      (fun () -> NJ.of_matrix rectangular);
+    (* The two tree-side numbers, on the non-additive matrix whose tree has a
+       branch of -1 and total 3 *)
+    let non_additive =
+      matrix [| "f"; "g"; "h" |] [| [ 0.; 1.; 1. ]; [ 1.; 0.; 4. ]; [ 1.; 4.; 0. ] |] in
+    Testing.check_int "a negative branch is counted"
+      ~expected:1 (NJ.of_matrix non_additive |> NJ.count_negative_branches);
+    Testing.check_int "and none is counted where there is none"
+      ~expected:0 (NJ.of_matrix wiki |> NJ.count_negative_branches);
+    Testing.check "the total branch length adds every branch, sign included"
+      (fun () ->
+        Float.abs (NJ.of_matrix non_additive |> NJ.total_branch_length |> ( +. ) (-3.)) < 1e-12);
+    Testing.check "and rooting does not change it"
+      (fun () ->
+        let t = NJ.of_matrix wiki in
+        Float.abs (NJ.total_branch_length t
+                   -. (N.midpoint_root t |> NJ.total_branch_length)) < 1e-12))
+
 (* Midpoint rooting. *)
 
 let test_midpoint_rooting () =
@@ -627,6 +701,7 @@ let run () =
   test_neighbour_joining_malformed ();
   test_neighbour_joining_asymmetry ();
   test_neighbour_joining_negative_branches ();
+  test_neighbour_joining_statistics ();
   test_midpoint_rooting ();
   test_midpoint_rooting_invariants ()
 
