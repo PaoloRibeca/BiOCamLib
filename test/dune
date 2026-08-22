@@ -15,12 +15,3 @@
  (names Tests)
  (modules Tests Tests_Annotations Tests_Sequences Tests_Tools Tests_Numbers Tests_Trees Tests_Better Tests_KMers Tests_Matrix Tests_Files)
  (libraries str unix BiOCamLib))
-
-; Standalone demo drivers, kept separate so that a stale one cannot break the
-; suite above.  These predate the suite, assert nothing, and are listed in the
-; TODOs of the design notes as needing either a resync or retirement.
-(executables
- (public_names Annotations)
- (names Annotations)
- (modules Annotations)
- (libraries str unix BiOCamLib))

@@ -1337,7 +1337,7 @@ let test_fasta_wrapping () =
 let test_one_based () =
   Testing.section "The 1-based boundary" (fun () ->
     let module O = A.OneBased in
-    let ivl low length : T.simple_interval_t = { low; length } in
+    let ivl low length: T.simple_interval_t = { low; length } in
     let show (i: T.simple_interval_t) = Printf.sprintf "%d+%d" i.low i.length in
     (* Outbound: a run of bases is 1-based inclusive. *)
     Testing.check_string "a one-base interval spans one 1-based position"
@@ -1452,6 +1452,120 @@ let test_reference_linting () =
        | Some (_, f) -> A.Annotation.feature_dna via_gff3 f
        | None -> "(no gene)"))
 
+(* File-level entry points.  Every other check in this file goes through
+   [of_string] and [to_string], so [of_file], [read_from_file] and [to_file] --
+   which is what a caller actually reaches for -- were exercised by nothing at
+   all.  The fixtures are written out from strings and removed again rather than
+   read from test/, so that a check still states the record it is about and does
+   not depend on the directory the suite was started from.
+   The GFF3 fixture is the one the retired test/Annotations.ml demonstrated: it
+   has two genes, one of them with a two-exon two-CDS mRNA and the other with a
+   miRNA, which between them exercise three levels of hierarchy and both
+   strands. *)
+
+let with_temp_file contents f =
+  let path = Filename.temp_file "BiOCamLib_Tests_" ".tmp" in
+  let oc = open_out path in
+  output_string oc contents;
+  close_out oc;
+  Fun.protect ~finally:(fun () -> Sys.remove path) (fun () -> f path)
+
+let demo_gff3 =
+  gff3 [
+    "##sequence-region chr1 1 1000";
+    "chr1\tdemo\tgene\t100\t500\t.\t+\t.\tID=gene1;Name=ABC1";
+    "chr1\tdemo\tmRNA\t100\t500\t.\t+\t.\tID=mRNA1;Parent=gene1";
+    "chr1\tdemo\texon\t100\t200\t.\t+\t.\tID=ex1;Parent=mRNA1";
+    "chr1\tdemo\texon\t300\t500\t.\t+\t.\tID=ex2;Parent=mRNA1";
+    "chr1\tdemo\tCDS\t150\t200\t.\t+\t0\tID=cds1;Parent=mRNA1";
+    "chr1\tdemo\tCDS\t300\t450\t.\t+\t2\tID=cds2;Parent=mRNA1";
+    "chr1\tdemo\tgene\t600\t900\t.\t-\t.\tID=gene2";
+    "chr1\tdemo\tmiRNA\t600\t900\t.\t-\t.\tID=miR1;Parent=gene2";
+    "chr1\tdemo\texon\t600\t900\t.\t-\t.\tID=miR1_ex;Parent=miR1" ]
+
+let demo_gtf =
+  lines [
+    "chr1\tdemo\tgene\t100\t500\t.\t+\t.\tgene_id \"g1\"; gene_name \"ABC1\";";
+    "chr1\tdemo\ttranscript\t100\t500\t.\t+\t.\tgene_id \"g1\"; transcript_id \"t1\";";
+    "chr1\tdemo\texon\t100\t200\t.\t+\t.\tgene_id \"g1\"; transcript_id \"t1\";";
+    "" ]
+
+let test_file_io () =
+  Testing.section "File I/O" (fun () ->
+    (* [of_file] must not be a second implementation of [of_string]: the only
+       thing it adds is getting the bytes off the disk. *)
+    with_temp_file demo_gff3 (fun path ->
+      Testing.check_string "GFF3 of_file agrees with of_string"
+        ~expected:(A.GFF3.of_string demo_gff3 |> A.GFF3.to_string)
+        (A.GFF3.of_file path |> A.GFF3.to_string));
+    with_temp_file demo_gtf (fun path ->
+      Testing.check_string "GTF of_file agrees with of_string"
+        ~expected:(A.GTF.of_string demo_gtf |> A.GTF.to_string)
+        (A.GTF.of_file path |> A.GTF.to_string));
+    let gb = genbank [ "     gene            1..30"; "                     /gene=\"demo\"" ] in
+    with_temp_file gb (fun path ->
+      Testing.check_string "GenBank of_file agrees with of_string"
+        ~expected:(A.GenBank.of_string gb |> A.GenBank.to_string)
+        (A.GenBank.of_file path |> A.GenBank.to_string));
+    let tabular = A.GFF3.of_string demo_gff3 |> A.Tabular.to_string in
+    with_temp_file tabular (fun path ->
+      Testing.check_string "tabular of_file agrees with of_string"
+        ~expected:(A.Tabular.of_string tabular |> A.Tabular.to_string)
+        (A.Tabular.of_file path |> A.Tabular.to_string));
+    (* A file whose name is wrong is an ordinary mistake by the caller, and the
+       library says so through [No_such_input] rather than letting a raw
+       [Sys_error] out.  [Better] redefines [open_in] to make that so, which
+       every reader here inherits by opening it. *)
+    Testing.check_raises ~re:"Input file not found" "of_file on a missing path"
+      (fun () -> A.GFF3.of_file "/nonexistent/BiOCamLib_Tests_missing.gff3");
+    (* What the file actually parsed to.  The paths pin which level of the
+       default hierarchy each row landed on, which is the one thing a GFF3
+       reader can get wrong without any row looking wrong. *)
+    let ann = with_temp_file demo_gff3 A.GFF3.of_file in
+    Testing.check_int "nine rows become nine features" ~expected:9
+      (List.length (features ann));
+    Testing.check_string "each row lands at its place in the hierarchy"
+      ~expected:(lines [
+        "annotation->gene";
+        "annotation->gene->mRNA";
+        "annotation->gene->mRNA->exon";
+        "annotation->gene->mRNA->exon";
+        "annotation->gene->mRNA->CDS";
+        "annotation->gene->mRNA->CDS";
+        "annotation->gene";
+        "annotation->gene->miRNA";
+        "annotation->gene->miRNA->exon" ])
+      (features ann |> List.map (fun (p, _) -> A.Annotation.path_to_string p) |> lines);
+    (* The interning tables, which the retired driver printed and nothing
+       checked.  Each number is derivable from the fixture: six distinct paths
+       among the nine rows, one sequence name, and three attribute keys ([ID],
+       [Name], [Parent]) -- the table records every key the reader saw, whether
+       or not the writer goes on to derive it rather than echo it. *)
+    Testing.check_int "six distinct paths are interned" ~expected:6
+      (A.Path.Table.cardinal (A.Annotation.paths ann));
+    Testing.check_int "one sequence name is interned" ~expected:1
+      (A.Seq.Table.cardinal (A.Annotation.seqs ann));
+    Testing.check_int "three attribute keys are interned" ~expected:3
+      (A.AttrKey.Table.cardinal (A.Annotation.attr_keys ann));
+    (* Pragmas are metadata, and survive as such. *)
+    Testing.check_string "the ##sequence-region pragma is kept"
+      ~expected:"chr1 1 1000"
+      (String.concat "," (A.Annotation.get_metadata ann "sequence-region"));
+    (* Writing to a file and reading it back must be the identity, which is a
+       stronger statement than either half being self-consistent. *)
+    let out = Filename.temp_file "BiOCamLib_Tests_" ".gff3" in
+    Fun.protect ~finally:(fun () -> Sys.remove out) (fun () ->
+      A.GFF3.to_file ann out;
+      Testing.check_string "to_file then of_file is the identity"
+        ~expected:(A.GFF3.to_string ann) (A.GFF3.of_file out |> A.GFF3.to_string));
+    (* [read_from_file] adds to what it is given rather than starting afresh,
+       which is how several files are combined into one annotation. *)
+    let one_row = gff3 [ "chr2\tdemo\tgene\t10\t20\t.\t+\t.\tID=solo" ] in
+    with_temp_file demo_gff3 (fun path ->
+      Testing.check_int "read_from_file adds to what it is given" ~expected:10
+        (List.length (features (A.GFF3.read_from_file (A.GFF3.of_string one_row) path)))))
+
+
 let run () =
   test_one_based ();
   test_reference_linting ();
@@ -1470,5 +1584,6 @@ let run () =
   test_feature_table ();
   test_add_invariants ();
   test_insertion_cost ();
-  test_extraction_prerequisites ()
+  test_extraction_prerequisites ();
+  test_file_io ()
 
