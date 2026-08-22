@@ -574,8 +574,8 @@ The output is plain Newick, which is what most other programs expect. `-r`/`--ri
 ### Command line options for `NJ`
 
 ```
-This is NJ version 1 [22-Aug-2026]
- compiled against: BiOCamLib version 741 [22-Aug-2026]
+This is NJ version 2 [22-Aug-2026]
+ compiled against: BiOCamLib version 746 [22-Aug-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
