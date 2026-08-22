@@ -71,18 +71,24 @@ jobs:
         run: opam exec -- bash BUILD release
 
       - name: Stage binaries
+        # Which binaries ship is releases/MANIFEST's business, and naming them
+        # here as well is how NJ came to be built by this workflow and then left
+        # out of its artifact -- the packaging step on the other side reads the
+        # manifest, so the two lists have to agree and only one of them should
+        # exist.  Every '.build/<name>' entry is a compiled binary.
         run: |
           mkdir -p dist
-          cp .build/Parallel .build/Octopus .build/RC .build/FASTools \
-             .build/AnnoTools .build/TREx .build/Cophenetic .build/Yggdrasill dist/
+          awk '$1 ~ /^\.build\// { print $1 }' releases/MANIFEST \
+            | while read -r b; do cp "$b" dist/; done
+          ls -l dist/
 
       - name: Smoke-check binaries (non-blocking)
         # Confirm each binary at least loads (dyld resolves its libraries).
         # Informational only — never fails the job.
         run: |
-          for b in Parallel Octopus RC FASTools AnnoTools TREx Cophenetic Yggdrasill; do
-            echo "=== otool -L dist/$b ==="; otool -L "dist/$b" || true
-            echo "=== dist/$b --help ==="; ./dist/"$b" --help 2>&1 | head -3 || true
+          for b in dist/*; do
+            echo "=== otool -L $b ==="; otool -L "$b" || true
+            echo "=== $b --help ==="; "./$b" --help 2>&1 | head -3 || true
           done
 
       - name: Upload binaries
