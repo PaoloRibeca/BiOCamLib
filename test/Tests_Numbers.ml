@@ -35,6 +35,8 @@ open BiOCamLib
 open Better
 
 module Stats = Numbers.OnlineStats (Numbers.Float)
+module V = Numbers.FloatArrayVector
+module LF = Numbers.LinearFit (Numbers.FloatArrayVector)
 
 (* Helpers. *)
 
@@ -159,6 +161,57 @@ let test_scalars () =
     check_float "and rounds a negative number away from zero"
       ~expected:(-3.) (F.round (-2.6)))
 
+(* Least-squares line fitting.  The interesting cases are the ones with an
+   answer that can be worked out by hand, and the singular system, where every
+   abscissa is the same and there is no line to fit. *)
+
+let test_linear_fit () =
+  Testing.section "Linear fit" (fun () ->
+    let fit xs ys =
+      let m, prediction, residuals = LF.make (V.of_list xs) (V.of_list ys) in
+      m, V.to_list prediction, V.to_list residuals in
+    let shows l = List.map (Printf.sprintf "%.6f") l |> String.concat "," in
+    (* y = 2x + 1, exactly. *)
+    let m, prediction, residuals = fit [ 0.; 1.; 2.; 3. ] [ 1.; 3.; 5.; 7. ] in
+    check_float ~digits:6 "an exact line recovers its slope" ~expected:2. (LF.get_slope m);
+    check_float ~digits:6 "and its intercept" ~expected:1. (LF.get_intercept m);
+    Testing.check_string "the predictions reproduce the data"
+      ~expected:"1.000000,3.000000,5.000000,7.000000" (shows prediction);
+    Testing.check_string "and the residuals are zero"
+      ~expected:"0.000000,0.000000,0.000000,0.000000" (shows residuals);
+    (* A horizontal line: no slope, and the intercept is the common value. *)
+    let m, _, _ = fit [ 0.; 1.; 2. ] [ 5.; 5.; 5. ] in
+    check_float ~digits:6 "a horizontal line has no slope" ~expected:0. (LF.get_slope m);
+    check_float ~digits:6 "and its intercept is the common value"
+      ~expected:5. (LF.get_intercept m);
+    (* A negative slope, still exact. *)
+    let m, _, _ = fit [ 0.; 1.; 2. ] [ 4.; 2.; 0. ] in
+    check_float ~digits:6 "a descending line has a negative slope"
+      ~expected:(-2.) (LF.get_slope m);
+    (* Points that do not lie on a line: worked out by hand, the least-squares
+       fit through (0,0) (1,0) (2,2) (3,2) has slope 4/5 and intercept -1/5. *)
+    let m, _, residuals = fit [ 0.; 1.; 2.; 3. ] [ 0.; 0.; 2.; 2. ] in
+    check_float ~digits:6 "a scattered set gets its least-squares slope"
+      ~expected:0.8 (LF.get_slope m);
+    check_float ~digits:6 "and its least-squares intercept"
+      ~expected:(-0.2) (LF.get_intercept m);
+    (* The defining property of a least-squares fit: the residuals sum to zero.
+       Compared as a magnitude, because the sum lands a rounding error either
+       side of zero and a negative one would render as "-0.000000". *)
+    check_float ~digits:6 "the residuals of a least-squares fit sum to zero"
+      ~expected:0. (abs_float (List.fold_left ( +. ) 0. residuals));
+    (* predict is the same model applied to fresh abscissae. *)
+    let m, _, _ = fit [ 0.; 1.; 2.; 3. ] [ 1.; 3.; 5.; 7. ] in
+    Testing.check_string "the model predicts beyond the data it was fitted on"
+      ~expected:"21.000000,201.000000"
+      (shows (V.to_list (LF.predict m (V.of_list [ 10.; 100. ]))));
+    (* Every abscissa the same: the system is singular and there is no fit. *)
+    Testing.check_raises "a singular system is refused"
+      (fun () -> ignore (fit [ 2.; 2.; 2. ] [ 1.; 2.; 3. ]));
+    Testing.check_raises "and so is a single point"
+      (fun () -> ignore (fit [ 1. ] [ 1. ])))
+
 let run () =
   test_online_stats ();
-  test_scalars ()
+  test_scalars ();
+  test_linear_fit ()
