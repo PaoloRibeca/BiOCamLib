@@ -654,6 +654,17 @@ module Float:
   sig
     include module type of Float
     val round: float -> float
+    (* Equality within a tolerance, which for a float is usually what equality
+       is meant to be.  The bound is absolute near zero and relative away from
+       it, so a quantity that ought to vanish and lands a rounding error either
+       side of zero compares equal, and so do two large values that differ only
+       in their last bits -- neither of which a fixed absolute bound gets right
+       at both ends of the scale.  It is symmetric in its arguments.
+       [nan] compares equal to itself here, unlike under [=], so that a
+       computation expected to be undefined can be checked at all; two
+       infinities of the same sign compare equal, their difference being [nan]
+       rather than zero. *)
+    val check: ?tolerance:float -> float -> float -> bool
     module Array:
       sig
         include module type of Float.Array
@@ -663,6 +674,16 @@ module Float:
 = struct
     include Float
     let round x = if x >= 0. then floor (x +. 0.5) else ceil (x -. 0.5)
+    let check ?(tolerance = 1e-9) a b =
+      if Float.is_nan a || Float.is_nan b then
+        Float.is_nan a && Float.is_nan b
+      (* Catches equal infinities, whose difference is [nan], and the two
+         zeroes, which [=] already considers equal. *)
+      else if a = b then
+        true
+      else
+        Float.abs (a -. b)
+          <= tolerance *. Float.max 1. (Float.max (Float.abs a) (Float.abs b))
     module Array =
       struct
         include Float.Array

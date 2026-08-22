@@ -280,7 +280,7 @@ if [[ "${1:-}" == "mac-end" ]]; then
 fi
 
 # ──────────────────────────────────────────────────────────────────────
-# The assertion suite (test/RunTests.exe, driven by test/Testing.ml).
+# The assertion suite (test/Tests.exe, whose harness is BiOCamLib.Testing).
 #   ./BUILD test [<profile>]   build and run it without rebuilding the binaries
 # It is also run at the end of every ordinary build.  A non-zero exit means
 # either a check failed or a known-bug marker went stale, and both should stop
@@ -289,8 +289,8 @@ fi
 run_tests() {
   local profile="${1:-$PROFILE}"
   echo
-  dune build --profile="$profile" test/RunTests.exe $FLAGS
-  ./_build/default/test/RunTests.exe
+  dune build --profile="$profile" test/Tests.exe $FLAGS
+  ./_build/default/test/Tests.exe
 }
 
 if [[ "${1:-}" == "test" ]]; then
@@ -339,7 +339,7 @@ cp _build/default/bin/Yggdrasill.exe .build/Yggdrasill
 
 chmod 755 .build/*
 
-# Build and run the assertion suite.  RunTests exits non-zero when a check fails
+# Build and run the assertion suite.  Tests exits non-zero when a check fails
 # OR when a known-bug marker has gone stale -- i.e. a check pinning a diagnosed
 # defect has started passing, so the marker must be removed.  Both are build
 # failures: 'set -e' stops us here, before the binaries are stripped.

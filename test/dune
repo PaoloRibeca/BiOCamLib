@@ -8,12 +8,12 @@
  (release-static
   (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static))))
 
-; The assertion suite.  RunTests is the entry point; Testing is the harness and
-; every Tests_<Area> module is one area's checks.  Not installed: it is run from
-; the build tree by BUILD.
+; The assertion suite.  Tests is the entry point; the harness itself is now
+; BiOCamLib.Testing, and every Tests_<Area> module is one area's checks.  Not
+; installed: it is run from the build tree by BUILD.
 (executables
- (names RunTests)
- (modules RunTests Testing Tests_Annotations Tests_Sequences Tests_Tools Tests_Numbers Tests_Trees Tests_Better Tests_KMers Tests_Matrix Tests_Files)
+ (names Tests)
+ (modules Tests Tests_Annotations Tests_Sequences Tests_Tools Tests_Numbers Tests_Trees Tests_Better Tests_KMers Tests_Matrix Tests_Files)
  (libraries str unix BiOCamLib))
 
 ; Standalone demo drivers, kept separate so that a stale one cannot break the
