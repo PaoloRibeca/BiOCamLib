@@ -13,7 +13,7 @@
 ; the build tree by BUILD.
 (executables
  (names RunTests)
- (modules RunTests Testing Tests_Annotations)
+ (modules RunTests Testing Tests_Annotations Tests_Sequences)
  (libraries str unix BiOCamLib))
 
 ; Standalone demo drivers, kept separate so that a stale one cannot break the

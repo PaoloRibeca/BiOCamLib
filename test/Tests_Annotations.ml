@@ -6,8 +6,8 @@
 
     Tests_Annotations.ml exercises the Annotations subsystem and the
     parts of Sequences that AnnoTools leans on.  Checks carrying a
-    [~known_bug] marker pin a defect diagnosed in the tabular-mode
-    design note (DocsYard/BiOCamLib/docs/BiOCamLib-annotations-tabular.tex);
+    [~known_bug] marker pin a defect listed among the open items of the
+    Annotations section of DocsYard/BiOCamLib/docs/BiOCamLib-design.tex;
     they are expected to fail today, and the harness turns one of them
     passing into an error so that a fix cannot land unnoticed.
 
