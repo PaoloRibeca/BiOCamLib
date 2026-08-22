@@ -41,6 +41,7 @@ let () =
   Tests_Trees.run ();
   Tests_KMers.run ();
   Tests_Matrix.run ();
+  Tests_Files.run ();
   Tests_Tools.run ();
   Tests_Sequences.run ();
   Tests_Annotations.run ();
