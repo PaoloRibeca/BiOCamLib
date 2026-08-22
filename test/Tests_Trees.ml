@@ -549,10 +549,10 @@ let test_neighbour_joining_statistics () =
                   Float.Array.of_list [ 4.; 0.; 5. ];
                   Float.Array.of_list [ 4.; 5.; 0. ] |] } in
     let lop = NJ.Statistics.of_matrix lopsided in
-    Testing.check "the largest disagreement is measured"
-      (fun () -> lop.NJ.Statistics.asymmetry_max = 2.);
-    Testing.check "and averaged over every pair"
-      (fun () -> Float.abs (lop.NJ.Statistics.asymmetry_mean -. 2. /. 3.) < 1e-12);
+    Testing.check_float "the largest disagreement is measured"
+      ~expected:2. lop.NJ.Statistics.asymmetry_max;
+    Testing.check_float ~tolerance:1e-12 "and averaged over every pair"
+      ~expected:(2. /. 3.) lop.NJ.Statistics.asymmetry_mean;
     Testing.check_string "and the pair it was found on is named"
       ~expected:"p/q"
       (let one, other = lop.NJ.Statistics.asymmetry_at in one ^ "/" ^ other);
@@ -589,14 +589,12 @@ let test_neighbour_joining_statistics () =
       ~expected:1 (NJ.of_matrix non_additive |> NJ.count_negative_branches);
     Testing.check_int "and none is counted where there is none"
       ~expected:0 (NJ.of_matrix wiki |> NJ.count_negative_branches);
-    Testing.check "the total branch length adds every branch, sign included"
-      (fun () ->
-        Float.abs (NJ.of_matrix non_additive |> NJ.total_branch_length |> ( +. ) (-3.)) < 1e-12);
-    Testing.check "and rooting does not change it"
-      (fun () ->
-        let t = NJ.of_matrix wiki in
-        Float.abs (NJ.total_branch_length t
-                   -. (N.midpoint_root t |> NJ.total_branch_length)) < 1e-12))
+    Testing.check_float ~tolerance:1e-12
+      "the total branch length adds every branch, sign included"
+      ~expected:3. (NJ.of_matrix non_additive |> NJ.total_branch_length);
+    Testing.check_float ~tolerance:1e-12 "and rooting does not change it"
+      ~expected:(NJ.of_matrix wiki |> NJ.total_branch_length)
+      (NJ.of_matrix wiki |> N.midpoint_root |> NJ.total_branch_length))
 
 (* Midpoint rooting. *)
 
