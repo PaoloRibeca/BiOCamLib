@@ -681,6 +681,12 @@ module Float:
          zeroes, which [=] already considers equal. *)
       else if a = b then
         true
+      (* Anything else involving an infinity is unequal, and has to be said
+         here: the difference would be infinite and so would the bound it is
+         compared against, and an infinity is not greater than itself, so the
+         arithmetic below would call them equal. *)
+      else if not (Float.is_finite a && Float.is_finite b) then
+        false
       else
         Float.abs (a -. b)
           <= tolerance *. Float.max 1. (Float.max (Float.abs a) (Float.abs b))

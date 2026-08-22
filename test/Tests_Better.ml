@@ -152,7 +152,54 @@ let test_misc () =
           && (try ignore (Str.search_forward (Str.regexp_string "hello") s 0); true
               with Not_found -> false)))
 
+(* Approximate equality.  This is what every float comparison in the suite goes
+   through, so its edges are worth stating rather than trusting -- not least
+   because a bound that is absolute everywhere is wrong at both ends of the
+   scale, which is what it replaced. *)
+
+let test_float_check () =
+  Testing.section "Float.check" (fun () ->
+    Testing.check "a value equals itself" (fun () -> Float.check 1.5 1.5);
+    Testing.check "and two plainly different values do not"
+      (fun () -> not (Float.check 1. 2.));
+    (* Near zero the bound is absolute, so a quantity that ought to vanish and
+       lands a rounding error either side of it still compares equal. *)
+    Testing.check "a rounding error away from zero is still zero"
+      (fun () -> Float.check 0. 1e-15);
+    Testing.check "and so is one on the other side"
+      (fun () -> Float.check 0. (-1e-15));
+    Testing.check "but a real difference near zero is not"
+      (fun () -> not (Float.check 0. 1e-6));
+    (* Away from zero it is relative, so the same absolute gap is negligible on
+       a large value and decisive on a small one. *)
+    Testing.check "a gap of one is nothing beside a billion"
+      (fun () -> Float.check 1e9 (1e9 +. 1.));
+    Testing.check "but is everything beside two"
+      (fun () -> not (Float.check 2. 3.));
+    Testing.check "the comparison does not depend on the order of its arguments"
+      (fun () -> Float.check 1e9 (1e9 +. 1.) = Float.check (1e9 +. 1.) 1e9);
+    (* The two zeroes are equal, as they are under [=]. *)
+    Testing.check "negative zero equals zero" (fun () -> Float.check 0. (-0.));
+    (* [nan] is equal to itself here, which it is not under [=], so that a
+       computation expected to be undefined can be checked at all. *)
+    Testing.check "nan equals itself" (fun () -> Float.check nan nan);
+    Testing.check "and equals nothing else" (fun () -> not (Float.check nan 0.));
+    Testing.check "nor does anything else equal it" (fun () -> not (Float.check 0. nan));
+    (* Infinities compare exactly: their difference is nan, so the tolerance
+       cannot be applied to them. *)
+    Testing.check "an infinity equals itself"
+      (fun () -> Float.check infinity infinity);
+    Testing.check "and does not equal the other one"
+      (fun () -> not (Float.check infinity neg_infinity));
+    Testing.check "nor a finite value" (fun () -> not (Float.check infinity 1e300));
+    (* The tolerance can be widened or tightened. *)
+    Testing.check "a wider tolerance admits more"
+      (fun () -> Float.check ~tolerance:0.5 1. 1.4);
+    Testing.check "and a tighter one admits less"
+      (fun () -> not (Float.check ~tolerance:1e-15 1. (1. +. 1e-12))))
+
 let run () =
+  test_float_check ();
   test_split ();
   test_pluralize ();
   test_accum ();
