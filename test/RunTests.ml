@@ -36,6 +36,7 @@ open Better
 
 let () =
   Printf.eprintf "%s\n%!" (String.TermIO.bold "BiOCamLib test suite");
+  Tests_Better.run ();
   Tests_Numbers.run ();
   Tests_Trees.run ();
   Tests_Tools.run ();
