@@ -408,7 +408,15 @@ let () =
           "when the feature is on the minus strand; a protein is that";
           "sequence with the phase bases dropped from its 5' end,";
           "translated with the feature's '/transl_table' when it";
-          "carries one.  Requires a reference to have been loaded." ];
+          "carries one.  Requires a reference to have been loaded.";
+          "Each defline names the feature and says where it came";
+          "from -- 'path=', 'seq=', 'location=' -- and then carries";
+          "every qualifier the feature holds, one '[key=value]' each,";
+          "in the manner of NCBI's own extracts: a value such as";
+          "'product=hypothetical protein' has spaces in it, and the";
+          "brackets are what keep the line splittable.  'ID' and";
+          "'Parent' are left out, being the name and the path over";
+          "again." ];
       [ "--extract" ],
         Some "<dna|protein> <file>",
         [ "write the sequence of every selected feature to <file>" ],
@@ -728,10 +736,37 @@ let () =
                 | Sequence_kind.Protein -> A.Annotation.feature_protein !current feature in
               (* One line per sequence unless '--fasta-width' says otherwise:
                  an extracted feature is usually on its way down a pipe. *)
-              Printf.fprintf oc ">%s path=%s seq=%s location=%s\n%s\n"
+              (* Everything else the annotation holds about the feature, after
+                 the three structural fields.  A qualifier's value routinely
+                 carries spaces -- [product=hypothetical protein] is the usual
+                 case, and the reason this was wanted at all -- so each pair is
+                 bracketed in the manner NCBI's own extracts use, rather than
+                 left bare: the line stays readable, and something splitting it
+                 back into fields can still tell where one ends.  The three
+                 fields above stay as they were, none of them being able to
+                 hold a space.  Keys are sorted, so that two runs over one
+                 annotation agree; the order they are interned in is an
+                 implementation detail and not something to expose here. *)
+              let attributes =
+                let acc = ref [] in
+                A.Annotation.attr_iter !current
+                  (fun key values ->
+                    (* [ID] and [Parent] are structure rather than annotation:
+                       the first is already the name this record carries, and
+                       the second is what [path=] says.  The GFF3 writer drops
+                       them for the same reason, deriving both from the forest
+                       instead of echoing what it read. *)
+                    match key with
+                    | "ID" | "Parent" -> ()
+                    | _ -> List.accum acc (key, String.concat "," values))
+                  feature;
+                List.sort compare !acc
+                  |> List.map (fun (key, value) -> Printf.sprintf " [%s=%s]" key value)
+                  |> String.concat "" in
+              Printf.fprintf oc ">%s path=%s seq=%s location=%s%s\n%s\n"
                 (name_of !current ~path:p feature) (A.Annotation.path_to_string p)
                 (A.Annotation.seq_name !current feature) (location_of feature)
-                (A.wrap_sequence ~width:0 sequence));
+                attributes (A.wrap_sequence ~width:0 sequence));
             close_out oc;
             if !Parameters.verbose then
               Printf.eprintf "(%s): wrote %d %s %s to %s\n%!" info.Tools.Argv.name !n
