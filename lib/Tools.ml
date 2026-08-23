@@ -693,8 +693,11 @@ module Argv:
     val make_separator: string -> argv_spec_t
     val make_separator_multiline: string list -> argv_spec_t
     (* Parses command line options and generates usage and markdown.
-       Must be called _after_ set_header() and set_synopsis() *)
-    val parse: argv_spec_t list -> unit
+       Must be called _after_ set_header() and set_synopsis().
+       [argv] defaults to the process's own command line, which is what a driver
+        wants; passing one is how a caller parses something else, and how the
+        test suite reaches this at all *)
+    val parse: ?argv:string array -> argv_spec_t list -> unit
     (* Can be invoked from within the actions given as argument to parse() *)
     val parse_error: ?output:out_channel -> string -> unit
     (* Functions to print results of parsing *)
@@ -766,7 +769,12 @@ module Argv:
       (* At the moment, the synopsis and its markdown version are the same *)
       _synopsis := s;
       _md_synopsis := s
-    let _argv = Sys.argv
+    (* The command line being parsed.  A ref rather than a binding to
+       [Sys.argv] so that [parse] can be handed one: every driver goes on
+       calling it with no argument and gets the process's own, while a caller
+       that wants to parse something else -- a test, or a wrapper building a
+       command line for a sub-invocation -- can say so. *)
+    let _argv = ref Sys.argv
     let _i = ref 1
     (* Both _usage and _md will be completed by parse () *)
     let _usage = ref ""
@@ -785,7 +793,7 @@ module Argv:
         try
           f ()
         with _ ->
-          error n ("Option '" ^ _argv.(!_i - 1) ^ "' needs one (more)" ^ what ^ "parameter"))
+          error n ("Option '" ^ !_argv.(!_i - 1) ^ "' needs one (more)" ^ what ^ "parameter"))
     and template_filter f g =
       (fun () ->
         let res = f () in
@@ -794,7 +802,7 @@ module Argv:
         else
           raise_notrace Not_found) (* This one is OK as it will be caught *)
     let get_parameter =
-      template_get __FUNCTION__ " " (fun () -> incr _i; _argv.(!_i))
+      template_get __FUNCTION__ " " (fun () -> incr _i; !_argv.(!_i))
     let get_parameter_boolean =
       template_get __FUNCTION__ " boolean " (fun () -> get_parameter () |> bool_of_string)
     let get_parameter_int =
@@ -820,17 +828,19 @@ module Argv:
       template_get __FUNCTION__ " float between 0 and 1 as "
       (template_filter get_parameter_float (fun x -> x >= 0. && x <= 1.))
     let get_remaining_parameters () =
-      let len = Array.length _argv in
-      let res = Array.sub _argv (!_i + 1) (len - !_i - 1) in
+      let len = Array.length !_argv in
+      let res = Array.sub !_argv (!_i + 1) (len - !_i - 1) in
       _i := len;
       res
     let make_separator s =
       [], None, [ s ], Optional, Fun.const ()
     let make_separator_multiline a =
       [], None, a, Optional, Fun.const ()
-    let parse specs =
+    let parse ?(argv = Sys.argv) specs =
       let open String.TermIO in
-      let basename = Filename.basename _argv.(0) in
+      _argv := argv;
+      _i := 1;
+      let basename = Filename.basename !_argv.(0) in
       _usage := !_header ^ red " Usage:" ^ "\n  " ^ bold basename ^ " " ^ blue !_synopsis ^ "\n";
       _md_usage := "```\n" ^ !_md_header ^ "```\n*Usage:*\n```\n" ^ basename ^ " " ^ !_md_synopsis ^ "\n```\n";
       let accum_usage = String.accum _usage
@@ -987,10 +997,10 @@ module Argv:
       (* And finally, the actual parsing :) .
          Don't forget that _i can be modified by other functions being called
           when parsing options *)
-      let trie = !trie and table = !table and len = Array.length _argv in
+      let trie = !trie and table = !table and len = Array.length !_argv in
       begin try
         while !_i < len do
-          let arg = _argv.(!_i) in
+          let arg = !_argv.(!_i) in
           begin match Trie.find_unambiguous trie arg with
           | None -> error __FUNCTION__ ("Unknown or ambiguous option '" ^ arg ^ "'")
           | Some id ->

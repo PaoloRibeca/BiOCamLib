@@ -344,9 +344,92 @@ let test_argv () =
       (contains "Other" printed && not (contains "TestTool" printed)))
 
 
+(* Parsing, now that a command line can be handed in.  Only the accepting paths
+   are reachable: every rejection -- an unknown option, a missing mandatory one,
+   a parameter of the wrong shape -- ends in the module's single [exit], which
+   is right for a driver and fatal for a suite. *)
+
+let test_argv_parse () =
+  Testing.section "Command-line parsing" (fun () ->
+    TA.set_header ({ TA.name = "T"; version = "1"; date = "01-Jan-2026" }, [], []);
+    TA.set_synopsis "[OPTIONS]";
+    let fired = ref [] in
+    let note s = List.accum fired s in
+    (* An action is handed the option it was reached by and pulls its own
+       parameters off the command line as it goes. *)
+    TA.parse ~argv:[| "prog"; "-n"; "5"; "--name"; "abc"; "-f"; "2.5" |]
+      [ [ "-n"; "--number" ], Some "<n>", [ "a number" ], TA.Optional,
+          (fun _ -> Printf.sprintf "n=%d" (TA.get_parameter_int ()) |> note);
+        [ "--name" ], Some "<s>", [ "a name" ], TA.Optional,
+          (fun _ -> Printf.sprintf "name=%s" (TA.get_parameter ()) |> note);
+        [ "-f" ], Some "<x>", [ "a float" ], TA.Optional,
+          (fun _ -> Printf.sprintf "f=%g" (TA.get_parameter_float ()) |> note) ];
+    Testing.check_string "each option's action fires, with its own parameter"
+      ~expected:"n=5 name=abc f=2.5" (List.rev !fired |> String.concat " ");
+    (* The long spelling of an option reaches the same action as the short one. *)
+    fired := [];
+    TA.parse ~argv:[| "prog"; "--number"; "7" |]
+      [ [ "-n"; "--number" ], Some "<n>", [ "a number" ], TA.Optional,
+          (fun _ -> Printf.sprintf "n=%d" (TA.get_parameter_int ()) |> note) ];
+    Testing.check_string "an option is reached by either of its names"
+      ~expected:"n=7" (List.rev !fired |> String.concat " ");
+    (* Parsing a second command line starts afresh: the cursor is reset, so the
+       two parses above did not run into one another. *)
+    fired := [];
+    TA.parse ~argv:[| "prog"; "-n"; "1" |]
+      [ [ "-n" ], Some "<n>", [ "a number" ], TA.Optional,
+          (fun _ -> Printf.sprintf "n=%d" (TA.get_parameter_int ()) |> note) ];
+    TA.parse ~argv:[| "prog"; "-n"; "2" |]
+      [ [ "-n" ], Some "<n>", [ "a number" ], TA.Optional,
+          (fun _ -> Printf.sprintf "n=%d" (TA.get_parameter_int ()) |> note) ];
+    Testing.check_string "each parse starts from the beginning of its own line"
+      ~expected:"n=1 n=2" (List.rev !fired |> String.concat " ");
+    (* Everything after the option that asks for it. *)
+    let rest = ref [||] in
+    TA.parse ~argv:[| "prog"; "--rest"; "a"; "b"; "c" |]
+      [ [ "--rest" ], None, [ "the rest" ], TA.Optional,
+          (fun _ -> rest := TA.get_remaining_parameters ()) ];
+    Testing.check_string "the remaining parameters are taken as they stand"
+      ~expected:"a,b,c" (Array.to_list !rest |> String.concat ",");
+    (* A mandatory option is satisfied by being present. *)
+    fired := [];
+    Testing.check_does_not_raise "a mandatory option that is supplied parses"
+      (fun () ->
+        TA.parse ~argv:[| "prog"; "-m"; "x" |]
+          [ [ "-m" ], Some "<s>", [ "needed" ], TA.Mandatory,
+              (fun _ -> TA.get_parameter () |> note) ]);
+    Testing.check_string "and its action ran" ~expected:"x"
+      (List.rev !fired |> String.concat " ");
+    (* [parse] is what fills the usage and its markdown twin. *)
+    TA.parse ~argv:[| "prog" |]
+      [ [ "-n"; "--number" ], Some "<n>", [ "how many things" ], TA.Optional, (fun _ -> ());
+        [ "-d" ], None, [ "a default" ], TA.Default (fun () -> "42"), (fun _ -> ()) ];
+    let printed = captured (fun oc -> TA.usage ~output:oc ()) in
+    List.iter (fun needle ->
+      Testing.check_bool (Printf.sprintf "the usage mentions %S" needle) ~expected:true
+        (contains needle printed))
+      [ "-n"; "--number"; "<n>"; "how many things"; "42" ];
+    (* The markdown twin is what a README is generated from, so it renders the
+       same specs as a table.  The escaping is the part worth pinning: an
+       argument written [<n>] would be eaten as an HTML tag if it reached the
+       page as it stands. *)
+    let md = captured (fun oc -> TA.markdown ~output:oc ()) in
+    List.iter (fun (what, needle) ->
+      Testing.check_bool (Printf.sprintf "the markdown %s" what) ~expected:true
+        (contains needle md))
+      [ "fences the header", "```\nThis is T version 1 [01-Jan-2026]\n```";
+        "fences the invocation", "prog [OPTIONS]";
+        "sets both spellings as code", "`-n`<br>`--number`";
+        "escapes an argument's angle brackets", "_&lt;n&gt;_";
+        "shows a default where there is one", "default=<mark>_42_</mark>" ];
+    Testing.check_bool "so that no raw angle bracket reaches the page" ~expected:true
+      (not (contains "<n>" md)))
+
+
 let run () =
   test_arraystack ();
   test_trie ();
   test_multimap ();
   test_transitive_closure ();
-  test_argv ()
+  test_argv ();
+  test_argv_parse ()
