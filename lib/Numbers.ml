@@ -749,8 +749,13 @@ module FrequenciesVector (N: ComparableScalar_t):
         most_frequent
     let two = N.of_int 2
     let median { data; length; median = median_n, median_idx; _ } =
+      (* Raising, as the interface has always said and as [first], [last] and
+         [most_frequent] beside it already do.  Returning zero was worse than a
+         stale comment: zero is a perfectly good median, so a caller could not
+         tell an empty vector from one of zeros by the value it got back, and
+         the comment told them they would have been raised at instead. *)
       if length = 0 then
-        N.zero
+        empty __FUNCTION__
       else begin
         if (length / 2) * 2 = length then begin
           let median_freq = M.find median_n data in

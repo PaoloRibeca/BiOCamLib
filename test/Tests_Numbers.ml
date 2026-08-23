@@ -285,10 +285,14 @@ let test_frequencies () =
       ~expected:0.5 (let v = a () in FV.add v 0.5; FV.add v 0.5; FV.median v);
     Testing.check_float "a single element is its own median"
       ~expected:7. (let v = FV.make () in FV.add v 7.; FV.median v);
-    (* An empty vector answers zero rather than raising, although the interface
-       says it can fail.  Pinned as it behaves, the two being worth
-       reconciling. *)
-    Testing.check_float "an empty vector answers zero" ~expected:0. (FV.median (FV.make ()));
+    (* An empty vector has no median, and says so rather than answering zero:
+       zero is a perfectly good median, so a caller given one could not tell an
+       empty vector from a vector of zeros.  [first], [last] and
+       [most_frequent] beside it refuse the same way. *)
+    Testing.check_raises ~re:"is empty" "an empty vector has no median"
+      (fun () -> FV.median (FV.make ()));
+    Testing.check_raises ~re:"is empty" "nor a first, a last or a most frequent"
+      (fun () -> FV.first (FV.make ()));
     (* [threshold_accum_abs] keeps elements while the absolute mass accumulated
        so far is under the given fraction of the total, and zeroes the rest --
        preserving the number of elements rather than dropping any.  It walks in
