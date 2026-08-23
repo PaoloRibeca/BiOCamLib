@@ -898,10 +898,18 @@ module DNALevenshteinBall (K: IntParameter_t):
       let last = hi + radius in
       let rec expand level orig_s =
         let open Bytes in
-        if level = 0 then
-          (* We eliminate contexts *)
-          String.sub orig_s radius len |> f
-        else begin
+        (* Emit at every level and not only at the innermost one.  A ball is
+           everything WITHIN its radius, which includes the centre -- zero edits
+           -- and each intermediate string; emitting only at [level = 0] made it
+           the set of k-mers at exactly [radius] edits instead, and since one
+           edit cannot leave a k-mer where it was, a radius-one ball excluded the
+           very k-mer it had been built around.  An index querying at radius one
+           therefore failed to match the k-mer it was handed.  The call at the
+           end of this function has always said the k-mer itself gets inserted
+           here; now it does. *)
+        (* We eliminate contexts *)
+        String.sub orig_s radius len |> f;
+        if level > 0 then begin
           let s = of_string orig_s in
           (* Mismatches *)
           for i = radius to hi do

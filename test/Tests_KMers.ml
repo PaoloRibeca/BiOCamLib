@@ -216,39 +216,43 @@ let test_levenshtein_balls () =
     Testing.check_int "the ball knows its k" ~expected:3 B3.H.k;
     Testing.check_string "and its alphabet" ~expected:"ACGT" B3.H.alphabet;
     let centre = "ACG" in
-    (* [radius] counts edit operations APPLIED, not a distance bounded from
-       above, and the two differ in a way a caller will notice.  A radius of
-       one cannot leave the centre where it was, so the centre is absent from
-       its own radius-one ball; a radius of two can edit and undo, so it comes
-       back.  Whether an index querying at radius one wants that is a question
-       for the caller, but it is what this builds, and nothing said so. *)
-    Testing.check_int "a radius of zero is no edits, so just the centre" ~expected:1
-      (B3.Base.cardinal (B3.makek ~radius:0 centre));
-    Testing.check_bool "and the centre is what it holds" ~expected:true
-      (B3.Base.mem centre (B3.makek ~radius:0 centre));
+    (* A ball is everything WITHIN its radius, so the centre belongs to it at
+       every radius including zero.  That is worth stating as a check rather
+       than assuming: the construction walks outwards one edit at a time, and
+       it used to hand back only the k-mers at exactly [radius] edits -- which,
+       since one edit cannot leave a k-mer where it was, excluded the very
+       k-mer the ball was built around, and an index querying at radius one
+       then failed to match what it had been handed. *)
+    List.iter (fun r ->
+      Testing.check_bool
+        (Printf.sprintf "the centre lies in its own ball at radius %d" r)
+        ~expected:true (B3.Base.mem centre (B3.makek ~radius:r centre)))
+      [ 0; 1; 2; 3 ];
+    Testing.check_int "a radius of zero holds the centre and nothing else"
+      ~expected:1 (B3.Base.cardinal (B3.makek ~radius:0 centre));
     let ball = B3.makek ~radius:1 centre in
     Testing.check_bool "every member of a ball is itself a k-mer" ~expected:true
       (B3.Base.for_all (fun s -> String.length s = B3.H.k) ball);
-    Testing.check_bool "one edit cannot leave the centre in place" ~expected:false
-      (B3.Base.mem centre ball);
-    Testing.check_bool "two edits can, by undoing the first" ~expected:true
-      (B3.Base.mem centre (B3.makek ~radius:2 centre));
-    (* What one edit does reach: every single substitution, and beyond them the
-       length-preserving indel pairs, which is why the count is larger than the
-       nine substitutions alone. *)
+    (* What one edit reaches: every single substitution, and beyond them the
+       length-preserving indel pairs, which is why the count exceeds the nine
+       substitutions and the centre. *)
     Testing.check_bool "one edit reaches every single substitution" ~expected:true
       (let ok = ref true in
        String.iteri (fun i _ ->
          String.iter (fun c ->
            let s = Bytes.of_string centre in
            Bytes.set s i c;
-           let s = Bytes.to_string s in
-           if s <> centre && not (B3.Base.mem s ball) then ok := false)
+           if not (B3.Base.mem (Bytes.to_string s) ball) then ok := false)
            B3.H.alphabet) centre;
        !ok);
-    Testing.check_int "and reaches twenty-one k-mers in all" ~expected:21
+    Testing.check_int "and the ball holds twenty-two k-mers in all" ~expected:22
       (B3.Base.cardinal ball);
-    Testing.check_int "while three edits reach the whole space" ~expected:64
+    (* Widening a radius can only add, never take away. *)
+    Testing.check_bool "a wider radius contains a narrower one" ~expected:true
+      (B3.Base.subset ball (B3.makek ~radius:2 centre));
+    Testing.check_bool "and is strictly larger while there is room" ~expected:true
+      (B3.Base.cardinal (B3.makek ~radius:2 centre) > B3.Base.cardinal ball);
+    Testing.check_int "three edits reach the whole space" ~expected:64
       (B3.Base.cardinal (B3.makek ~radius:3 centre));
     (* The iterator covers the same ground and is documented to repeat itself,
        so every visit is a member and there are at least as many visits as
@@ -259,7 +263,11 @@ let test_levenshtein_balls () =
       if not (B3.Base.mem s ball) then all_in := false) centre;
     Testing.check_bool "the iterator stays inside the ball" ~expected:true !all_in;
     Testing.check_bool "and covers it at least once over" ~expected:true
-      (!visited >= B3.Base.cardinal ball))
+      (!visited >= B3.Base.cardinal ball);
+    Testing.check_bool "the iterator visits the centre too" ~expected:true
+      (let seen = ref false in
+       B3.iterk ~radius:1 (fun s -> if s = centre then seen := true) centre;
+       !seen))
 
 let run () =
   test_sliding_window ();
