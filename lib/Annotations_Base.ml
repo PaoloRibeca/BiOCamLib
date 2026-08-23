@@ -45,21 +45,22 @@ let implicit_root_name = "annotation"
    (the source-format convention); the [Annotations]-level driver
    converts to 0-based half-open when populating
    [Annotation.feature_t.intervals]. *)
-module GenBankLocation = struct
-  type endpoint_t = {
-    pos: int;
-    fuzzy_left: bool; (* leading "<" *)
-    fuzzy_right: bool (* leading ">" -- only on the upper bound *)
-  }
-  type t =
-    | Point of endpoint_t
-    | Range of endpoint_t * endpoint_t
-    | Between of int * int (* "100^101" *)
-    | Complement of t
-    | Join of t list
-    | Order of t list
-    | Remote of string * int option * t (* accession[.version]:t *)
-end
+module GenBankLocation =
+  struct
+    type endpoint_t = {
+      pos: int;
+      fuzzy_left: bool; (* leading "<" *)
+      fuzzy_right: bool (* leading ">" -- only on the upper bound *)
+    }
+    type t =
+      | Point of endpoint_t
+      | Range of endpoint_t * endpoint_t
+      | Between of int * int (* "100^101" *)
+      | Complement of t
+      | Join of t list
+      | Order of t list
+      | Remote of string * int option * t (* accession[.version]:t *)
+  end
 
 (* GenBank record AST: the parser's output, before the Annotations
    driver lifts it into a [feature_t] with interned components.
@@ -69,18 +70,19 @@ end
    each qualifier value already with its continuation lines
    joined; [origin] is the concatenated lower-case sequence body
    when ORIGIN was present, [None] otherwise. *)
-module GenBankRecord = struct
-  type feature_t = {
-    name: string;
-    location: string;
-    qualifiers: (string * string) list
-  }
-  type t = {
-    headers: (string * string) list;
-    features: feature_t list;
-    origin: string option
-  }
-end
+module GenBankRecord =
+  struct
+    type feature_t = {
+      name: string;
+      location: string;
+      qualifiers: (string * string) list
+    }
+    type t = {
+      headers: (string * string) list;
+      features: feature_t list;
+      origin: string option
+    }
+  end
 
 (* Hash-consed path identifier.  Every AST node stores ONE [Path.t]
    -- the full chain of categories from the implicit root down to
@@ -109,33 +111,34 @@ module Path:
   end
 = struct
     type t = int
-    module Table = struct
-      type t = {
-        mutable next_id: int;
-        to_id: (string list, int) Hashtbl.t;
-        from_id: (int, string list) Hashtbl.t
-      }
-      let create () = {
-        next_id = 0;
-        to_id = Hashtbl.create 64;
-        from_id = Hashtbl.create 64
-      }
-      let intern table path =
-        match Hashtbl.find_opt table.to_id path with
-        | Some id -> id
-        | None ->
-          let id = table.next_id in
-          table.next_id <- id + 1;
-          Hashtbl.add table.to_id path id;
-          Hashtbl.add table.from_id id path;
-          id
-      let to_list table id =
-        try Hashtbl.find table.from_id id
-        with Not_found ->
-          Exception.raise __FUNCTION__ Algorithm
-            (Printf.sprintf "Path id %d not found in table" id)
-      let cardinal table = Hashtbl.length table.from_id
-    end
+    module Table =
+      struct
+        type t = {
+          mutable next_id: int;
+          to_id: (string list, int) Hashtbl.t;
+          from_id: (int, string list) Hashtbl.t
+        }
+        let create () = {
+          next_id = 0;
+          to_id = Hashtbl.create 64;
+          from_id = Hashtbl.create 64
+        }
+        let intern table path =
+          match Hashtbl.find_opt table.to_id path with
+          | Some id -> id
+          | None ->
+            let id = table.next_id in
+            table.next_id <- id + 1;
+            Hashtbl.add table.to_id path id;
+            Hashtbl.add table.from_id id path;
+            id
+        let to_list table id =
+          try Hashtbl.find table.from_id id
+          with Not_found ->
+            Exception.raise __FUNCTION__ Algorithm
+              (Printf.sprintf "Path id %d not found in table" id)
+        let cardinal table = Hashtbl.length table.from_id
+      end
     let intern = Table.intern
     let to_list = Table.to_list
     let path_to_string ?(sep = "->") = String.concat sep
@@ -202,33 +205,34 @@ module type Intern_t =
    coercion from one into an abstract type. *)
 module MakeStringIntern (): Intern_t = struct
   type t = int
-  module Table = struct
-    type t = {
-      mutable next_id: int;
-      to_id: (string, int) Hashtbl.t;
-      from_id: (int, string) Hashtbl.t
-    }
-    let create () = {
-      next_id = 0;
-      to_id = Hashtbl.create 32;
-      from_id = Hashtbl.create 32
-    }
-    let intern table s =
-      match Hashtbl.find_opt table.to_id s with
-      | Some id -> id
-      | None ->
-        let id = table.next_id in
-        table.next_id <- id + 1;
-        Hashtbl.add table.to_id s id;
-        Hashtbl.add table.from_id id s;
-        id
-    let to_string table id =
-      try Hashtbl.find table.from_id id
-      with Not_found ->
-        Exception.raise __FUNCTION__ Algorithm
-          (Printf.sprintf "Interner id %d not found" id)
-    let cardinal table = Hashtbl.length table.from_id
-  end
+  module Table =
+    struct
+      type t = {
+        mutable next_id: int;
+        to_id: (string, int) Hashtbl.t;
+        from_id: (int, string) Hashtbl.t
+      }
+      let create () = {
+        next_id = 0;
+        to_id = Hashtbl.create 32;
+        from_id = Hashtbl.create 32
+      }
+      let intern table s =
+        match Hashtbl.find_opt table.to_id s with
+        | Some id -> id
+        | None ->
+          let id = table.next_id in
+          table.next_id <- id + 1;
+          Hashtbl.add table.to_id s id;
+          Hashtbl.add table.from_id id s;
+          id
+      let to_string table id =
+        try Hashtbl.find table.from_id id
+        with Not_found ->
+          Exception.raise __FUNCTION__ Algorithm
+            (Printf.sprintf "Interner id %d not found" id)
+      let cardinal table = Hashtbl.length table.from_id
+    end
   let intern = Table.intern
   let to_string = Table.to_string
   let equal a b = a = b
@@ -263,11 +267,12 @@ module AttrMap = IntMap
    post-parse invariant is "[Value.String s] iff [s] occurs exactly
    once across the annotation".  Callers see the original string
    regardless, via [Annotation.attr_get] / [Annotation.attr_iter]. *)
-module Value = struct
-  type t =
-    | Hashed of int
-    | String of string
-end
+module Value =
+  struct
+    type t =
+      | Hashed of int
+      | String of string
+  end
 
 (* Compact "have I seen this string at least once?" sketch.
    Replaces the full forward [string -> state] hashtable that
@@ -277,54 +282,55 @@ end
    False positives manifest as a brand-new singleton being promoted
    on first sight -- correct (still resolves via [to_string]) just
    slightly suboptimal. *)
-module Bloom = struct
-  type t = {
-    bits: Bytes.t;
-    m: int; (* bit count -- always a multiple of 8 *)
-    k: int (* number of hash slots queried per op *)
-  }
-  (* Default sized for a 200 Mbp-class chromosome's worth of unique
-     strings.  GENCODE chr1 is ~700 k unique attribute values; 1 M
-     capacity at 1 % fpp gives us comfortable headroom. *)
-  let create ?(capacity = 1_000_000) ?(fpp = 0.01) () =
-    let n = float_of_int capacity
-    and p = fpp in
-    let ln2 = log 2. in
-    let m_raw = -. n *. log p /. (ln2 *. ln2) in
-    let m =
-      let m = int_of_float (Float.ceil m_raw) in
-      let m = max m 64 in
-      (m + 7) / 8 * 8 in
-    let k =
-      max 1
-        (int_of_float (Float.round (m_raw /. n *. ln2))) in
-    { bits = Bytes.make (m / 8) '\000'; m; k }
-  let bit_set t bit =
-    let b = bit lsr 3 and mask = 1 lsl (bit land 7) in
-    let cur = Char.code (Bytes.unsafe_get t.bits b) in
-    Bytes.unsafe_set t.bits b (Char.chr (cur lor mask))
-  let bit_test t bit =
-    let b = bit lsr 3 and mask = 1 lsl (bit land 7) in
-    let cur = Char.code (Bytes.unsafe_get t.bits b) in
-    cur land mask <> 0
-  let add t s =
-    let h1 = Hashtbl.hash s
-    and h2 = Hashtbl.seeded_hash 0xCAFEBABE s in
-    for i = 0 to t.k - 1 do
-      let h = (h1 + i * h2) land 0x3FFFFFFF in
-      bit_set t (h mod t.m)
-    done
-  let mem t s =
-    let h1 = Hashtbl.hash s
-    and h2 = Hashtbl.seeded_hash 0xCAFEBABE s in
-    let result = ref true and i = ref 0 in
-    while !result && !i < t.k do
-      let h = (h1 + !i * h2) land 0x3FFFFFFF in
-      if not (bit_test t (h mod t.m)) then result := false;
-      incr i
-    done;
-    !result
-end
+module Bloom =
+  struct
+    type t = {
+      bits: Bytes.t;
+      m: int; (* bit count -- always a multiple of 8 *)
+      k: int (* number of hash slots queried per op *)
+    }
+    (* Default sized for a 200 Mbp-class chromosome's worth of unique
+       strings.  GENCODE chr1 is ~700 k unique attribute values; 1 M
+       capacity at 1 % fpp gives us comfortable headroom. *)
+    let create ?(capacity = 1_000_000) ?(fpp = 0.01) () =
+      let n = float_of_int capacity
+      and p = fpp in
+      let ln2 = log 2. in
+      let m_raw = -. n *. log p /. (ln2 *. ln2) in
+      let m =
+        let m = int_of_float (Float.ceil m_raw) in
+        let m = max m 64 in
+        (m + 7) / 8 * 8 in
+      let k =
+        max 1
+          (int_of_float (Float.round (m_raw /. n *. ln2))) in
+      { bits = Bytes.make (m / 8) '\000'; m; k }
+    let bit_set t bit =
+      let b = bit lsr 3 and mask = 1 lsl (bit land 7) in
+      let cur = Char.code (Bytes.unsafe_get t.bits b) in
+      Bytes.unsafe_set t.bits b (Char.chr (cur lor mask))
+    let bit_test t bit =
+      let b = bit lsr 3 and mask = 1 lsl (bit land 7) in
+      let cur = Char.code (Bytes.unsafe_get t.bits b) in
+      cur land mask <> 0
+    let add t s =
+      let h1 = Hashtbl.hash s
+      and h2 = Hashtbl.seeded_hash 0xCAFEBABE s in
+      for i = 0 to t.k - 1 do
+        let h = (h1 + i * h2) land 0x3FFFFFFF in
+        bit_set t (h mod t.m)
+      done
+    let mem t s =
+      let h1 = Hashtbl.hash s
+      and h2 = Hashtbl.seeded_hash 0xCAFEBABE s in
+      let result = ref true and i = ref 0 in
+      while !result && !i < t.k do
+        let h = (h1 + !i * h2) land 0x3FFFFFFF in
+        if not (bit_test t (h mod t.m)) then result := false;
+        incr i
+      done;
+      !result
+  end
 
 (* Adaptive interner for attribute values.  The Bloom filter is the
    singleton tracker; the forward hashtable only carries PROMOTED
