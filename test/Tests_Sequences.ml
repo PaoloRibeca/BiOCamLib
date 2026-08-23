@@ -225,8 +225,67 @@ let test_reference () =
       (String.length
          (R.get_sequence r (T.make_stranded_interval (T.Forward "chr1") 4 0))))
 
+(* Junction files, as the GEM pipeline writes them.  Two shapes are accepted --
+   one naming the sequence once, one naming it at both ends -- and the second is
+   legal only when the two names and the two strands agree, a junction between
+   two different sequences being something this format cannot mean.  The parser
+   takes a path rather than a string, so the fixtures go through a file. *)
+
+let test_junctions () =
+  Testing.section "Junctions" (fun () ->
+    let parse ?default_coverage text =
+      let path = Filename.temp_file "BiOCamLib_Tests_" ".junctions" in
+      let oc = open_out path in
+      output_string oc text;
+      close_out oc;
+      Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
+        let acc = ref [] in
+        Sequences.Junctions.parse ?default_coverage
+          (fun n s lo hi cov ->
+            List.accum acc
+              (Printf.sprintf "%d %s %d %d %g" n (T.string_of_stranded_string s) lo hi cov))
+          path;
+        List.rev !acc |> String.concat " | ") in
+    Testing.check_string "the short form names the sequence once"
+      ~expected:"1 chr1:+ 100 200 0" (parse "chr1\t+\t100\t200\n");
+    Testing.check_string "and takes a coverage as a fifth field"
+      ~expected:"1 chr1:+ 100 200 7.5" (parse "chr1\t+\t100\t200\t7.5\n");
+    Testing.check_string "an absent coverage is the caller's default"
+      ~expected:"1 chr1:+ 100 200 2.5"
+      (parse ~default_coverage:2.5 "chr1\t+\t100\t200\n");
+    Testing.check_string "the long form names it at both ends"
+      ~expected:"1 chr1:- 100 200 0" (parse "chr1\t-\t100\tchr1\t-\t200\n");
+    Testing.check_string "and takes a coverage as a seventh field"
+      ~expected:"1 chr1:- 100 200 3" (parse "chr1\t-\t100\tchr1\t-\t200\t3\n");
+    Testing.check_string "lines are numbered as they are read"
+      ~expected:"1 chr1:+ 1 2 0 | 2 chr2:+ 3 4 0"
+      (parse "chr1\t+\t1\t2\nchr2\t+\t3\t4\n");
+    (* What it refuses, and where it says the trouble is: a junction file runs
+       to millions of lines, so the number in the message is the whole of the
+       diagnosis. *)
+    Testing.check_raises ~re:"Invalid number of fields"
+      "a line of the wrong width is refused"
+      (fun () -> ignore (parse "chr1\t+\t100\n"));
+    Testing.check_raises ~re:"On line 2" "and the message says which line"
+      (fun () -> ignore (parse "chr1\t+\t1\t2\nchr1\t+\t3\n"));
+    Testing.check_raises ~re:"Incorrect syntax"
+      "a junction between two sequences is refused"
+      (fun () -> ignore (parse "chr1\t+\t100\tchr2\t+\t200\n"));
+    Testing.check_raises ~re:"Incorrect syntax" "as is one between two strands"
+      (fun () -> ignore (parse "chr1\t+\t100\tchr1\t-\t200\n"));
+    Testing.check_raises ~re:"Negative" "as is a negative coordinate"
+      (fun () -> ignore (parse "chr1\t+\t-1\t200\n"));
+    Testing.check_raises ~re:"Negative" "and a negative coverage"
+      (fun () -> ignore (parse "chr1\t+\t1\t2\t-3\n"));
+    Testing.check_raises ~re:"Input file not found" "a missing file is refused as such"
+      (fun () ->
+        Sequences.Junctions.parse (fun _ _ _ _ _ -> ())
+          "/nonexistent/BiOCamLib_Tests_missing.junctions"))
+
+
 let run () =
   test_lint ();
   test_types ();
   test_translation ();
-  test_reference ()
+  test_reference ();
+  test_junctions ()

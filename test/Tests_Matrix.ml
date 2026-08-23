@@ -133,7 +133,73 @@ let test_quotes () =
     Testing.check_string "the empty name survives" ~expected:"" (strip "");
     Testing.check_string "an empty quoted name becomes empty" ~expected:"" (strip "\"\""))
 
+(* Reading and writing.  Everything above works on a matrix already in memory;
+   these are the entry points that put one on disk and take it back, which is
+   how KPop moves a twisted matrix between runs.  The convention is R's --
+   a header row of column names, a first column of row names, and quotes
+   stripped from either -- so the round trip is only half the story: a file
+   written by something else has to read as well. *)
+
+let test_file_io () =
+  Testing.section "Matrix file I/O" (fun () ->
+    let with_temp f =
+      let path = Filename.temp_file "BiOCamLib_Tests_" ".tsv" in
+      Fun.protect ~finally:(fun () -> Sys.remove path) (fun () -> f path) in
+    let read_back path =
+      let ic = open_in path in
+      let n = in_channel_length ic in
+      let s = really_input_string ic n in
+      close_in ic;
+      s in
+    let write path text =
+      let oc = open_out path in
+      output_string oc text;
+      close_out oc in
+    (* The layout is R's: a header whose first field is empty, then one row per
+       line beginning with its name. *)
+    Testing.check_string "the written form is a header and one row per line"
+      ~expected:"\tc1\tc2\tc3\nr1\t1\t2\t3\nr2\t4\t5\t6\n"
+      (with_temp (fun path -> Matrix.to_file ~verbose:false m23 path; read_back path));
+    (* A file written by something else has to read, which is the half a round
+       trip cannot tell you about.  R quotes names by default. *)
+    Testing.check_string "a file written elsewhere reads, quotes and all"
+      ~expected:(show m23)
+      (with_temp (fun path ->
+        write path "\t\"c1\"\t\"c2\"\t\"c3\"\n\"r1\"\t1\t2\t3\n\"r2\"\t4\t5\t6\n";
+        show (Matrix.of_file ~verbose:false path)));
+    Testing.check_string "and its column names come through unquoted"
+      ~expected:"c1,c2,c3"
+      (with_temp (fun path ->
+        write path "\t\"c1\"\t\"c2\"\t\"c3\"\n\"r1\"\t1\t2\t3\n\"r2\"\t4\t5\t6\n";
+        show_cols (Matrix.of_file ~verbose:false path)));
+    (* [precision] is how many significant digits a value is written with, which
+       is the one knob that makes writing lossy on purpose. *)
+    Testing.check_string "precision decides how much of a value is written"
+      ~expected:"\tc1\nr1\t0.333\n"
+      (with_temp (fun path ->
+        Matrix.to_file ~verbose:false ~precision:3
+          (matrix [ "r1" ] [ "c1" ] [ [ 1. /. 3. ] ]) path;
+        read_back path));
+    with_temp (fun path ->
+      Matrix.to_file ~verbose:false m23 path;
+      let back = Matrix.of_file ~verbose:false path in
+      Testing.check_string "a matrix survives a file" ~expected:(show m23) (show back);
+      Testing.check_string "and so do its column names"
+        ~expected:(show_cols m23) (show_cols back));
+    (* The channel pair is what the file pair is built on, and a caller
+       streaming several matrices down one channel uses it directly. *)
+    with_temp (fun path ->
+      let oc = open_out path in
+      Matrix.to_channel ~verbose:false m23 oc;
+      close_out oc;
+      let ic = open_in path in
+      let back = Matrix.of_channel ~verbose:false ic in
+      close_in ic;
+      Testing.check_string "and survives a channel" ~expected:(show m23) (show back)))
+
+
 let run () =
   test_geometry ();
   test_products ();
-  test_quotes ()
+  test_quotes ();
+  test_file_io ()
