@@ -307,8 +307,81 @@ let test_frequencies () =
     Testing.check_raises "a threshold outside zero to one is refused"
       (fun () -> ignore (FV.threshold_accum_abs 1.5 (a ()))))
 
+(* The Bigarray-backed vectors.  There are four, two integer widths and two
+   float widths, and they satisfy the same [Vector_t] as the floatarray vector
+   the checks above use.  So the check worth having is not that each one works
+   in isolation but that they AGREE: one script, run over two implementations of
+   one interface, has to give one answer, and where it cannot -- a 32-bit float
+   cannot hold what a 64-bit one holds -- that difference is itself the thing to
+   pin, since it is the only reason to reach for the narrow variant. *)
+
+let vector_script (module V: Numbers.Vector_t with type N.t = float) =
+  let v = V.init 5 (fun i -> float_of_int i) in
+  V.set v 0 10.;
+  V.incr v 1;
+  V.incr_by v 2 3.;
+  V.decr v 3;
+  let w = V.sub v 1 3 in
+  V.fill w 0 1 99.;
+  let seen = ref [] in
+  V.iteri (fun i x -> List.accum seen (Printf.sprintf "%d:%g" i x)) v;
+  Printf.sprintf "%s | %s | %s | %d"
+    (V.to_list v |> List.map (Printf.sprintf "%g") |> String.concat ",")
+    (V.to_list w |> List.map (Printf.sprintf "%g") |> String.concat ",")
+    (List.rev !seen |> String.concat " ")
+    (V.length v)
+
+let test_bigarray_vectors () =
+  Testing.section "Bigarray vectors" (fun () ->
+    (* The same operations over the same values, on two different backings. *)
+    Testing.check_string "the float Bigarray vector agrees with the floatarray one"
+      ~expected:(vector_script (module Numbers.FloatArrayVector))
+      (vector_script (module Numbers.FloatBAVector));
+    (* A sub-vector is a copy and not a window: writing into it must not reach
+       back into what it came from.  The script above writes 99 into [w], and
+       both implementations agreeing is only half the answer if both share. *)
+    Testing.check_bool "a sub-vector does not write back into its parent"
+      ~expected:true
+      (let module V = Numbers.FloatBAVector in
+       let v = V.init 4 (fun i -> float_of_int i) in
+       let w = V.sub v 1 2 in
+       V.set w 0 99.;
+       V.get v 1 = 1.);
+    (* What the narrow float variant is for.  Storing a tenth and reading it
+       back gives a value close to a tenth and not a tenth, which is the whole
+       trade: half the memory for seven digits instead of sixteen. *)
+    Testing.check_float ~tolerance:1e-7 "a 32-bit float vector keeps a value to single precision"
+      ~expected:0.1
+      (let module V = Numbers.Float32BAVector in
+       let v = V.make 1 0. in
+       V.set v 0 0.1;
+       V.get v 0);
+    Testing.check_bool "but not to double precision" ~expected:true
+      (let module V = Numbers.Float32BAVector in
+       let v = V.make 1 0. in
+       V.set v 0 0.1;
+       V.get v 0 <> 0.1);
+    (* And the integer variant, which has no such trade at this width. *)
+    Testing.check_bool "the int Bigarray vector stores and returns what it was given"
+      ~expected:true
+      (let module V = Numbers.IntBAVector in
+       let v = V.init 3 (fun i -> i * 7) in
+       V.incr v 0;
+       V.decr_by v 2 4;
+       V.to_list v = [ 1; 7; 10 ]);
+    (* [empty] is the degenerate case every one of them has to get right. *)
+    Testing.check_int "an empty Bigarray vector has no elements" ~expected:0
+      (Numbers.FloatBAVector.length Numbers.FloatBAVector.empty);
+    Testing.check_string "and iterating one visits nothing" ~expected:""
+      (let module V = Numbers.FloatBAVector in
+       let seen = ref [] in
+       V.iter (fun x -> List.accum seen (Printf.sprintf "%g" x)) V.empty;
+       String.concat "," !seen))
+
+
 let run () =
   test_online_stats ();
   test_frequencies ();
   test_scalars ();
-  test_linear_fit ()
+  test_linear_fit ();
+  test_bigarray_vectors ()

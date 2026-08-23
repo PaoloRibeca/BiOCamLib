@@ -92,5 +92,64 @@ let test_quoted_path () =
     Testing.check_raises "a string with too many separators is refused"
       (fun () -> ignore (Q.of_string "a\\tb\\tc")))
 
+(* The sequence readers.  These take a path rather than a string and hand each
+   record back with the read's index, its segment index and the record itself,
+   so the fixtures go through a file and the check collects what it is given. *)
+
+let with_file text f =
+  let path = Filename.temp_file "BiOCamLib_Tests_" ".seq" in
+  let oc = open_out path in
+  output_string oc text;
+  close_out oc;
+  Fun.protect ~finally:(fun () -> Sys.remove path) (fun () -> f path)
+
+let collect ?linter (reader: string Files.Base.Iterator.t) text =
+  with_file text (fun path ->
+    let acc = ref [] in
+    reader ?linter ~verbose:false
+      (fun (i, seg, r) ->
+        List.accum acc
+          (Printf.sprintf "%d/%d %s|%s|%s"
+             i seg r.Files.Base.Read.tag r.Files.Base.Read.seq r.Files.Base.Read.qua))
+      path;
+    List.rev !acc |> String.concat " ")
+
+let test_sequence_readers () =
+  Testing.section "Sequence readers" (fun () ->
+    (* Records arrive numbered from zero, each with a segment index that stays
+       at zero for single-end input.  A FASTA tag is everything after the [>],
+       description and all, and a sequence broken over several lines arrives
+       joined -- the line breaks are the file's business, not the record's. *)
+    Testing.check_string "FASTA gives tag and joined sequence, and no qualities"
+      ~expected:"0/0 a desc|ACGT| 1/0 b|TTTT|"
+      (collect Files.FASTA.iter ">a desc\nACGT\n>b\nTT\nTT\n");
+    Testing.check_string "FASTQ gives the qualities as well"
+      ~expected:"0/0 a|ACGT|IIII 1/0 b|TTTT|JJJJ"
+      (collect Files.FASTQ.iter "@a\nACGT\n+\nIIII\n@b\nTTTT\n+\nJJJJ\n");
+    (* The tabular form is the same record in three columns, and the point of
+       having it is that it reads back as the same record. *)
+    Testing.check_string "and tabular gives what FASTQ gave"
+      ~expected:(collect Files.FASTQ.iter "@a\nACGT\n+\nIIII\n@b\nTTTT\n+\nJJJJ\n")
+      (collect Files.Tabular.iter "a\tACGT\tIIII\nb\tTTTT\tJJJJ\n");
+    (* The linter is handed each sequence on the way through, and only the
+       sequence: a reader that linted the tag would quietly rename the read. *)
+    Testing.check_string "the linter is applied to the sequence"
+      ~expected:"0/0 a|acgt|"
+      (collect ~linter:String.lowercase_ascii Files.FASTA.iter ">a\nACGT\n");
+    Testing.check_string "and not to the tag"
+      ~expected:"0/0 A_Tag|acgt|"
+      (collect ~linter:String.lowercase_ascii Files.FASTA.iter ">A_Tag\nACGT\n");
+    (* Nothing in, nothing out -- rather than one empty record. *)
+    Testing.check_string "an empty file yields no records" ~expected:""
+      (collect Files.FASTA.iter "");
+    Testing.check_string "and so does an empty tabular one" ~expected:""
+      (collect Files.Tabular.iter "");
+    (* A missing file is the caller's ordinary mistake, and says so. *)
+    Testing.check_raises ~re:"Input file not found" "a missing file is refused as such"
+      (fun () ->
+        Files.FASTA.iter ~verbose:false (fun _ -> ())
+          "/nonexistent/BiOCamLib_Tests_missing.fasta"))
+
 let run () =
-  test_quoted_path ()
+  test_quoted_path ();
+  test_sequence_readers ()
