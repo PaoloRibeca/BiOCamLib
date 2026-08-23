@@ -686,6 +686,146 @@ let test_nj_names () =
             if Array.length descs = 0 then Some (N.get_node_name node) else None)
        |> List.sort compare |> String.concat ","))
 
+(* Splits.  A split set is a register of bipartitions over a fixed, ordered
+   array of element names, and the one thing every operation on it turns on is
+   that a bipartition and its complement are the SAME bipartition: [add_split]
+   canonicalises to whichever of the two masks is numerically smaller, so
+   {a,b} and {c,d} over four names land on one entry whose weights add.  Get
+   that wrong and a consensus over bootstrap replicates quietly double-counts. *)
+
+module SP = Trees.Splits
+
+let split_weights ss =
+  let acc = ref [] in
+  SP.iter (fun s w -> List.accum acc (Printf.sprintf "%s=%g" (SP.Split.to_string s) w)) ss;
+  List.sort compare !acc |> String.concat " "
+
+let four () = SP.create [| "a"; "b"; "c"; "d" |]
+
+let test_split_masks () =
+  Testing.section "Split masks" (fun () ->
+    (* The three constructors are three spellings of one bitmask: element i is
+       bit i, so {0,2} is 1 + 4. *)
+    Testing.check_string "a split built from a list is a bitmask"
+      ~expected:"5" (SP.Split.to_string (SP.Split.of_list [ 0; 2 ]));
+    Testing.check_string "and an array says the same thing"
+      ~expected:"5" (SP.Split.to_string (SP.Split.of_array [| 0; 2 |]));
+    Testing.check_string "as does the decimal spelling"
+      ~expected:"5" (SP.Split.to_string (SP.Split.of_string "5"));
+    Testing.check_string "the empty split is zero"
+      ~expected:"0" (SP.Split.to_string (SP.Split.of_list []));
+    Testing.check_bool "to_intz and of_intz are inverse" ~expected:true
+      (let s = SP.Split.of_list [ 1; 3; 5 ] in
+       SP.Split.to_string (SP.Split.of_intz (SP.Split.to_intz s)) = SP.Split.to_string s))
+
+let test_split_register () =
+  Testing.section "Split register" (fun () ->
+    Testing.check_raises ~re:"Duplicate element" "repeated names are refused"
+      (fun () -> ignore (SP.create [| "a"; "b"; "a" |]));
+    let ss = four () in
+    Testing.check_string "a fresh register keeps its names"
+      ~expected:"a,b,c,d" (String.concat "," (Array.to_list (SP.get_names ss)));
+    Testing.check_int "and holds no splits" ~expected:0 (SP.cardinal ss);
+    Testing.check_raises ~re:"incompatible" "a split wider than the register is refused"
+      (fun () -> SP.add_split ss (SP.Split.of_list [ 9 ]) 1.);
+    (* {a,b} is 3; its complement {c,d} is 12; the canonical form is 3, so the
+       second add finds the first rather than making a second entry. *)
+    SP.add_split ss (SP.Split.of_list [ 0; 1 ]) 1.;
+    Testing.check_string "a split is stored canonically"
+      ~expected:"3=1" (split_weights ss);
+    SP.add_split ss (SP.Split.of_list [ 2; 3 ]) 2.;
+    Testing.check_string "and its complement is the same split, with weights added"
+      ~expected:"3=3" (split_weights ss);
+    Testing.check_int "so the register still holds one" ~expected:1 (SP.cardinal ss);
+    SP.add_split ss (SP.Split.of_list [ 0; 2 ]) 1.;
+    Testing.check_int "a genuinely different split makes a second" ~expected:2
+      (SP.cardinal ss);
+    (* Dropping by weight keeps what is at least the cutoff. *)
+    SP.drop_weight_below ss 2.;
+    Testing.check_string "dropping below a cutoff keeps what reaches it"
+      ~expected:"3=3" (split_weights ss);
+    SP.clear ss;
+    Testing.check_int "clear empties the register" ~expected:0 (SP.cardinal ss);
+    Testing.check_string "but leaves the names"
+      ~expected:"a,b,c,d" (String.concat "," (Array.to_list (SP.get_names ss))))
+
+let test_split_fusion () =
+  Testing.section "Split fusion" (fun () ->
+    let one = four () and two = four () in
+    SP.add_split one (SP.Split.of_list [ 0; 1 ]) 1.;
+    SP.add_split two (SP.Split.of_list [ 0; 1 ]) 2.;
+    SP.add_split two (SP.Split.of_list [ 0; 2 ]) 4.;
+    SP.add_splits one two;
+    Testing.check_string "fusing two registers adds the shared weights"
+      ~expected:"3=3 5=4" (split_weights one);
+    Testing.check_raises "registers over different names cannot be fused"
+      (fun () -> SP.add_splits (four ()) (SP.create [| "w"; "x"; "y"; "z" |])))
+
+let test_splits_of_newick () =
+  Testing.section "Splits from a tree" (fun () ->
+    (* Four leaves, one internal edge: exactly one non-trivial bipartition,
+       {a,b} against {c,d}.  The names are the leaves in alphabetical order,
+       which is what makes a split comparable across trees. *)
+    let ss = SP.of_newick (N.of_string "((a,b),(c,d));") in
+    Testing.check_string "the element names are the sorted leaves"
+      ~expected:"a,b,c,d" (String.concat "," (Array.to_list (SP.get_names ss)));
+    Testing.check_int "a four-leaf tree has one non-trivial split" ~expected:1
+      (SP.cardinal ss);
+    Testing.check_string "and it separates a,b from c,d"
+      ~expected:"3=1" (split_weights ss);
+    (* The same tree written with its halves the other way round is the same
+       set of bipartitions: that is the whole point of the representation. *)
+    Testing.check_string "the same tree drawn the other way round agrees"
+      ~expected:(split_weights ss)
+      (split_weights (SP.of_newick (N.of_string "((c,d),(a,b));")));
+    Testing.check_string "and so does one with its leaves swapped within a pair"
+      ~expected:(split_weights ss)
+      (split_weights (SP.of_newick (N.of_string "((b,a),(d,c));")));
+    (* Adding a second tree to the register accumulates rather than replaces,
+       which is how a bootstrap consensus is built. *)
+    SP.add_newick ss (N.of_string "((a,b),(c,d));");
+    Testing.check_string "adding the same tree again doubles the weight"
+      ~expected:"3=2" (split_weights ss);
+    SP.add_newick ss (N.of_string "((a,c),(b,d));");
+    Testing.check_string "and a disagreeing tree contributes its own split"
+      ~expected:"3=2 5=1" (split_weights ss);
+    Testing.check_raises "a tree over other leaves cannot be added"
+      (fun () -> SP.add_newick ss (N.of_string "((w,x),(y,z));")))
+
+let test_splits_io () =
+  Testing.section "Split I/O" (fun () ->
+    let ss = SP.of_newick (N.of_string "(((a,b),(c,d)),e);") in
+    Testing.check_string "a register survives its text form"
+      ~expected:(split_weights ss)
+      (split_weights (SP.of_string (SP.to_string ss)));
+    Testing.check_string "and its names come back with it"
+      ~expected:"a,b,c,d,e"
+      (String.concat "," (Array.to_list (SP.get_names (SP.of_string (SP.to_string ss)))));
+    (* Through a file, and through the binary form, which is what a caller
+       reloading a large register actually uses. *)
+    let prefix = Filename.temp_file "BiOCamLib_Tests_" "" in
+    Sys.remove prefix;
+    Fun.protect
+      ~finally:(fun () ->
+        List.iter (fun p -> if Sys.file_exists p then Sys.remove p)
+          [ prefix; prefix ^ ".txt"; prefix ^ ".Splits"; prefix ^ ".nwk" ])
+      (fun () ->
+        SP.to_file ss (prefix ^ ".txt");
+        Testing.check_string "a register survives a text file"
+          ~expected:(split_weights ss) (split_weights (SP.of_file (prefix ^ ".txt")));
+        SP.to_binary ss prefix;
+        Testing.check_string "and the binary form"
+          ~expected:(split_weights ss) (split_weights (SP.of_binary prefix));
+        (* [of_newick_file] is the same as reading the tree and taking its
+           splits, which is the only thing it promises. *)
+        let oc = open_out (prefix ^ ".nwk") in
+        output_string oc "(((a,b),(c,d)),e);\n";
+        close_out oc;
+        Testing.check_string "of_newick_file agrees with of_newick"
+          ~expected:(split_weights ss)
+          (split_weights (SP.of_newick_file (prefix ^ ".nwk")))))
+
+
 let run () =
   test_nj_names ();
   test_quoting ();
@@ -701,5 +841,10 @@ let run () =
   test_neighbour_joining_negative_branches ();
   test_neighbour_joining_statistics ();
   test_midpoint_rooting ();
-  test_midpoint_rooting_invariants ()
+  test_midpoint_rooting_invariants ();
+  test_split_masks ();
+  test_split_register ();
+  test_split_fusion ();
+  test_splits_of_newick ();
+  test_splits_io ()
 

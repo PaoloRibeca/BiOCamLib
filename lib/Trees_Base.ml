@@ -707,6 +707,13 @@ module Splits: Splits_base
       let name_to_idx = Hashtbl.create n in
       Array.iteri (fun i nm -> Hashtbl.add name_to_idx nm i) names;
       let stack = Stack.create () in
+      (* A bipartition is contributed once per tree, however many nodes happen
+         to describe it.  A tree written with a bifurcating root describes its
+         root split twice -- the root's two children are complements of one
+         another, and a bipartition is its complement -- so adding both would
+         give that one edge twice the weight of every other edge in the same
+         tree, which is exactly the comparison a consensus is there to make. *)
+      let seen = IntZHashtbl.create 64 in
       Newick.dfs_iter
         (fun node n_children ->
           if n_children = 0 then begin
@@ -733,10 +740,15 @@ module Splits: Splits_base
             let _ = Stack.pop stack in
             Stack.push (!combined_mask, !combined_size) stack;
             if !combined_size > 1 && !combined_size < n - 1 then begin
-              let w = match weight_kind with
-                | Constant c -> c
-                | Bootstrap -> 1.0 (* TODO: thread parent-edge bootstrap via dfs_iteri *) in
-              add_split reg !combined_mask w
+              let canonical =
+                IntZ.(min !combined_mask (reg.mask_complement - !combined_mask)) in
+              if not (IntZHashtbl.mem seen canonical) then begin
+                IntZHashtbl.add seen canonical ();
+                let w = match weight_kind with
+                  | Constant c -> c
+                  | Bootstrap -> 1.0 (* TODO: thread parent-edge bootstrap via dfs_iteri *) in
+                add_split reg !combined_mask w
+              end
             end
           end)
         tree
