@@ -275,8 +275,78 @@ let test_transitive_closure () =
       ~expected:"1,2,3,4,5"
       (partition (closure_of [ [ 1; 2 ]; [ 2; 3 ]; [ 3; 4 ]; [ 4; 5 ] ])))
 
+(* Command-line scaffolding.  [parse] itself and the [get_parameter_*] family
+   cannot be driven from here, and the reason is not that they exit: there is
+   exactly one [exit] in the module, in the error path, and exiting is the right
+   thing for a parser whose only callers are drivers.  It is that [_argv] is
+   bound to [Sys.argv] once, at module level, so a check has no way to hand the
+   parser a command line of its own.  Everything that does not read the command
+   line is fair game, and that is the header and synopsis formatting and the
+   separator constructors. *)
+
+module TA = Tools.Argv
+
+let captured f =
+  let path = Filename.temp_file "BiOCamLib_Tests_" ".txt" in
+  Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
+    let oc = open_out path in
+    f oc;
+    close_out oc;
+    let ic = open_in path in
+    let n = in_channel_length ic in
+    let s = really_input_string ic n in
+    close_in ic;
+    s)
+
+let contains needle haystack =
+  let n = String.length needle and l = String.length haystack in
+  let rec walk i = i + n <= l && (String.sub haystack i n = needle || walk (i + 1)) in
+  n = 0 || walk 0
+
+let test_argv () =
+  Testing.section "Command-line scaffolding" (fun () ->
+    (* A separator is an option with no names and no action: it exists only to
+       put a line of text into the usage between groups of real options. *)
+    let names, arg, help, kind, action = TA.make_separator "Group:" in
+    Testing.check_int "a separator names no option" ~expected:0 (List.length names);
+    Testing.check_bool "and takes no argument" ~expected:true (arg = None);
+    Testing.check_string "its help is the text it was given"
+      ~expected:"Group:" (String.concat "" help);
+    Testing.check_bool "it is optional, so nothing demands it" ~expected:true
+      (kind = TA.Optional);
+    Testing.check_does_not_raise "and its action does nothing"
+      (fun () -> action "");
+    let _, _, help, _, _ = TA.make_separator_multiline [ "one"; "two" ] in
+    Testing.check_string "a multi-line separator keeps every line"
+      ~expected:"one|two" (String.concat "|" help);
+    (* The synopsis is stored and printed back verbatim. *)
+    TA.set_synopsis "<input> [OPTIONS]";
+    Testing.check_string "the synopsis is printed as it was set"
+      ~expected:"<input> [OPTIONS]" (captured (fun oc -> TA.synopsis ~output:oc ()));
+    (* The header is drawn as a box around the program's identity, so what is
+       worth pinning is that the identity and each dependency reach it -- not
+       the box, which is decoration and would make the check a transcript. *)
+    TA.set_header
+      ({ TA.name = "TestTool"; version = "9"; date = "01-Jan-2026" },
+       [ "2026", "A Name", "a@example.com" ],
+       [ { TA.name = "BiOCamLib"; version = "1"; date = "02-Jan-2026" } ]);
+    let printed = captured (fun oc -> TA.header ~output:oc ()) in
+    List.iter (fun needle ->
+      Testing.check_bool (Printf.sprintf "the header carries %S" needle)
+        ~expected:true (contains needle printed))
+      [ "TestTool"; "9"; "01-Jan-2026"; "BiOCamLib"; "02-Jan-2026" ];
+    (* Setting it again replaces rather than accumulates, which matters because
+       a driver calls this once and a test calling it twice must not see both. *)
+    TA.set_header
+      ({ TA.name = "Other"; version = "1"; date = "03-Jan-2026" }, [], []);
+    let printed = captured (fun oc -> TA.header ~output:oc ()) in
+    Testing.check_bool "setting the header again replaces it" ~expected:true
+      (contains "Other" printed && not (contains "TestTool" printed)))
+
+
 let run () =
   test_arraystack ();
   test_trie ();
   test_multimap ();
-  test_transitive_closure ()
+  test_transitive_closure ();
+  test_argv ()
