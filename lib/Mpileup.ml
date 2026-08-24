@@ -189,8 +189,13 @@ include (
            call (Call.Base c) Sequences.Types.forward
          | 'a' | 'c' | 'g' | 't' | 'n' as c ->
            call (Call.Base (Char.uppercase_ascii c)) Sequences.Types.reverse
-         (* Older writers used '*' whatever the strand; '#' for the reverse is
-            more recent *)
+         (* A deleted base is written '*' on BOTH strands unless the writer
+            was asked for --reverse-del, which spells the reverse ones '#'.  So
+            a '#' does say reverse, but a '*' says nothing at all about strand
+            and the forward here is a placeholder, not a reading of the file.
+            It does not reach a genotype -- a read inside a deletion votes for
+            nothing -- but a caller filtering by strand should know that the
+            gaps it keeps or drops were never labelled *)
          | '*' -> call Call.Gap Sequences.Types.forward
          | '#' -> call Call.Gap Sequences.Types.reverse
          | '>' -> call Call.Skip Sequences.Types.forward
