@@ -51,19 +51,19 @@ let reverse_base = ['a' 'c' 'g' 't' 'n']
 
 rule bases = parse
   (* The read agrees with the reference; the case says which strand it is on *)
-  | '.' { Mp_REFERENCE true }
-  | ',' { Mp_REFERENCE false }
+  | '.' { Mp_REFERENCE_FWD }
+  | ',' { Mp_REFERENCE_REV }
   (* An explicit base.  The case is the strand and not part of the call, so it
      is taken off here rather than left for every caller to take off again *)
-  | forward_base as c { Mp_BASE (c, true) }
-  | reverse_base as c { Mp_BASE (Char.uppercase_ascii c, false) }
+  | forward_base as c { Mp_BASE_FWD c }
+  | reverse_base as c { Mp_BASE_REV (Char.uppercase_ascii c) }
   (* A position inside a deletion announced by an earlier line.  Older samtools
      wrote '*' whatever the strand; since 1.7 it writes '#' for the reverse *)
-  | '*' { Mp_GAP true }
-  | '#' { Mp_GAP false }
+  | '*' { Mp_GAP_FWD }
+  | '#' { Mp_GAP_REV }
   (* The read skips the reference here, which is what an intron looks like *)
-  | '>' { Mp_SKIP true }
-  | '<' { Mp_SKIP false }
+  | '>' { Mp_SKIP_FWD }
+  | '<' { Mp_SKIP_REV }
   (* A read ends after the base just read *)
   | '$' { Mp_END }
   (* A read begins with the base about to be read, and the character after the

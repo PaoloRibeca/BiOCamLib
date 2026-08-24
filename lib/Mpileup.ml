@@ -104,17 +104,24 @@ include (
             try
               Mpileup_Parse.read_bases Mpileup_Lex.bases (Lexing.from_string bases)
             with Exception.E (_, _, message) -> raise_in ~where message in
-          let reads = Array.of_list parsed and n_quals = String.length quals in
-          if Array.length reads <> n_quals then
+          let n_calls = List.length parsed and n_quals = String.length quals in
+          if n_calls <> n_quals then
             raise_in ~where
               (Printf.sprintf
                  "The bases and qualities columns disagree: %d %s against %d"
-                 (Array.length reads)
-                 (String.pluralize_int "call" (Array.length reads)) n_quals);
-          Array.mapi
+                 n_calls (String.pluralize_int "call" n_calls) n_quals);
+          (* The parser hands its reads back reversed, so the array is filled
+             from the end.  Each one is written to once, rather than rebuilt to
+             carry a quality it could not have known while the calls column was
+             being read. *)
+          let reads = Array.make n_calls Read.placeholder in
+          List.iteri
             (fun i read ->
-              { read with Read.quality = Char.code quals.[i] - quality_offset })
-            reads
+              let at = n_calls - 1 - i in
+              read.Read.quality <- Char.code quals.[at] - quality_offset;
+              reads.(at) <- read)
+            parsed;
+          reads
         end in
       (* The depth column is what the aligner counted, and a reader that
          silently disagreed with it would be hiding the more interesting of the
@@ -205,7 +212,7 @@ include (
         type t = {
           call: Call.t;
           strand: Sequences.Types.strand_t;
-          quality: int;
+          mutable quality: int;
           indel: Indel.t option;
           starts_read: int option;
           ends_read: bool

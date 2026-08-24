@@ -1,0 +1,17 @@
+(env
+ (dev
+  (ocamlopt_flags (:standard -g)))
+ (dev-static
+  (ocamlopt_flags (:standard -g -ccopt -static)))
+ (release
+  (ocamlopt_flags (:standard -O3 -ccopt -O3)))
+ (release-static
+  (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static))))
+
+; Measurements rather than checks.  Kept out of test/, which is the suite and
+; is meant to stay quick, and out of bin/, which is what gets installed: this is
+; built on demand and run by hand.
+(executables
+ (names Bench_Mpileup)
+ (modules Bench_Mpileup)
+ (libraries str unix BiOCamLib))

@@ -40,17 +40,19 @@
 
 %{
 open Mpileup_Base
-
-let strand_of_flag = function
-  | true -> Sequences.Types.forward
-  | false -> Sequences.Types.reverse
 %}
 
-(* The boolean each of these carries is the strand: true forward, false reverse *)
-%token<bool> Mp_REFERENCE
-%token<char * bool> Mp_BASE
-%token<bool> Mp_GAP
-%token<bool> Mp_SKIP
+(* The strand is in the name rather than in a payload: a constant constructor
+   is immediate, where one carrying even a boolean is a block allocated for
+   every call in the column, and '.' and ',' are most of a pileup *)
+%token Mp_REFERENCE_FWD
+%token Mp_REFERENCE_REV
+%token<char> Mp_BASE_FWD
+%token<char> Mp_BASE_REV
+%token Mp_GAP_FWD
+%token Mp_GAP_REV
+%token Mp_SKIP_FWD
+%token Mp_SKIP_REV
 %token<string> Mp_INSERTION
 %token<string> Mp_DELETION
 %token<int> Mp_START
@@ -63,27 +65,43 @@ let strand_of_flag = function
 
 %%
 
+(* The list comes back reversed, and deliberately.  Menhir's [list] is
+   right-recursive, which obliges an LR parser to shift every token of the
+   column before it can reduce any of them: a stack as deep as the pileup, a
+   cell of it allocated per call.  Left recursion reduces as it goes and keeps
+   the stack constant.  The caller is filling an array from this anyway, and can
+   fill it backwards for nothing. *)
 read_bases:
-  | calls = list(one_read) Mp_EOF { calls }
+  | calls = reads_reversed Mp_EOF { calls }
+
+reads_reversed:
+  | { [] }
+  | rest = reads_reversed r = one_read { r :: rest }
 
 one_read:
   | starts = option(Mp_START) c = call indel = option(indel) ends = boption(Mp_END)
     {
-      let call, forward = c in
+      let call, strand = c in
       { Read.call = call;
-        strand = strand_of_flag forward;
+        strand = strand;
         quality = 0;
         indel = indel;
         starts_read = starts;
         ends_read = ends }
     }
 
-call:
-  | s = Mp_REFERENCE { Call.Reference, s }
-  | b = Mp_BASE { let base, s = b in Call.Base base, s }
-  | s = Mp_GAP { Call.Gap, s }
-  | s = Mp_SKIP { Call.Skip, s }
+(* Inlined, so that the pair below is substituted into the action above rather
+   than built and taken apart again once per call *)
+%inline call:
+  | Mp_REFERENCE_FWD { Call.Reference, Sequences.Types.forward }
+  | Mp_REFERENCE_REV { Call.Reference, Sequences.Types.reverse }
+  | b = Mp_BASE_FWD { Call.Base b, Sequences.Types.forward }
+  | b = Mp_BASE_REV { Call.Base b, Sequences.Types.reverse }
+  | Mp_GAP_FWD { Call.Gap, Sequences.Types.forward }
+  | Mp_GAP_REV { Call.Gap, Sequences.Types.reverse }
+  | Mp_SKIP_FWD { Call.Skip, Sequences.Types.forward }
+  | Mp_SKIP_REV { Call.Skip, Sequences.Types.reverse }
 
-indel:
+%inline indel:
   | s = Mp_INSERTION { Indel.Insertion s }
   | s = Mp_DELETION { Indel.Deletion s }

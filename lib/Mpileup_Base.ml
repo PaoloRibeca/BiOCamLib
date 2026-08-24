@@ -81,15 +81,24 @@ module Read =
     type t = {
       call: Call.t;
       strand: Sequences.Types.strand_t;
-      (* Decoded with the caller's offset.  A call that consumes no quality --
-         which is none of them, every call in the format consuming one -- would
-         carry zero, and an indel's own bases never carry any: mpileup reports
-         them without qualities, and the caller is expected to look the read up
-         elsewhere if it wants them *)
-      quality: int;
+      (* Decoded with the caller's offset.  Mutable, and only because the
+         qualities are a column of their own: the record is built while the
+         calls column is read and cannot know its quality yet, and filling the
+         field afterwards is one record per read where rebuilding it would be
+         two.  Nothing else writes to it *)
+      mutable quality: int;
       indel: Indel.t option;
       starts_read: int option;
       ends_read: bool
+    }
+    (* Somewhere to point an array at before it is filled *)
+    let placeholder = {
+      call = Call.Gap;
+      strand = Sequences.Types.forward;
+      quality = 0;
+      indel = None;
+      starts_read = None;
+      ends_read = false
     }
   end
 
