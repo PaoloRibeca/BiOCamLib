@@ -312,6 +312,72 @@ let test_qualities () =
     Testing.check_raises "a quality outside the scale is refused"
       (fun () -> M.Qualities.add (M.Qualities.make ()) 200))
 
+(* Agreement with SiNPle, which is the reader this one is meant to replace.
+   The lines below were put through SiNPle itself and its output recorded; what
+   is checked here is that the counting agrees with it, position by position.
+   That is the whole safety of the replacement: the model above is not being
+   touched, so if the counts and the mean qualities going into it are the same,
+   what comes out of it is too.
+
+   SiNPle printed, for these seven lines in order:
+
+     polio 100 A 4 40   0.999  G   2 40 0.994
+     polio 101 C 5 40   1
+     polio 102 G 4 40   1
+     polio 103 T 4 40   1      +AC 1 0  0.653
+     polio 104 A 4 34.8 1      -G  1 0  0.16
+     polio 105 C 3 40   1
+     polio 106
+
+   -- sequence, position, then four columns per genotype: symbol, count, mean
+   sequencing quality, posterior probability.  The posterior is the model's and
+   not this reader's business; the symbol, the count and the mean are. *)
+
+let test_agreement () =
+  Testing.section "Agreement with SiNPle" (fun () ->
+    (* A dot, a comma and a spelled-out base are all votes for a base, and the
+       two strands are one genotype: SiNPle counts four As here, not two dots
+       and two commas. *)
+    Testing.check_string "reference matches on both strands are one genotype"
+      ~expected:"A:4@40 G:2@40"
+      (show_genotypes (summarise (line [ "polio"; "100"; "A"; "6"; ".,.,Gg"; "IIIIII" ])));
+    (* A read starting here votes like any other. *)
+    Testing.check_string "a read that starts here still votes"
+      ~expected:"C:5@40"
+      (show_genotypes (summarise (line [ "polio"; "101"; "C"; "5"; "....^K."; "IIIII" ])));
+    Testing.check_string "and one that ends here"
+      ~expected:"G:4@40"
+      (show_genotypes (summarise (line [ "polio"; "102"; "G"; "4"; ".,.$,"; "IIII" ])));
+    (* The read carrying an insertion votes twice: once for the base it agreed
+       on, once for the insertion.  SiNPle counts four Ts AND one +AC. *)
+    Testing.check_string "a read with an insertion votes for its base and the indel"
+      ~expected:"T:4@40 +AC:1"
+      (show_genotypes (summarise (line [ "polio"; "103"; "T"; "4"; "..+2AC.."; "IIII" ])));
+    Testing.check_string "and likewise with a deletion"
+      ~expected:"A:4@34.75 -G:1"
+      (show_genotypes (summarise (line [ "polio"; "104"; "A"; "4"; ".,-1G.,"; "IIH5" ])));
+    (* The mean of I, I, H and 5 -- 40, 40, 39 and 20 -- is 34.75, which SiNPle
+       printed to three figures as 34.8. *)
+    Testing.check_float "the mean quality is over every read that voted"
+      ~expected:34.75
+      (match (summarise (line [ "polio"; "104"; "A"; "4"; ".,-1G.,"; "IIH5" ]))
+               .M.Summary.genotypes with
+       | { M.Genotype.qualities = Some q; _ } :: _ -> M.Qualities.mean q
+       | _ -> nan);
+    (* A read inside a deletion from an earlier line votes for nothing: SiNPle
+       counts three Cs where the column holds four calls. *)
+    Testing.check_string "a gap is not a vote" ~expected:"C:3@40"
+      (show_genotypes (summarise (line [ "polio"; "105"; "C"; "4"; ".*.,"; "IIII" ])));
+    Testing.check_string "though it is still counted"
+      ~expected:"depth 4, voting 3, gaps 1"
+      (let u = summarise (line [ "polio"; "105"; "C"; "4"; ".*.,"; "IIII" ]) in
+       Printf.sprintf "depth %d, voting %d, gaps %d"
+         u.M.Summary.depth u.M.Summary.voting u.M.Summary.gaps);
+    (* A position with no coverage has nothing to say about any genotype, which
+       is what SiNPle's bare 'polio 106' says too. *)
+    Testing.check_string "and a position with no coverage says nothing" ~expected:""
+      (show_genotypes (summarise (line [ "polio"; "106"; "T"; "0"; "*"; "*" ]))))
+
 let run () =
   test_columns ();
   test_calls ();
@@ -319,4 +385,5 @@ let run () =
   test_refusals ();
   test_iteration ();
   test_summary ();
-  test_qualities ()
+  test_qualities ();
+  test_agreement ()
