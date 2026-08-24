@@ -409,14 +409,14 @@ let () =
           "sequence with the phase bases dropped from its 5' end,";
           "translated with the feature's '/transl_table' when it";
           "carries one.  Requires a reference to have been loaded.";
-          "Each defline names the feature and says where it came";
-          "from -- 'path=', 'seq=', 'location=' -- and then carries";
-          "every qualifier the feature holds, one '[key=value]' each,";
-          "in the manner of NCBI's own extracts: a value such as";
-          "'product=hypothetical protein' has spaces in it, and the";
-          "brackets are what keep the line splittable.  'ID' and";
-          "'Parent' are left out, being the name and the path over";
-          "again." ];
+          "Each defline names the feature and then carries, as a";
+          "bracketed '[key=value]' apiece, where it came from --";
+          "'path', 'seq', 'location' -- and every qualifier it holds.";
+          "The brackets are in the manner of NCBI's own extracts, and";
+          "they are what keeps the line splittable: both a qualifier";
+          "such as 'product=hypothetical protein' and a sequence name";
+          "may carry spaces.  'ID' and 'Parent' are left out, being";
+          "the name and the path over again." ];
       [ "--extract" ],
         Some "<dna|protein> <file>",
         [ "write the sequence of every selected feature to <file>" ],
@@ -763,7 +763,7 @@ let () =
                 List.sort compare !acc
                   |> List.map (fun (key, value) -> Printf.sprintf " [%s=%s]" key value)
                   |> String.concat "" in
-              Printf.fprintf oc ">%s path=%s seq=%s location=%s%s\n%s\n"
+              Printf.fprintf oc ">%s [path=%s] [seq=%s] [location=%s]%s\n%s\n"
                 (name_of !current ~path:p feature) (A.Annotation.path_to_string p)
                 (A.Annotation.seq_name !current feature) (location_of feature)
                 attributes (A.wrap_sequence ~width:0 sequence));
