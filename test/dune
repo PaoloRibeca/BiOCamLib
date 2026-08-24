@@ -14,5 +14,5 @@
 (executables
  (names Tests)
  (modules Tests Tests_Annotations Tests_Sequences Tests_Tools Tests_Numbers Tests_Trees
-          Tests_Better Tests_KMers Tests_Matrix Tests_Files Tests_Consensus Tests_Processes)
+          Tests_Better Tests_KMers Tests_Matrix Tests_Files Tests_Consensus Tests_Processes Tests_Mpileup)
  (libraries str unix BiOCamLib))

@@ -47,5 +47,6 @@ let () =
   Tests_Annotations.run ();
   Tests_Consensus.run ();
   Tests_Processes.run ();
+  Tests_Mpileup.run ();
   Testing.summary ()
 
