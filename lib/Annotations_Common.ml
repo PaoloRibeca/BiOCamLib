@@ -100,8 +100,12 @@ let wrap_sequence ?(width = default_fasta_width) seq =
     Buffer.contents buf
   end
 let write_fasta ?(width = default_fasta_width) buf reference =
-  Sequences.Reference.iter (fun ~name ~seq ~table:_ ->
-    Printf.bprintf buf ">%s\n" name;
+  Sequences.Reference.iter (fun ~name ~seq ~table:_ ~description ->
+    (* The header goes back out as it came in, name and description both: a
+       reference read from an ordinary FASTA and written into a [##FASTA]
+       section or a tabular sidecar should still say what it said. *)
+    Printf.bprintf buf ">%s%s\n" name
+      (if description = "" then "" else " " ^ description);
     (* An empty sequence gets a header and nothing else, rather than a blank
        line that would read back as a sequence of length zero. *)
     if seq <> "" then

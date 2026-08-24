@@ -602,17 +602,27 @@ let () =
       List.map (fun i -> A.OneBased.(of_interval i |> to_string))
         feature.A.Annotation.intervals
       |> String.concat "," in
-    (* A feature need not carry an id: GenBank derives one from /locus_tag when
-       there is one and has none otherwise.  Fall back to sequence, category and
-       span, which separates everything except two features of the same category
-       occupying the same span on the same sequence. *)
+    (* A feature need not carry an id: GenBank derives one from /locus_tag, or
+       failing that /gene, and has none otherwise.  Fall back to sequence,
+       category, span and strand.  The strand is not decoration -- two features
+       of one category over one span on opposite strands are two different
+       sequences, one the reverse complement of the other, and naming them alike
+       hands the caller a FASTA with a duplicate identifier over differing
+       records, which is the kind of thing samtools and BLAST resolve silently
+       and wrongly.  What that still does not separate is two features alike in
+       all four, and at that point the input has told us nothing to tell them
+       apart by. *)
     let name_of ann ~path feature =
       match feature.A.Annotation.id with
       | Some id when id <> "" -> id
       | _ ->
-        Printf.sprintf "%s:%s:%s" (A.Annotation.seq_name ann feature)
+        Printf.sprintf "%s:%s:%s:%s" (A.Annotation.seq_name ann feature)
           (match List.rev path with leaf :: _ -> leaf | [] -> "")
-          (location_of feature) in
+          (location_of feature)
+          (match feature.A.Annotation.strand with
+           | Some Sequences.Types.Forward _ -> "+"
+           | Some Sequences.Types.Reverse _ -> "-"
+           | None -> ".") in
     let iter_selected f = A.Selection.iter !current !selection f in
     (* What to do about a violation when the caller did not ask for a report.
        The library's own default raises and says what went wrong; this one adds
@@ -763,10 +773,24 @@ let () =
                 List.sort compare !acc
                   |> List.map (fun (key, value) -> Printf.sprintf " [%s=%s]" key value)
                   |> String.concat "" in
-              Printf.fprintf oc ">%s [path=%s] [seq=%s] [location=%s]%s\n%s\n"
+              (* Whatever the reference's own FASTA header said about the
+                 sequence, when it said anything: a header is a name and then
+                 free text, and the text is worth carrying since it is usually
+                 the only place the organism is written down. *)
+              let description =
+                match A.Annotation.reference !current with
+                | None -> ""
+                | Some r ->
+                  (match Sequences.Reference.description r
+                           (Sequences.Types.Forward
+                              (A.Annotation.seq_name !current feature)) with
+                   | "" -> ""
+                   | d -> Printf.sprintf " [description=%s]" d) in
+              Printf.fprintf oc ">%s [path=%s] [seq=%s]%s [location=%s]%s\n%s\n"
                 (name_of !current ~path:p feature) (A.Annotation.path_to_string p)
-                (A.Annotation.seq_name !current feature) (location_of feature)
-                attributes (A.wrap_sequence ~width:0 sequence));
+                (A.Annotation.seq_name !current feature) description
+                (location_of feature) attributes
+                (A.wrap_sequence ~width:0 sequence));
             close_out oc;
             if !Parameters.verbose then
               Printf.eprintf "(%s): wrote %d %s %s to %s\n%!" info.Tools.Argv.name !n

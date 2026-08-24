@@ -227,7 +227,7 @@ module Tabular: Format_t = struct
     (match reference ann with
      | None -> ()
      | Some reference ->
-       Sequences.Reference.iter (fun ~name ~seq:_ ~table ->
+       Sequences.Reference.iter (fun ~name ~seq:_ ~table ~description:_ ->
          if table <> Sequences.Translation.Table_1 then
            Printf.bprintf r.r_metadata "%s\t%s\n" (table_key name)
              (Sequences.Translation.to_string table)) reference;

@@ -902,8 +902,15 @@ module Reference:
     (* Walk the FORWARD strand only.  Both are stored, so that a lookup on
        either is O(1), but they are one sequence and a caller writing the
        reference out wants it once. *)
-    val iter: (name:string -> seq:string -> table:Translation.t -> unit) -> t -> unit
+    val iter:
+      (name:string -> seq:string -> table:Translation.t -> description:string -> unit) ->
+      t -> unit
     val find: t -> string Types.stranded_t -> string * Translation.t
+    (* Whatever followed the name on the FASTA header line, or the empty string.
+       A sequence is looked up by its name alone -- the first whitespace-delimited
+       word of the header, as every other tool reads one -- and the rest is kept
+       here so that writing the reference back out does not silently discard it *)
+    val description: t -> string Types.stranded_t -> string
     val length: t -> string Types.stranded_t -> int
     val get_sequence: t -> Types.stranded_interval_t -> string
     val get_table: t -> Types.stranded_interval_t -> Translation.t
@@ -912,8 +919,9 @@ module Reference:
 = struct
     (* We explicitly separate forward and reverse sequences *)
     module StrandedStringMap = Types.StrandedStringMap
-    (* To each sequence name we associate a sequence and a translation table *)
-    type t = (string * Translation.t) StrandedStringMap.t
+    (* To each sequence name we associate a sequence, a translation table and
+       whatever description followed the name on its header line *)
+    type t = (string * Translation.t * string) StrandedStringMap.t
     let empty = StrandedStringMap.empty
     let fasta_name_re = Str.regexp "^>"
     let rec add_from_fasta ?(linter = Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
@@ -957,8 +965,25 @@ module Reference:
     (* The body both entry points share.  [next_line] raises [End_of_file] when
        the input is exhausted, so a file is still read incrementally rather than
        slurped. *)
+    (* A FASTA header is a name and then, optionally, a description: the name
+       is the first whitespace-delimited word and everything after it is free
+       text.  That is how every other tool reads one, and reading the whole line
+       as the name instead made an ordinary reference -- '>chr1 Homo sapiens
+       chromosome 1' -- fail to match an annotation that spoke of 'chr1'. *)
+    and split_fasta_header line =
+      let len = String.length line in
+      let rec first_space i =
+        if i >= len then
+          len
+        else if line.[i] = ' ' || line.[i] = '\t' then
+          i
+        else
+          first_space (i + 1) in
+      let cut = first_space 0 in
+      String.sub line 0 cut,
+      String.trim (String.sub line cut (len - cut))
     and add_from_lines ~linter ~tables obj next_line =
-      let name = ref "" and seq = Buffer.create 128 and res = ref obj in
+      let name = ref "" and descr = ref "" and seq = Buffer.create 128 and res = ref obj in
       let process_seq () =
         if !name <> "" && Buffer.length seq > 0 then begin
           let table =
@@ -971,8 +996,8 @@ module Reference:
                 Exception.raise __FUNCTION__ IO_Format
                   (Printf.sprintf "Sequence '%s' has no associated translation table" !name) in
           let seq = Buffer.contents seq in
-          res := StrandedStringMap.add (Types.Forward !name) (seq, table) !res;
-          res := StrandedStringMap.add (Types.Reverse !name) (Lint.rc seq, table) !res
+          res := StrandedStringMap.add (Types.Forward !name) (seq, table, !descr) !res;
+          res := StrandedStringMap.add (Types.Reverse !name) (Lint.rc seq, table, !descr) !res
         end in
       begin try
         while true do
@@ -987,7 +1012,9 @@ module Reference:
               line in
           if Str.string_match fasta_name_re line 0 then begin
             process_seq ();
-            name := String.sub line 1 (String.length line - 1);
+            let n, d = split_fasta_header (String.sub line 1 (String.length line - 1)) in
+            name := n;
+            descr := d;
             Buffer.clear seq
           end else
             Buffer.add_string seq (linter line)
@@ -997,16 +1024,25 @@ module Reference:
       end;
       !res
     let iter f obj =
-      StrandedStringMap.iter (fun k (seq, table) ->
+      StrandedStringMap.iter (fun k (seq, table, description) ->
         match k with
-        | Types.Forward name -> f ~name ~seq ~table
+        | Types.Forward name -> f ~name ~seq ~table ~description
         | Types.Reverse _ -> ()) obj
-    let find obj str_name =
+    let _find obj str_name =
       try
         StrandedStringMap.find str_name obj
       with Not_found ->
         let _, name = Types.split_of_stranded str_name in
         Exception.raise __FUNCTION__ IO_Format (Printf.sprintf "Sequence '%s' not found in reference" name)
+    (* [find] keeps handing back what it always did, the description being of no
+       use to a caller after a sequence; [description] is for the one caller
+       that wants it, which is whoever is writing the reference back out *)
+    let find obj str_name =
+      let seq, table, _ = _find obj str_name in
+      seq, table
+    let description obj str_name =
+      let _, _, description = _find obj str_name in
+      description
     let length obj str_name =
         let seq, _ = find obj str_name in
         String.length seq

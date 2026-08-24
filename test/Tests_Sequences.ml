@@ -192,14 +192,36 @@ let test_reference () =
     Testing.check_string "iter yields each sequence once, forward"
       ~expected:"chr1=ATGCCCGGGTAA"
       (let acc = ref [] in
-       R.iter (fun ~name ~seq ~table:_ -> List.accum acc (name ^ "=" ^ seq)) r;
+       R.iter (fun ~name ~seq ~table:_ ~description:_ -> List.accum acc (name ^ "=" ^ seq)) r;
        List.rev !acc |> String.concat ",");
+    (* A FASTA header is a name and then free text.  Reading the whole line as
+       the name made an ordinary reference unusable: '>chr1 Homo sapiens
+       chromosome 1' was stored under all of that, and an annotation speaking
+       of 'chr1' could not find it. *)
+    let described =
+      R.add_from_fasta_string ~linter:Fun.id R.empty
+        ">chr1 Homo sapiens chromosome 1\nACGT\n>plain\nTTTT\n" in
+    Testing.check_string "a sequence is found by the first word of its header"
+      ~expected:"ACGT" (fst (R.find described (T.Forward "chr1")));
+    Testing.check_string "and the rest of the header is kept as its description"
+      ~expected:"Homo sapiens chromosome 1"
+      (R.description described (T.Forward "chr1"));
+    Testing.check_string "a header with no description has none" ~expected:""
+      (R.description described (T.Forward "plain"));
+    Testing.check_raises "and the whole header is not a name"
+      (fun () -> ignore (R.find described (T.Forward "chr1 Homo sapiens chromosome 1")));
+    Testing.check_string "iter hands the description back with the sequence"
+      ~expected:"chr1|Homo sapiens chromosome 1 plain|"
+      (let acc = ref [] in
+       R.iter (fun ~name ~seq:_ ~table:_ ~description ->
+         List.accum acc (name ^ "|" ^ description)) described;
+       List.rev !acc |> String.concat " ");
     Testing.check_int "two sequences can be loaded from one string"
       ~expected:2
       (let two =
          R.add_from_fasta_string ~linter:Fun.id R.empty ">a\nACGT\n>b\nTTTT\n" in
        let n = ref 0 in
-       R.iter (fun ~name:_ ~seq:_ ~table:_ -> incr n) two;
+       R.iter (fun ~name:_ ~seq:_ ~table:_ ~description:_ -> incr n) two;
        !n);
     (* A wrapped FASTA and a flat one are the same sequence. *)
     Testing.check_string "a wrapped record is joined on the way in"
