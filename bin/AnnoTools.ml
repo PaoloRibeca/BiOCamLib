@@ -604,25 +604,27 @@ let () =
       |> String.concat "," in
     (* A feature need not carry an id: GenBank derives one from /locus_tag, or
        failing that /gene, and has none otherwise.  Fall back to sequence,
-       category, span and strand.  The strand is not decoration -- two features
+       strand, span and category, which reads outwards from where the feature
+       is to what it is.  Neither of the last two is decoration: two features
        of one category over one span on opposite strands are two different
-       sequences, one the reverse complement of the other, and naming them alike
-       hands the caller a FASTA with a duplicate identifier over differing
-       records, which is the kind of thing samtools and BLAST resolve silently
-       and wrongly.  What that still does not separate is two features alike in
-       all four, and at that point the input has told us nothing to tell them
-       apart by. *)
+       sequences, one the reverse complement of the other, and two features of
+       different categories over one span -- a gene and its CDS, say -- are two
+       different records; naming either pair alike hands the caller a FASTA with
+       one identifier over differing records, which is the kind of thing
+       samtools and BLAST resolve silently and wrongly.  What this still does
+       not separate is two features alike in all four, and at that point the
+       input has told us nothing to tell them apart by. *)
     let name_of ann ~path feature =
       match feature.A.Annotation.id with
       | Some id when id <> "" -> id
       | _ ->
         Printf.sprintf "%s:%s:%s:%s" (A.Annotation.seq_name ann feature)
-          (match List.rev path with leaf :: _ -> leaf | [] -> "")
-          (location_of feature)
           (match feature.A.Annotation.strand with
            | Some Sequences.Types.Forward _ -> "+"
            | Some Sequences.Types.Reverse _ -> "-"
-           | None -> ".") in
+           | None -> ".")
+          (location_of feature)
+          (match List.rev path with leaf :: _ -> leaf | [] -> "") in
     let iter_selected f = A.Selection.iter !current !selection f in
     (* What to do about a violation when the caller did not ask for a report.
        The library's own default raises and says what went wrong; this one adds
