@@ -12,6 +12,6 @@
 ; is meant to stay quick, and out of bin/, which is what gets installed: this is
 ; built on demand and run by hand.
 (executables
- (names Bench_Mpileup)
- (modules Bench_Mpileup)
+ (names Bench_Mpileup Bench_TransitiveClosure)
+ (modules Bench_Mpileup Bench_TransitiveClosure)
  (libraries str unix BiOCamLib))

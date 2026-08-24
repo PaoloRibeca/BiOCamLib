@@ -1030,7 +1030,15 @@ module TransitiveClosure =
         type element_t
         type set_t
         type t
-        val empty: unit -> t
+        (* [on_merge surviving absorbed] fires once per class absorbed into another, in the
+           order the merges happen, and is passed a representative element of each.  Feeding
+           relations in increasing distance order therefore emits the single-linkage
+           dendrogram bottom-up, one node per call, which is what makes this structure a
+           clustering primitive and not only a closure.  It deliberately carries no height:
+           this module is abstract over relations and knows nothing of distances, so the
+           caller -- which chose the order -- is the only place a height could come from and
+           the only place the two could not disagree.  Absent, nothing is called. *)
+        val empty: ?on_merge:(element_t -> element_t -> unit) -> unit -> t
         val add_equivalences: t -> set_t -> unit
         val cardinal: t -> int
         val iter: (unit -> element_t -> unit) -> t -> unit
@@ -1059,15 +1067,18 @@ module TransitiveClosure =
              The class of a relation is the lowest relation index of its elements *)
           mutable relation_to_class: int array;
           (* The classes *)
-          mutable classes: IntSet.t IntMap.t
+          mutable classes: IntSet.t IntMap.t;
+          (* Fired once per class absorbed, on the state BEFORE the absorption *)
+          on_merge: (element_t -> element_t -> unit) option
         }
-        let empty () = {
+        let empty ?on_merge () = {
           cardinal = 0;
           hash = Hashtbl.create 128;
           id_to_element = [||];
           relation_number = 0;
           relation_to_class = [||];
-          classes = IntMap.empty
+          classes = IntMap.empty;
+          on_merge
         }
         let add_equivalences tc set =
           if set <> ValueSet.empty then begin
@@ -1121,6 +1132,31 @@ module TransitiveClosure =
             (* We merge and update classes *)
             let min_class = IntSet.min_elt new_relation in
             (*Printf.eprintf " Minimum class is %d\n%!" min_class;*)
+            (* BEFORE the loop below, which empties `classes` of everything it merges: the
+               representatives have to be read off the state as it stands, and one absorption
+               is reported per class joined rather than one per call, so that a relation over
+               k elements spanning j classes emits the j-1 merges it actually performs. *)
+            Option.iter
+              (fun f ->
+                let rep class_ =
+                  IntMap.find class_ tc.classes |> IntSet.min_elt |> Array.get tc.id_to_element in
+                (* AN ELEMENT MEETING THE STRUCTURE FOR THE FIRST TIME IS ITS OWN CLASS, and a
+                   relation over k of them therefore performs k-1 merges before anything is
+                   absorbed.  They fire first because that is the order they happen in.  Missing
+                   them was the first version of this hook, and it left a dendrogram short of a
+                   node for every pair of elements that arrived together -- which is most of the
+                   leaves, since a distance matrix is fed as pairs. *)
+                (match IntSet.elements new_class with
+                | [] | [ _ ] -> ()
+                | first :: rest ->
+                  let e0 = tc.id_to_element.(first) in
+                  List.iter (fun id -> f e0 tc.id_to_element.(id)) rest);
+                (* and then every class already standing is absorbed into the survivor *)
+                let surviving = rep min_class in
+                IntSet.iter
+                  (fun class_ -> if class_ <> min_class then f surviving (rep class_))
+                  new_relation)
+              tc.on_merge;
             let union = ref IntSet.empty in
             IntSet.iter
               (fun class_ ->

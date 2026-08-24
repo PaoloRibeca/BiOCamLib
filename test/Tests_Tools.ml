@@ -273,7 +273,54 @@ let test_transitive_closure () =
       ~expected:"1,2,3" (partition (closure_of [ [ 1; 2; 3 ] ]));
     Testing.check_string "a chain closes transitively"
       ~expected:"1,2,3,4,5"
-      (partition (closure_of [ [ 1; 2 ]; [ 2; 3 ]; [ 3; 4 ]; [ 4; 5 ] ])))
+      (partition (closure_of [ [ 1; 2 ]; [ 2; 3 ]; [ 3; 4 ]; [ 4; 5 ] ]));
+    (* THE MERGE HOOK.  It exists so that relations fed in increasing distance order
+       emit a single-linkage dendrogram bottom-up -- one node per firing -- without the
+       caller having to snapshot the whole partition after every relation, which is what
+       makes this structure usable for clustering and not only for closure. *)
+    let merges_of sets =
+      let log = ref [] in
+      let tc = TC.empty ~on_merge:(fun a b -> List.accum log (a, b)) () in
+      List.iter (fun l -> TC.add_equivalences tc (IntSet.of_list l)) sets;
+      List.rev !log in
+    let merges_to_string l =
+      List.map (fun (a, b) -> Printf.sprintf "%d+%d" a b) l |> String.concat " " in
+    (* A PAIR OF FRESH ELEMENTS IS ITSELF A MERGE -- of two singleton classes -- and
+       it is the commonest one, since a distance matrix is fed as pairs.  The first
+       version of this hook fired only on absorption and so emitted nothing here,
+       leaving a dendrogram short of a node for every leaf pairing. *)
+    Testing.check_string "a pair of fresh elements is one merge"
+      ~expected:"1+2" (merges_of [ [ 1; 2 ] ] |> merges_to_string);
+    Testing.check_string "and a fresh triple is two"
+      ~expected:"1+2 1+3" (merges_of [ [ 1; 2; 3 ] ] |> merges_to_string);
+    Testing.check_string "joining two standing classes fires once more"
+      ~expected:"1+2 3+4 1+3" (merges_of [ [ 1; 2 ]; [ 3; 4 ]; [ 2; 3 ] ] |> merges_to_string);
+    (* One firing per class joined, not one per call: a relation spanning three
+       classes performs two merges and must say so, or the log is not a tree. *)
+    Testing.check_string "a relation spanning three classes fires twice"
+      ~expected:"1+2 3+4 5+6 1+3 1+5"
+      (merges_of [ [ 1; 2 ]; [ 3; 4 ]; [ 5; 6 ]; [ 1; 3; 5 ] ] |> merges_to_string);
+    Testing.check_string "a relation inside one class fires nothing"
+      ~expected:"1+2 3+4 1+3"
+      (merges_of [ [ 1; 2 ]; [ 3; 4 ]; [ 2; 3 ]; [ 1; 4 ] ] |> merges_to_string);
+    (* THE DENDROGRAM PROPERTY, which is the whole point: n elements ending in one
+       class take exactly n-1 merges, whatever order the relations arrive in.  It is
+       what tells you the log is a tree over the leaves and not a list of events. *)
+    Testing.check_int "a chain of five emits four merges"
+      ~expected:4
+      (List.length (merges_of [ [ 1; 2 ]; [ 2; 3 ]; [ 3; 4 ]; [ 4; 5 ] ]));
+    Testing.check_int "and so does the same chain shuffled"
+      ~expected:4
+      (List.length (merges_of [ [ 3; 4 ]; [ 1; 2 ]; [ 4; 5 ]; [ 2; 3 ] ]));
+    (* WITH AND WITHOUT THE HOOK THE ANSWER IS THE SAME.  It observes; it must not
+       participate -- and it reads the state BEFORE each absorption, which is the one
+       place a representative could be read off a half-merged structure. *)
+    Testing.check_string "the hook does not change the partition"
+      ~expected:(partition (closure_of [ [ 1; 2 ]; [ 3; 4 ]; [ 1; 3 ]; [ 9 ] ]))
+      (let tc = TC.empty ~on_merge:(fun _ _ -> ()) () in
+       List.iter (fun l -> TC.add_equivalences tc (IntSet.of_list l))
+         [ [ 1; 2 ]; [ 3; 4 ]; [ 1; 3 ]; [ 9 ] ];
+       partition tc))
 
 (* Command-line scaffolding.  [parse] itself and the [get_parameter_*] family
    cannot be driven from here, and the reason is not that they exit: there is
