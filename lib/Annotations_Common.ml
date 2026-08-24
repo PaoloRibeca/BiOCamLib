@@ -157,9 +157,6 @@ let default_gff3_hierarchy =
          (ncRNA (exon)))), \
      pseudogene, region"
 
-(* Everything below sees the base AST unqualified. *)
-open Annotation
-
 let strand_of_field = function
   | "+" -> Some Sequences.Types.forward
   | "-" -> Some Sequences.Types.reverse

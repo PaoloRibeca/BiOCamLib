@@ -151,7 +151,229 @@ let test_of_alignment () =
     Testing.check_raises ~re:"cannot be negative" "as is a negative coverage floor"
       (fun () -> Consensus.of_alignment ~min_coverage:(-1) [| "ACGTACGT" |]))
 
+(* Consensus from a pileup.  All of this runs through channels, so a case is a
+   pileup in and the two files out -- which is what a caller actually sees, and
+   the only place a wrong column shows up. *)
+
+let read_file path =
+  let ic = open_in_bin path in
+  let res = really_input_string ic (in_channel_length ic) in
+  close_in ic;
+  res
+
+let pileup lines = String.concat "\n" (List.map (String.concat "\t") lines) ^ "\n"
+
+let consensus_of ?insertion_min_fraction ?insertion_min_coverage ?multiple_insertions ?seed text =
+  let in_path = Filename.temp_file "BiOCamLib_Tests_" ".pileup"
+  and seq_path = Filename.temp_file "BiOCamLib_Tests_" ".fasta"
+  and bg_path = Filename.temp_file "BiOCamLib_Tests_" ".bedgraph" in
+  Fun.protect ~finally:(fun () -> List.iter Sys.remove [ in_path; seq_path; bg_path ]) (fun () ->
+    let oc = open_out in_path in
+    output_string oc text;
+    close_out oc;
+    let ic = open_in in_path and seq_oc = open_out seq_path and bg_oc = open_out bg_path in
+    let stats =
+      Fun.protect ~finally:(fun () -> close_in ic; close_out seq_oc; close_out bg_oc) (fun () ->
+        Consensus.Mpileup.from_mpileup ?insertion_min_fraction ?insertion_min_coverage
+          ?multiple_insertions ?seed ~sequence:seq_oc ~bedgraph:bg_oc ic) in
+    stats, read_file seq_path, read_file bg_path)
+
+let sequence_of ?insertion_min_fraction ?insertion_min_coverage ?multiple_insertions ?seed text =
+  let _, s, _ =
+    consensus_of ?insertion_min_fraction ?insertion_min_coverage ?multiple_insertions ?seed text in
+  s
+
+let bedgraph_of text = let _, _, b = consensus_of text in b
+
+let stats_of text = let st, _, _ = consensus_of text in st
+
+let test_from_mpileup () =
+  Testing.section "Consensus from a pileup" (fun () ->
+    (* The plain case: whatever most reads said, one character per position. *)
+    Testing.check_string "the most frequent base at each position wins"
+      ~expected:">chr\nACGT\n"
+      (sequence_of
+         (pileup
+            [ [ "chr"; "1"; "A"; "4"; "...."; "IIII" ]; [ "chr"; "2"; "C"; "4"; "...."; "IIII" ];
+              [ "chr"; "3"; "G"; "4"; "...."; "IIII" ];
+              [ "chr"; "4"; "T"; "4"; "...."; "IIII" ] ]));
+    Testing.check_string "and a disagreeing majority is what is taken"
+      ~expected:">chr\nGG\n"
+      (sequence_of
+         (pileup
+            [ [ "chr"; "1"; "A"; "4"; "GGG."; "IIII" ];
+              [ "chr"; "2"; "A"; "4"; ".GGG"; "IIII" ] ]));
+    (* A deleted base is a vote, and the vote it wins is "no character here" --
+       which is the one place the consensus's reading of a pileup differs from a
+       variant caller's, where a read inside a deletion votes for nothing. *)
+    Testing.check_string "a position most reads have deleted contributes nothing"
+      ~expected:">chr\nAT\n"
+      (sequence_of
+         (pileup
+            [ [ "chr"; "1"; "A"; "4"; "...."; "IIII" ]; [ "chr"; "2"; "C"; "4"; "***."; "IIII" ];
+              [ "chr"; "3"; "T"; "4"; "...."; "IIII" ] ]));
+    (* No coverage at all is not a deletion: a deletion is covered by reads that
+       say so, while here nothing was read, so the segment is kept as an N
+       rather than closed up. *)
+    Testing.check_string "a position with no coverage becomes an N"
+      ~expected:">chr\nANT\n"
+      (sequence_of
+         (pileup
+            [ [ "chr"; "1"; "A"; "4"; "...."; "IIII" ]; [ "chr"; "2"; "C"; "0"; "*"; "*" ];
+              [ "chr"; "3"; "T"; "4"; "...."; "IIII" ] ]));
+    (* One record per sequence, in the order they appear. *)
+    Testing.check_string "each sequence of the pileup becomes its own record"
+      ~expected:">chr1\nA\n>chr2\nC\n"
+      (sequence_of
+         (pileup
+            [ [ "chr1"; "1"; "A"; "2"; ".."; "II" ]; [ "chr2"; "1"; "C"; "2"; ".."; "II" ] ])))
+
+(* The coverage track.  A BedGraph interval is zero-based and half-open, which
+   is the whole of what these check: written inclusively -- as the tool this was
+   taken from wrote it -- a run of one base is an interval of none, and every
+   interval abuts the next one base short. *)
+
+let test_bedgraph () =
+  Testing.section "Consensus coverage track" (fun () ->
+    Testing.check_string "a single-base run spans one base, not zero"
+      ~expected:"chr\t0\t1\t4\nchr\t1\t2\t2\n"
+      (bedgraph_of
+         (pileup
+            [ [ "chr"; "1"; "A"; "4"; "...."; "IIII" ]; [ "chr"; "2"; "C"; "2"; ".."; "II" ] ]));
+    Testing.check_string "positions of equal coverage merge into one interval"
+      ~expected:"chr\t0\t3\t4\n"
+      (bedgraph_of
+         (pileup
+            [ [ "chr"; "1"; "A"; "4"; "...."; "IIII" ]; [ "chr"; "2"; "C"; "4"; "...."; "IIII" ];
+              [ "chr"; "3"; "G"; "4"; "...."; "IIII" ] ]));
+    Testing.check_string "an uncovered position is carried at zero"
+      ~expected:"chr\t0\t1\t4\nchr\t1\t2\t0\nchr\t2\t3\t4\n"
+      (bedgraph_of
+         (pileup
+            [ [ "chr"; "1"; "A"; "4"; "...."; "IIII" ]; [ "chr"; "2"; "C"; "0"; "*"; "*" ];
+              [ "chr"; "3"; "T"; "4"; "...."; "IIII" ] ]));
+    Testing.check_string "and a deleted position takes no interval at all"
+      ~expected:"chr\t0\t2\t4\n"
+      (bedgraph_of
+         (pileup
+            [ [ "chr"; "1"; "A"; "4"; "...."; "IIII" ]; [ "chr"; "2"; "C"; "4"; "***."; "IIII" ];
+              [ "chr"; "3"; "T"; "4"; "...."; "IIII" ] ]));
+    Testing.check_string "each sequence restarts the coordinates"
+      ~expected:"chr1\t0\t1\t2\nchr2\t0\t1\t2\n"
+      (bedgraph_of
+         (pileup
+            [ [ "chr1"; "1"; "A"; "2"; ".."; "II" ]; [ "chr2"; "1"; "C"; "2"; ".."; "II" ] ])))
+
+(* Insertions, which are the part a consensus cannot take one position at a
+   time: the pileup reports one between this position and the next, and whether
+   it belongs in the sequence depends on support accumulated across several. *)
+
+let test_insertions () =
+  Testing.section "Consensus insertions" (fun () ->
+    Testing.check_string "a well-supported insertion is written into the consensus"
+      ~expected:">chr\nACACG\n"
+      (sequence_of
+         (pileup
+            [ [ "chr"; "1"; "A"; "3"; "..."; "III" ];
+              [ "chr"; "2"; "C"; "3"; ".+2AC.+2AC.+2AC"; "III" ];
+              [ "chr"; "3"; "G"; "3"; "..."; "III" ] ]));
+    Testing.check_string "and the bases it adds carry its own support"
+      ~expected:"chr\t0\t5\t3\n"
+      (bedgraph_of
+         (pileup
+            [ [ "chr"; "1"; "A"; "3"; "..."; "III" ];
+              [ "chr"; "2"; "C"; "3"; ".+2AC.+2AC.+2AC"; "III" ];
+              [ "chr"; "3"; "G"; "3"; "..."; "III" ] ]));
+    Testing.check_string "one read out of four does not carry an insertion in"
+      ~expected:">chr\nACG\n"
+      (sequence_of
+         (pileup
+            [ [ "chr"; "1"; "A"; "4"; "...."; "IIII" ];
+              [ "chr"; "2"; "C"; "4"; ".+2AC..."; "IIII" ];
+              [ "chr"; "3"; "G"; "4"; "...."; "IIII" ] ]));
+    Testing.check_int "an insertion written is counted" ~expected:1
+      (stats_of
+         (pileup
+            [ [ "chr"; "1"; "A"; "3"; "..."; "III" ];
+              [ "chr"; "2"; "C"; "3"; ".+2AC.+2AC.+2AC"; "III" ] ]))
+        .Consensus.Mpileup.insertions;
+    Testing.check_int "and one refused is not" ~expected:0
+      (stats_of
+         (pileup
+            [ [ "chr"; "1"; "A"; "4"; "...."; "IIII" ];
+              [ "chr"; "2"; "C"; "4"; ".+2AC..."; "IIII" ] ]))
+        .Consensus.Mpileup.insertions;
+    Testing.check_string "an insertion at the last position of a sequence still lands in it"
+      ~expected:">chr1\nACTTT\n>chr2\nGG\n"
+      (sequence_of
+         (pileup
+            [ [ "chr1"; "1"; "A"; "3"; "..."; "III" ];
+              [ "chr1"; "2"; "C"; "3"; ".+3TTT.+3TTT.+3TTT"; "III" ];
+              [ "chr2"; "1"; "G"; "3"; "..."; "III" ];
+              [ "chr2"; "2"; "G"; "3"; "..."; "III" ] ]));
+    (* An insertion still open at the end of one sequence describes a place in
+       that sequence and has nothing to say about the beginning of the next, so
+       what a sequence is read as cannot depend on what preceded it.
+       The fixture is built to be able to see that.  The insertion is too weakly
+       supported to be written where it occurs, so it is still open at the
+       boundary; the next sequence is covered once, which is what drags the
+       fraction it is judged against down far enough for the stale insertion to
+       clear it.  Carried across, it is written into a sequence no read of which
+       ever reported it. *)
+    let chr1 =
+      [ [ "chr1"; "1"; "A"; "4"; ".+5TTTTT..."; "IIII" ];
+        [ "chr1"; "2"; "C"; "4"; "...."; "IIII" ] ]
+    and chr2 = [ [ "chr2"; "1"; "G"; "1"; "."; "I" ] ] in
+    Testing.check_string "and one still open at a sequence boundary does not cross it"
+      ~expected:
+        (sequence_of ~insertion_min_coverage:1 (pileup chr1)
+          ^ sequence_of ~insertion_min_coverage:1 (pileup chr2))
+      (sequence_of ~insertion_min_coverage:1 (pileup (chr1 @ chr2))))
+
+(* Ties, and the seed that settles them.  Two genotypes with the same count are
+   two equally supported readings, and something has to be picked; what matters
+   is that the pick is stated rather than arbitrary, so that a run reproduces. *)
+
+let test_ties () =
+  Testing.section "Consensus tie-breaking" (fun () ->
+    let tie = pileup [ [ "chr"; "1"; "A"; "4"; "..GG"; "IIII" ] ] in
+    Testing.check_int "an evenly split position is counted as an ambiguity" ~expected:1
+      (stats_of tie).Consensus.Mpileup.ambiguities;
+    Testing.check_int "where a decided one is not" ~expected:0
+      (stats_of (pileup [ [ "chr"; "1"; "A"; "4"; "...G"; "IIII" ] ]))
+        .Consensus.Mpileup.ambiguities;
+    Testing.check_string "the same seed gives the same answer"
+      ~expected:(sequence_of ~seed:7 tie) (sequence_of ~seed:7 tie);
+    (* And the seed has to do something, or fixing it would prove nothing: over
+       a range of seeds the draw must land on both readings, not one. *)
+    Testing.check_bool "and different seeds reach both readings" ~expected:true
+      (let seen =
+         List.init 24 (fun seed -> sequence_of ~seed tie) |> List.sort_uniq compare in
+       List.length seen = 2);
+    Testing.check_int "every position is counted, decided or not" ~expected:3
+      (stats_of
+         (pileup
+            [ [ "chr"; "1"; "A"; "4"; "...."; "IIII" ]; [ "chr"; "2"; "C"; "0"; "*"; "*" ];
+              [ "chr"; "3"; "G"; "4"; "..GG"; "IIII" ] ]))
+        .Consensus.Mpileup.positions)
+
+let test_from_mpileup_arguments () =
+  Testing.section "Consensus from a pileup: arguments" (fun () ->
+    Testing.check_raises ~re:"insertion_min_fraction" "a non-positive fraction is refused"
+      (fun () -> sequence_of ~insertion_min_fraction:0. "");
+    Testing.check_raises ~re:"insertion_min_coverage" "as is a coverage floor below one"
+      (fun () -> sequence_of ~insertion_min_coverage:0 "");
+    Testing.check_raises ~re:"column" "and a line with too few columns stops the run"
+      (fun () -> sequence_of (pileup [ [ "chr"; "1"; "A" ] ]));
+    Testing.check_string "an empty pileup produces an empty consensus" ~expected:""
+      (sequence_of ""))
+
 let run () =
   test_side_dashes ();
   test_remove_tips ();
-  test_of_alignment ()
+  test_of_alignment ();
+  test_from_mpileup ();
+  test_bedgraph ();
+  test_insertions ();
+  test_ties ();
+  test_from_mpileup_arguments ()
