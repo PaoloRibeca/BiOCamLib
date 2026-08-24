@@ -151,6 +151,67 @@ let old_style_of_line ?(quality_offset = 33) line =
   end;
   Array.of_list (List.rev !acc)
 
+(* SiNPle's way of counting a position, reproduced: the line split into a list
+   of columns, the calls column walked with [String.sub s i 1], and every base
+   folded into a StringMap of symbol to a count and an IntMap of quality to
+   count.  That is two persistent-tree inserts per base, each allocating along
+   its path, after allocating the key.  It is here to be compared against the
+   dense histogram, which is one array increment and nothing allocated. *)
+module QualitiesDistribution = Map.Make (Int)
+
+let sinple_style_summarise ?(quality_offset = 33) line =
+  let columns = Array.of_list (String.split_on_char '\t' line) in
+  if Array.length columns < 6 then
+    Exception.raise __FUNCTION__ IO_Format "Insufficient number of fields";
+  let refr = columns.(2) and bases = columns.(4) and quals = columns.(5) in
+  let refr_uc = String.uppercase_ascii refr and refr_lc = String.lowercase_ascii refr in
+  let add_to stats what qual =
+    match StringMap.find_opt what stats with
+    | Some (num, qs) ->
+      let qs =
+        match QualitiesDistribution.find_opt qual qs with
+        | Some c -> QualitiesDistribution.add qual (c + 1) qs
+        | None -> QualitiesDistribution.add qual 1 qs in
+      StringMap.add what (num + 1, qs) stats
+    | None -> StringMap.add what (1, QualitiesDistribution.singleton qual 1) stats in
+  let len = String.length bases and res = ref StringMap.empty in
+  let i = ref 0 and qpos = ref 0 in
+  if columns.(3) <> "0" then begin
+    while !i < len do
+      let c = String.sub bases !i 1 in
+      let quality_from_ascii ch = Char.code ch - quality_offset in
+      (match c with
+       | "A" | "C" | "G" | "T" | "N" | "a" | "c" | "g" | "t" | "n" ->
+         res := add_to !res c (quality_from_ascii quals.[!qpos]);
+         incr qpos
+       | "." ->
+         res := add_to !res refr_uc (quality_from_ascii quals.[!qpos]);
+         incr qpos
+       | "," ->
+         res := add_to !res refr_lc (quality_from_ascii quals.[!qpos]);
+         incr qpos
+       | "+" | "-" ->
+         let how_many = ref "" in
+         while begin
+           incr i;
+           match String.sub bases !i 1 with
+           | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" as d ->
+             how_many := !how_many ^ d;
+             true
+           | _ -> false
+         end do () done;
+         let how_many = int_of_string !how_many in
+         res := add_to !res (c ^ String.sub bases !i how_many) 0;
+         i := !i + how_many - 1
+       | "*" | "#" | ">" | "<" -> incr qpos
+       | "^" -> incr i
+       | "$" -> ()
+       | _ -> Exception.raise __FUNCTION__ IO_Format "Unknown character");
+      incr i
+    done
+  end;
+  !res
+
 (* Time and allocate.  [Gc.minor_words] counts what was handed out, which is
    the quantity a per-character [String.sub] shows up in. *)
 let repeats = 7
@@ -204,5 +265,14 @@ let () =
         measure "current" (fun () -> List.iter (fun l -> ignore (Mpileup.of_line l)) all)
           n_lines n_bases
       in
-      Printf.printf "  %-12s %8.2fx\n\n%!" "speed-up" (old_time /. new_time))
+      Printf.printf "  %-12s %8.2fx\n" "speed-up" (old_time /. new_time);
+      (* And the same for counting a position rather than keeping every read,
+         which is what a variant caller does at every position of a genome. *)
+      let sinple_time =
+        measure "count: old" (fun () ->
+          List.iter (fun l -> ignore (sinple_style_summarise l)) all) n_lines n_bases
+      and summarise_time =
+        measure "count: new" (fun () ->
+          List.iter (fun l -> ignore (Mpileup.summarise l)) all) n_lines n_bases in
+      Printf.printf "  %-12s %8.2fx\n\n%!" "speed-up" (sinple_time /. summarise_time))
     [ 2000, 50; 2000, 200; 500, 1000 ]

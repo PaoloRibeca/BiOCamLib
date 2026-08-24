@@ -188,9 +188,135 @@ let test_iteration () =
     Testing.check_raises ~re:"Input file not found" "a missing file is refused as such"
       (fun () -> M.iter (fun _ -> ()) "/nonexistent/BiOCamLib_Tests_missing.pileup"))
 
+(* Counting a line rather than keeping it.  This is the shape a variant caller
+   wants, and the thing most worth pinning about it is that the reference has no
+   special status: a read that wrote '.' and one that spelled the base out are
+   the same vote and must land in the same bucket, or one genotype silently
+   becomes two and the reference allele is under-counted. *)
+
+let summarise ?strand s =
+  M.summarise ?strand s
+
+let show_genotypes (u: M.Summary.t) =
+  List.map
+    (fun (g: M.Genotype.t) ->
+      Printf.sprintf "%s:%d%s" g.M.Genotype.symbol g.M.Genotype.count
+        (match g.M.Genotype.qualities with
+         | None -> ""
+         | Some q -> Printf.sprintf "@%.4g" (M.Qualities.mean q)))
+    u.M.Summary.genotypes
+  |> String.concat " "
+
+(* The kind of whichever genotype is an indel, there being at most one in each
+   of the lines below. *)
+let kind_of_indel (u: M.Summary.t) =
+  match
+    List.find_opt (fun (g: M.Genotype.t) -> g.M.Genotype.kind <> M.Genotype.Base)
+      u.M.Summary.genotypes
+  with
+  | Some { M.Genotype.kind = M.Genotype.Short_indel; _ } -> "Short_indel"
+  | Some { M.Genotype.kind = M.Genotype.Long_indel; _ } -> "Long_indel"
+  | _ -> "none"
+
+let test_summary () =
+  Testing.section "Pileup summary" (fun () ->
+    (* Reference matches and explicit bases are one genotype, not two. *)
+    Testing.check_string "a dot and the base it stands for are the same vote"
+      ~expected:"A:4@40"
+      (show_genotypes (summarise (line [ "c"; "1"; "A"; "4"; ".,Aa"; "IIII" ])));
+    Testing.check_string "and a different base is a different vote"
+      ~expected:"A:2@40 G:2@40"
+      (show_genotypes (summarise (line [ "c"; "1"; "A"; "4"; ".,Gg"; "IIII" ])));
+    (* Indels are genotypes of their own, classified by length because the model
+       above this gives short and long ones different error rates. *)
+    Testing.check_string "an indel is a genotype in its own right"
+      ~expected:"A:2@40 +AC:1"
+      (show_genotypes (summarise (line [ "c"; "1"; "A"; "2"; ".+2AC,"; "II" ])));
+    Testing.check_string "a single base deleted is a short indel"
+      ~expected:"Short_indel"
+      (kind_of_indel (summarise (line [ "c"; "1"; "A"; "1"; ".-1G"; "I" ])));
+    Testing.check_string "and several bases a long one"
+      ~expected:"Long_indel"
+      (kind_of_indel (summarise (line [ "c"; "1"; "A"; "1"; ".-2GG"; "I" ])));
+    Testing.check_bool "an indel carries no quality, rather than a zero one"
+      ~expected:true
+      (List.for_all
+         (fun (g: M.Genotype.t) ->
+           match g.M.Genotype.kind, g.M.Genotype.qualities with
+           | M.Genotype.Base, Some _ -> true
+           | (M.Genotype.Short_indel | M.Genotype.Long_indel), None -> true
+           | _ -> false)
+         (summarise (line [ "c"; "1"; "A"; "2"; ".+2AC,"; "II" ])).M.Summary.genotypes);
+    (* A read inside a deletion or skipping the reference is counted by the
+       aligner but votes for nothing. *)
+    Testing.check_string "gaps and skips are counted apart from the votes"
+      ~expected:"depth 4, voting 1, gaps 2, skips 1"
+      (let u = summarise (line [ "c"; "1"; "A"; "4"; ".*#>"; "IIII" ]) in
+       Printf.sprintf "depth %d, voting %d, gaps %d, skips %d"
+         u.M.Summary.depth u.M.Summary.voting u.M.Summary.gaps u.M.Summary.skips);
+    Testing.check_string "and contribute no genotype" ~expected:"A:1@40"
+      (show_genotypes (summarise (line [ "c"; "1"; "A"; "4"; ".*#>"; "IIII" ])));
+    (* A directional protocol is evidence about one strand only. *)
+    Testing.check_string "a strand filter keeps only the reads on it"
+      ~expected:"A:1@40 G:1@40"
+      (show_genotypes
+         (summarise ~strand:Sequences.Types.forward
+            (line [ "c"; "1"; "A"; "4"; ".,Gg"; "IIII" ])));
+    Testing.check_string "and the other strand sees the others"
+      ~expected:"A:1@40 G:1@40"
+      (show_genotypes
+         (summarise ~strand:Sequences.Types.reverse
+            (line [ "c"; "1"; "A"; "4"; ".,Gg"; "IIII" ])));
+    Testing.check_string "a line at depth zero has nothing to say" ~expected:""
+      (show_genotypes (summarise (line [ "c"; "1"; "A"; "0"; "*"; "*" ]))))
+
+(* The quality histogram, which is what the model's likelihood is computed
+   over: a null distribution built by merging every genotype but one, and the
+   variant's own with its lowest quarter dropped. *)
+
+let test_qualities () =
+  Testing.section "Quality distributions" (fun () ->
+    let of_list l =
+      let q = M.Qualities.make () in
+      List.iter (M.Qualities.add q) l;
+      q in
+    Testing.check_int "an empty distribution counts nothing" ~expected:0
+      (M.Qualities.cardinal (M.Qualities.make ()));
+    Testing.check_float "the mean of an empty one is zero" ~expected:0.
+      (M.Qualities.mean (M.Qualities.make ()));
+    Testing.check_int "what goes in is counted" ~expected:4
+      (M.Qualities.cardinal (of_list [ 10; 20; 20; 30 ]));
+    Testing.check_float "and averaged" ~expected:20.
+      (M.Qualities.mean (of_list [ 10; 20; 20; 30 ]));
+    (* The sample variance of 10, 20, 20, 30 is 200/3. *)
+    Testing.check_float "the variance is the sample one" ~expected:(200. /. 3.)
+      (M.Qualities.variance (of_list [ 10; 20; 20; 30 ]));
+    Testing.check_float "one observation has no variance" ~expected:0.
+      (M.Qualities.variance (of_list [ 40 ]));
+    (* Merging is what builds a variant's null: everything that is not it. *)
+    Testing.check_float "merging adds one distribution into another" ~expected:20.
+      (let a = of_list [ 10; 30 ] and b = of_list [ 15; 25 ] in
+       M.Qualities.merge_into ~into:a b;
+       M.Qualities.mean a);
+    Testing.check_int "and the counts with it" ~expected:4
+      (let a = of_list [ 10; 30 ] and b = of_list [ 15; 25 ] in
+       M.Qualities.merge_into ~into:a b;
+       M.Qualities.cardinal a);
+    (* Dropping the lowest quarter of four observations drops exactly one. *)
+    Testing.check_float "the lowest quarter is dropped before averaging"
+      ~expected:30. (M.Qualities.mean_above_fraction (of_list [ 10; 20; 30; 40 ]) 0.25);
+    Testing.check_float "dropping nothing is the plain mean" ~expected:25.
+      (M.Qualities.mean_above_fraction (of_list [ 10; 20; 30; 40 ]) 0.);
+    Testing.check_float "and dropping everything leaves nothing" ~expected:0.
+      (M.Qualities.mean_above_fraction (of_list [ 10; 20; 30; 40 ]) 1.);
+    Testing.check_raises "a quality outside the scale is refused"
+      (fun () -> M.Qualities.add (M.Qualities.make ()) 200))
+
 let run () =
   test_columns ();
   test_calls ();
   test_round_trip ();
   test_refusals ();
-  test_iteration ()
+  test_iteration ();
+  test_summary ();
+  test_qualities ()
