@@ -9,9 +9,12 @@
     same result from each, and differing only in the two things that
     changed: how a line is cut into columns, and how the read-bases
     column is walked.  The second is the interesting one -- the reader
-    this replaces took a fresh one-character string per base -- so the
-    allocation is reported beside the time, that being the quantity the
-    change was actually about.
+    this replaces took a fresh one-character string per base, where
+    this one matches on characters -- so the allocation is reported
+    beside the time, that being the quantity the change was about.
+
+    An ocamllex-and-menhir reader stood here in between and measured
+    slower than both; the design note carries its figures.
 
     This program was designed and developed by the author(s),
     with the assistance of the following AI tool(s):
@@ -148,86 +151,6 @@ let old_style_of_line ?(quality_offset = 33) line =
   end;
   Array.of_list (List.rev !acc)
 
-(* A third way, and the one the comparison above is missing: the same hand
-   written scan, but matching on CHARACTERS rather than on one-character
-   strings, and cutting the columns by walking to each tab rather than by
-   building a list of them.  Neither is clever -- it is what the original would
-   have been had it never reached for [String.sub s i 1] -- and it is here to
-   answer the question the other two cannot: how much of the cost was the
-   technique, and how much was the format. *)
-let direct_of_line ?(quality_offset = 33) line =
-  let len = String.length line in
-  let starts = Array.make 6 0 and stops = Array.make 6 0 in
-  let n = ref 0 and pos = ref 0 and finished = ref false in
-  while not !finished && !n < 6 do
-    let stop = match String.index_from_opt line !pos '\t' with Some i -> i | None -> len in
-    starts.(!n) <- !pos;
-    stops.(!n) <- stop;
-    incr n;
-    if stop >= len then finished := true else pos := stop + 1
-  done;
-  if !n < 6 then
-    Exception.raise __FUNCTION__ IO_Format "Insufficient number of fields";
-  let bases = String.sub line starts.(4) (stops.(4) - starts.(4))
-  and quals = String.sub line starts.(5) (stops.(5) - starts.(5)) in
-  let blen = String.length bases and acc = ref [] and count = ref 0 in
-  let i = ref 0 and qpos = ref 0 and pending_start = ref None in
-  while !i < blen do
-    let c = String.unsafe_get bases !i in
-    let push call strand =
-      let read =
-        { Mpileup.Read.call; strand;
-          quality = Char.code (String.unsafe_get quals !qpos) - quality_offset;
-          indel = None; starts_read = !pending_start; ends_read = false } in
-      pending_start := None;
-      List.accum acc read;
-      incr count;
-      incr qpos in
-    (match c with
-     | '.' -> push Mpileup.Call.Reference Sequences.Types.forward
-     | ',' -> push Mpileup.Call.Reference Sequences.Types.reverse
-     | 'A' | 'C' | 'G' | 'T' | 'N' ->
-       push (Mpileup.Call.Base c) Sequences.Types.forward
-     | 'a' | 'c' | 'g' | 't' | 'n' ->
-       push (Mpileup.Call.Base (Char.uppercase_ascii c)) Sequences.Types.reverse
-     | '*' -> push Mpileup.Call.Gap Sequences.Types.forward
-     | '#' -> push Mpileup.Call.Gap Sequences.Types.reverse
-     | '>' -> push Mpileup.Call.Skip Sequences.Types.forward
-     | '<' -> push Mpileup.Call.Skip Sequences.Types.reverse
-     | '+' | '-' ->
-       let how_many = ref 0 in
-       let continue_ = ref true in
-       while !continue_ do
-         incr i;
-         match String.unsafe_get bases !i with
-         | '0' .. '9' as d -> how_many := !how_many * 10 + (Char.code d - 48)
-         | _ -> continue_ := false
-       done;
-       let s = String.uppercase_ascii (String.sub bases !i !how_many) in
-       (match !acc with
-        | last :: rest ->
-          acc :=
-            { last with
-              Mpileup.Read.indel =
-                Some (if c = '+' then Mpileup.Indel.Insertion s
-                      else Mpileup.Indel.Deletion s) } :: rest
-        | [] -> ());
-       i := !i + !how_many - 1
-     | '^' -> incr i; pending_start := Some (Char.code (String.unsafe_get bases !i) - 33)
-     | '$' ->
-       (match !acc with
-        | last :: rest -> acc := { last with Mpileup.Read.ends_read = true } :: rest
-        | [] -> ())
-     | _ -> Exception.raise __FUNCTION__ IO_Format "Unknown character");
-    incr i
-  done;
-  let blank =
-    { Mpileup.Read.call = Mpileup.Call.Gap; strand = Sequences.Types.forward;
-      quality = 0; indel = None; starts_read = None; ends_read = false } in
-  let reads = Array.make !count blank in
-  List.iteri (fun k r -> reads.(!count - 1 - k) <- r) !acc;
-  reads
-
 (* Time and allocate.  [Gc.minor_words] counts what was handed out, which is
    the quantity a per-character [String.sub] shows up in. *)
 let repeats = 7
@@ -278,11 +201,8 @@ let () =
         measure "old style" (fun () -> List.iter (fun l -> ignore (old_style_of_line l)) all)
           n_lines n_bases
       and new_time =
-        measure "lexer" (fun () -> List.iter (fun l -> ignore (Mpileup.of_line l)) all)
+        measure "current" (fun () -> List.iter (fun l -> ignore (Mpileup.of_line l)) all)
           n_lines n_bases
-      and direct_time =
-        measure "plain chars" (fun () -> List.iter (fun l -> ignore (direct_of_line l)) all)
-          n_lines n_bases in
-      Printf.printf "  %-12s lexer %.2fx, plain chars %.2fx\n\n%!"
-        "against old" (old_time /. new_time) (old_time /. direct_time))
+      in
+      Printf.printf "  %-12s %8.2fx\n\n%!" "speed-up" (old_time /. new_time))
     [ 2000, 50; 2000, 200; 500, 1000 ]
