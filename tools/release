@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+#
+# BiOCamLib/tools/release -- assemble release packages, and drive the macOS CI
+# that produces the binaries this machine cannot.
+#
+# Every repository of the family vendors BiOCamLib, so every one of them reaches
+# this at BiOCamLib/tools/release and none needs a copy.  What differs between
+# them is the project name and which binaries ship, and neither needs to be
+# passed twice: the name comes from --name, and the binaries are whatever
+# releases/MANIFEST lists.
+#
+#   release package [<ver>] --root <dir> --name <Project>
+#       assemble releases/<Project>-<ver>-<os>-<arch>.tar.xz from
+#       releases/MANIFEST.  <ver> is N.N.N; omitted it is read from
+#       releases/CURRENT, given it replaces CURRENT (the old one kept as
+#       CURRENT~).  Builds the binaries first if none are present, and rebuilds
+#       them when the version moved -- they carry it in their version string, so
+#       a tree built under the old one would stamp the old number inside an
+#       archive named for the new one.  Set PACKAGE_PLATFORM + PACKAGE_BINDIR to
+#       package binaries downloaded for another platform (see mac-end).
+#   release mac-begin --root <dir>
+#       tag v<CURRENT> on HEAD (if absent) and push it, triggering the macOS CI.
+#   release mac-end --root <dir> --name <Project>
+#       wait for that run, download the macOS binaries and package each.  Needs
+#       an authenticated gh.
+#
+# The GitHub workflow itself cannot live here: Actions only reads workflows from
+# the repository's own .github/workflows.  What it runs, though, is this script
+# and the repository's BUILD, so the YAML stays thin.
+
+set -e
+
+SELF="$(basename "${BASH_SOURCE[0]}")"
+VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+$'
+
+die() { echo "($SELF $ACTION): $*" >&2; exit 1; }
+
+usage() {
+  echo "Usage: $SELF package [<ver>] --root <dir> --name <Project>" >&2
+  echo "       $SELF mac-begin --root <dir>" >&2
+  echo "       $SELF mac-end --root <dir> --name <Project>" >&2
+  exit 1
+}
+
+ACTION="${1:-}"; shift || usage
+case "$ACTION" in package|mac-begin|mac-end) ;; *) usage ;; esac
+
+ROOT="" NAME="" VERSION_ARG=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --root) ROOT="${2:-}"; shift 2 ;;
+    --name) NAME="${2:-}"; shift 2 ;;
+    -*) echo "$SELF: unknown option '$1'" >&2; usage ;;
+    *) [[ -z "$VERSION_ARG" ]] || usage; VERSION_ARG="$1"; shift ;;
+  esac
+done
+[[ -n "$ROOT" ]] || usage
+ROOT="$(cd "$ROOT" && pwd)"
+[[ "$ACTION" == "mac-begin" || -n "$NAME" ]] || usage
+
+MANIFEST="$ROOT/releases/MANIFEST"
+CURRENT="$ROOT/releases/CURRENT"
+
+# The version CURRENT holds, or the one given -- which replaces it.
+resolve_version() {
+  if [[ -n "$VERSION_ARG" ]]; then
+    [[ "$VERSION_ARG" =~ $VERSION_RE ]] \
+      || die "'$VERSION_ARG' is not a valid version (expected N.N.N)"
+    VERSION="$VERSION_ARG"
+    [[ -f "$CURRENT" ]] && mv -f "$CURRENT" "$CURRENT~"
+    printf '%s\n' "$VERSION" > "$CURRENT"
+  else
+    [[ -f "$CURRENT" ]] || die "no version given and releases/CURRENT not found"
+    read -r VERSION < "$CURRENT" || true
+    [[ "$VERSION" =~ $VERSION_RE ]] \
+      || die "releases/CURRENT does not hold a valid version (expected N.N.N)"
+  fi
+}
+
+# Which binaries ship is the manifest's business, and asking it rather than
+# being told again is what keeps the two from disagreeing -- a binary built and
+# then left out of its own archive is exactly what a second list produces.
+manifest_binaries() {
+  awk '$1 ~ /^\.build\// { sub(/^\.build\//, "", $1); print $1 }' "$MANIFEST"
+}
+
+do_package() {
+  command -v xz >/dev/null 2>&1 || die "xz not found"
+  [[ -f "$MANIFEST" ]] || die "releases/MANIFEST not found"
+  resolve_version
+
+  # Normally the host, but a cross-built package is assembled from downloaded
+  # binaries by pointing PACKAGE_PLATFORM at the <os>-<arch> tag and
+  # PACKAGE_BINDIR at their directory.  Dash-separated fields let the parts be
+  # recovered by splitting on '-': neither os nor arch carries a dash on the
+  # platforms we target, and arch keeps its underscore (x86_64).
+  local platform
+  if [[ -n "${PACKAGE_PLATFORM:-}" ]]; then
+    [[ "$PACKAGE_PLATFORM" =~ ^[A-Za-z0-9_-]+$ ]] \
+      || die "PACKAGE_PLATFORM '$PACKAGE_PLATFORM' has unexpected characters (want e.g. Darwin-arm64)"
+    platform="$PACKAGE_PLATFORM"
+  else
+    platform="$(uname -s)-$(uname -m)"
+  fi
+  local pkg="$NAME-$VERSION-$platform" dir="$ROOT/releases/$pkg" bindir sentinel
+  sentinel="$(manifest_binaries | head -n 1)"
+  [[ -n "$sentinel" ]] || die "releases/MANIFEST lists no .build/ binary"
+
+  if [[ -n "${PACKAGE_BINDIR:-}" ]]; then
+    bindir="$PACKAGE_BINDIR"
+    [[ -d "$bindir" ]] || die "PACKAGE_BINDIR '$bindir' is not a directory"
+  else
+    # release-static links statically so the Linux binaries run on hosts lacking
+    # the shared libraries; macOS has no static libSystem, so -ccopt -static
+    # will not link there and plain release is used instead.
+    bindir="$ROOT/.build"
+    local profile
+    case "$(uname -s)" in
+      Darwin) profile="release" ;;
+      *)      profile="release-static" ;;
+    esac
+    # A tree built before the version moved carries the old version string
+    # inside the binaries, so packaging it would put the old number in an
+    # archive named for the new one.  Rebuilding is the only way to restamp.
+    if [[ -n "$VERSION_ARG" && -x "$bindir/$sentinel" ]]; then
+      echo "($SELF package): version set to $VERSION — rebuilding so the binaries carry it ..."
+      rm -rf "$bindir"
+    fi
+    if [[ ! -x "$bindir/$sentinel" ]]; then
+      echo "($SELF package): .build/$sentinel missing — building with '$profile' first ..."
+      ( cd "$ROOT" && bash BUILD "$profile" )
+    fi
+  fi
+
+  echo "($SELF package): assembling $pkg ..."
+  rm -rf "$dir"
+  mkdir -p "$dir"
+  # First column = source path in the tree, second = name inside the package.  A
+  # missing source fails loudly rather than yielding a half-empty archive.
+  local src dst from
+  while read -r src dst; do
+    [[ -z "$src" ]] && continue
+    case "$src" in \#*) continue;; esac
+    [[ -n "$dst" ]] || die "malformed MANIFEST line for '$src' (need two columns)"
+    case "$src" in
+      .build/*) from="$bindir/${src#.build/}" ;;
+      *)        from="$ROOT/$src" ;;
+    esac
+    [[ -f "$from" ]] || die "'$src' -> '$from' not found — build it first?"
+    cp -p "$from" "$dir/$dst"
+    # GitHub artifacts are zipped and lose Unix permissions, so a downloaded
+    # binary may arrive non-executable.
+    case "$src" in .build/*) chmod +x "$dir/$dst" ;; esac
+  done < "$MANIFEST"
+
+  echo "($SELF package): creating $pkg.tar.xz ..."
+  ( cd "$ROOT/releases" && tar cf "$pkg.tar" "$pkg" && xz -f "$pkg.tar" )
+  echo "($SELF package): done — releases/$pkg.tar.xz"
+}
+
+do_mac_begin() {
+  resolve_version
+  local tag="v$VERSION"
+  if git -C "$ROOT" rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+    echo "($SELF mac-begin): tag $tag already exists — not recreating."
+  else
+    echo "($SELF mac-begin): creating tag $tag on HEAD ..."
+    git -C "$ROOT" tag "$tag"
+  fi
+  echo "($SELF mac-begin): pushing $tag to origin (triggers the macOS CI) ..."
+  git -C "$ROOT" push origin "$tag"
+  echo "($SELF mac-begin): done — run 'mac-end' to wait for the build,"
+  echo "                   then download and package the macOS binaries."
+}
+
+do_mac_end() {
+  command -v gh >/dev/null 2>&1 || die "gh (GitHub CLI) not found — needed to fetch the CI artifacts"
+  gh auth status >/dev/null 2>&1 || die "gh is not authenticated — run 'gh auth login' first"
+  resolve_version
+  local tag="v$VERSION" run_id="" i
+  echo "($SELF mac-end): locating the macOS CI run for $tag ..."
+  # It may take a few seconds to register after the tag push.
+  for ((i = 0; i < 30; i++)); do
+    run_id="$(gh run list --repo "$(gh repo view --json nameWithOwner --jq .nameWithOwner)" \
+                --workflow build-binaries.yml --event push --branch "$tag" \
+                --limit 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)"
+    [[ -n "$run_id" ]] && break
+    sleep 5
+  done
+  [[ -n "$run_id" ]] || die "no CI run found for $tag — did 'mac-begin' run?"
+  echo "($SELF mac-end): waiting for run $run_id to finish ..."
+  gh run watch "$run_id" --exit-status
+
+  # 'package' with no version argument reads CURRENT, so it never re-shuffles it
+  # and the macOS archives share the Linux build's version.
+  local staging arch platform
+  staging="$(mktemp -d)"
+  for arch in arm64 x86_64; do
+    platform="Darwin-$arch"
+    echo "($SELF mac-end): downloading and packaging $platform ..."
+    mkdir -p "$staging/$platform"
+    gh run download "$run_id" --name "$NAME-$platform" --dir "$staging/$platform"
+    PACKAGE_PLATFORM="$platform" PACKAGE_BINDIR="$staging/$platform" \
+      bash "${BASH_SOURCE[0]}" package --root "$ROOT" --name "$NAME"
+  done
+  rm -rf "$staging"
+  echo "($SELF mac-end): done — macOS packages are in releases/."
+}
+
+case "$ACTION" in
+  package)   do_package ;;
+  mac-begin) do_mac_begin ;;
+  mac-end)   do_mac_end ;;
+esac
