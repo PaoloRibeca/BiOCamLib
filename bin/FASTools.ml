@@ -56,11 +56,7 @@ module Parameters =
     let verbose = ref Defaults.verbose
   end
 
-let info = {
-  Tools.Argv.name = "FASTools";
-  version = "13";
-  date = "30-Nov-2025"
-} and authors = [
+let info = Info.fastools and authors = [
   "2022-2025", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 

@@ -34,11 +34,7 @@ module [@warning "-32"] Parameters =
     let verbose = ref Defaults.verbose
   end
 
-let info = {
-  Tools.Argv.name = "Octopus";
-  version = "7";
-  date = "16-Apr-2024"
-} and authors = [
+let info = Info.octopus and authors = [
   "2016-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 

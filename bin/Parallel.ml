@@ -44,11 +44,7 @@ module Parameters =
     let debug = ref Defaults.debug
   end
 
-let info = {
-  Tools.Argv.name = "Parallel";
-  version = "10";
-  date = "25-Apr-2026"
-} and authors = [
+let info = Info.parallel and authors = [
   "2019-2026", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 

@@ -36,11 +36,7 @@ module Parameters =
     let verbose = ref Defaults.verbose
   end
 
-let info = {
-  Tools.Argv.name = "Cophenetic";
-  version = "2";
-  date = "06-Jun-2024"
-} and authors = [
+let info = Info.cophenetic and authors = [
   "2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 

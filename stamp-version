@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+#
+# BiOCamLib/stamp-version -- generate the OCaml module that carries a build's
+# version and the identity of every program the repository produces.
+#
+# Every repository of the family vendors BiOCamLib as a submodule, so every one
+# of them has this script at a known path and none needs a copy of the logic.
+# From BiOCamLib itself, naming the library first and then its binaries:
+#
+#   bash stamp-version --root . --out lib/Info.ml \
+#     BiOCamLib AnnoTools Cophenetic FASTools NJ Octopus Parallel RC TREx Yggdrasill
+#
+# and from a repository that vendors it, whose generated module belongs to an
+# executable rather than to the library and so has to open BiOCamLib itself in
+# order to reach Tools.Argv:
+#
+#   bash BiOCamLib/stamp-version --root . --out bin/Version.ml --open SiNPle
+#
+# The version is the release named in <root>/releases/CURRENT followed by the
+# repository's commit-file count -- so the part people cite leads, and the
+# suffix still tells two builds of one release apart, which is the whole reason
+# to generate it rather than write it by hand.  The date is that of the last
+# commit, so a binary cannot claim to be older than it is.
+#
+# Every program of one repository shares its version and date: they are built
+# from one tree and ship in one archive, and differ only in name.  The module
+# therefore holds them all, which also puts the list of what a repository
+# produces in ONE place rather than in a string literal inside each program.
+# It exposes:
+#
+#   val version: string           the version string
+#   val date: string              the date of the last commit
+#   val info: Tools.Argv.info_t   the FIRST name given, the repository's own
+#   val <lowercased name>: Tools.Argv.info_t   one per name given
+#
+# Two portability notes, both because this runs on the macOS CI as well as on
+# Linux.  The count comes from awk rather than `wc -l`, whose BSD implementation
+# pads its output with leading spaces that would land inside the version string;
+# and the date is formatted by git itself (--date=format) rather than by
+# `date -d @<ts>`, which is GNU-only and fails outright there.
+
+set -e
+
+SELF="$(basename "${BASH_SOURCE[0]}")"
+
+usage() {
+  echo "Usage: $SELF --root <dir> --out <file> [--open] <Name> [<Name> ...]" >&2
+  exit 1
+}
+
+ROOT="" OUT="" OPEN=0
+NAMES=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --root) ROOT="${2:-}"; shift 2 ;;
+    --out)  OUT="${2:-}";  shift 2 ;;
+    --open) OPEN=1; shift ;;
+    -*) echo "$SELF: unknown option '$1'" >&2; usage ;;
+    *) NAMES+=("$1"); shift ;;
+  esac
+done
+[[ -n "$ROOT" && -n "$OUT" && ${#NAMES[@]} -gt 0 ]] || usage
+
+[[ -d "$ROOT/.git" || -f "$ROOT/.git" ]] \
+  || { echo "$SELF: '$ROOT' is not a git repository -- the version comes from its history" >&2
+       exit 1; }
+
+# A missing or malformed CURRENT is refused rather than defaulted: a version of
+# '-851', or of '0.0.0-851', would be a plausible-looking string that is simply
+# untrue, and it would travel into an archive name and into a release.
+CURRENT="$ROOT/releases/CURRENT"
+[[ -f "$CURRENT" ]] \
+  || { echo "$SELF: $CURRENT not found -- a release version is needed to stamp against" >&2
+       exit 1; }
+RELEASE="$(head -n 1 "$CURRENT")"
+[[ "$RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || { echo "$SELF: $CURRENT does not hold a valid version (found '$RELEASE', expected N.N.N)" >&2
+       exit 1; }
+
+COUNT="$(git -C "$ROOT" log --pretty=format: --name-only | awk 'NF {n++} END {print n+0}')"
+# A shallow clone counts a truncated history and would stamp a number both wrong
+# and quietly SMALLER than the last one, so refuse rather than emit it.
+[[ "$COUNT" -gt 0 ]] \
+  || { echo "$SELF: no history in '$ROOT' -- a shallow clone cannot be stamped" >&2; exit 1; }
+DATE="$(git -C "$ROOT" log -1 --format=%ad --date=format:'%d-%b-%Y')"
+
+# Each name becomes an OCaml value, so it has to be a usable identifier once
+# lower-cased, and two names must not collide there -- 'RC' and 'Rc' would
+# silently become one binding, the second overwriting the first.
+declare -a BINDINGS=()
+for name in "${NAMES[@]}"; do
+  [[ "$name" =~ ^[A-Za-z][A-Za-z0-9_]*$ ]] \
+    || { echo "$SELF: '$name' is not a usable program name" >&2; exit 1; }
+  lower="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
+  for seen in "${BINDINGS[@]}"; do
+    [[ "$seen" == "$lower" ]] \
+      && { echo "$SELF: '$name' collides with another name once lower-cased ('$lower')" >&2
+           exit 1; }
+  done
+  BINDINGS+=("$lower")
+done
+
+{
+  if [[ "$OPEN" -eq 1 ]]; then
+    echo "open BiOCamLib"
+  fi
+  echo "let version = \"$RELEASE-$COUNT\""
+  echo "let date = \"$DATE\""
+  # The first name is the repository's own, and is what a consumer reads as
+  # <Repo>.Info.info when it lists what it was compiled against.
+  echo "let info = { Tools.Argv.name = \"${NAMES[0]}\"; version; date }"
+  for i in "${!NAMES[@]}"; do
+    echo "let ${BINDINGS[$i]} = { Tools.Argv.name = \"${NAMES[$i]}\"; version; date }"
+  done
+} > "$OUT"

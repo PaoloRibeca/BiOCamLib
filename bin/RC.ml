@@ -32,11 +32,7 @@ module Parameters =
     let no_complement = ref Defaults.no_complement
   end
 
-let info = {
-  Tools.Argv.name = "RC";
-  version = "4";
-  date = "16-Apr-2024"
-} and authors = [
+let info = Info.rc and authors = [
   "2023-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 

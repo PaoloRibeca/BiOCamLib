@@ -51,11 +51,7 @@ module Parameters =
     let negative_branches = ref Defaults.negative_branches
   end
 
-let info = {
-  Tools.Argv.name = "Yggdrasill";
-  version = "5";
-  date = "05-Feb-2025"
-} and authors = [
+let info = Info.yggdrasill and authors = [
   "2024-2025", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 

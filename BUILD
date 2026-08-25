@@ -314,22 +314,15 @@ fi
 # Always erase build directory to ensure peace of mind
 rm -rf _build
 
-# Emit version info.  The version is the release named in releases/CURRENT
-# followed by the commit-file count -- so the part people cite leads, and the
-# suffix still tells two builds of one release apart, which is the whole reason
-# to generate it rather than write it by hand.
-#
-# Two portability notes, both because this script also runs on the macOS CI.
-# The count comes from awk rather than `wc -l`, whose BSD implementation pads
-# its output with leading spaces that would land inside the version string; and
-# the date is formatted by git itself (--date=format) rather than by
-# `date -d @<ts>`, which is GNU-only and fails outright there.
-RELEASE="$(head -n 1 "$ROOT/releases/CURRENT" 2>/dev/null || true)"
-[[ "$RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-  || { echo "BUILD: releases/CURRENT does not hold a valid version (found '$RELEASE')" >&2; exit 1; }
-COUNT="$(git log --pretty=format: --name-only | awk 'NF {n++} END {print n+0}')"
-DATE="$(git log -1 --format=%ad --date=format:'%d-%b-%Y')"
-echo -e "include (\n  struct\n    let info = {\n      Tools.Argv.name = \"BiOCamLib\";\n      version = \"$RELEASE-$COUNT\";\n      date = \"$DATE\"\n    }\n  end\n)" > lib/Info.ml
+# Emit version info.  The logic lives in stamp-version, which every repository
+# of the family reaches through its BiOCamLib submodule, so that none of them
+# carries a second copy of it to drift.  The nine binaries below take their
+# version from the same module through Info.for_program: they ship in one
+# archive from one tree, so they share its version and differ only in name.
+# The library first, then every binary this repository produces -- so the list
+# of what it produces lives here rather than in a literal inside each of them.
+bash "$ROOT/stamp-version" --root "$ROOT" --out "$ROOT/lib/Info.ml" \
+  BiOCamLib AnnoTools Cophenetic FASTools NJ Octopus Parallel RC TREx Yggdrasill
 
 #FLAGS="--verbose"
 

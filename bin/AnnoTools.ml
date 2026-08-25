@@ -85,11 +85,7 @@ module Parameters = struct
   let verbose = ref Defaults.verbose
 end
 
-let info = {
-  Tools.Argv.name = "AnnoTools";
-  version = "3";
-  date = "21-Aug-2026"
-} and authors = [
+let info = Info.annotools and authors = [
   "2026", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 

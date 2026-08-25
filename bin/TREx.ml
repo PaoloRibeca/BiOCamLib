@@ -150,11 +150,7 @@ module Parameters =
     let verbose = ref Defaults.verbose
   end
 
-let info = {
-  Tools.Argv.name = "TREx";
-  version = "4";
-  date = "16-Apr-2024"
-} and authors = [
+let info = Info.trex and authors = [
   "2023-2024", "Paolo Ribeca", "paolo.ribeca@gmail.com"
 ]
 
