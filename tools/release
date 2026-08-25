@@ -102,7 +102,13 @@ do_package() {
   else
     platform="$(uname -s)-$(uname -m)"
   fi
-  local pkg="$NAME-$VERSION-$platform" dir="$ROOT/releases/$pkg" bindir sentinel
+  # Declared and assigned separately, deliberately: 'local' is a command, so all
+  # of its arguments are word-expanded BEFORE any of them is assigned, and a
+  # 'local pkg=... dir=.../$pkg' would expand $pkg to the value it had before --
+  # nothing.  That put the releases directory ITSELF into the rm below.
+  local pkg dir bindir sentinel
+  pkg="$NAME-$VERSION-$platform"
+  dir="$ROOT/releases/$pkg"
   sentinel="$(manifest_binaries | head -n 1)"
   [[ -n "$sentinel" ]] || die "releases/MANIFEST lists no .build/ binary"
 
@@ -133,6 +139,12 @@ do_package() {
   fi
 
   echo "($SELF package): assembling $pkg ..."
+  # The payload directory is rebuilt from scratch, so this is an rm -rf on a
+  # computed path -- which is worth one check rather than trust.  An empty name
+  # would make it the releases directory itself and take every archive already
+  # sitting there with it.
+  [[ -n "$pkg" && "$dir" != "$ROOT/releases/" && "$dir" != "$ROOT/releases" ]] \
+    || die "refusing to remove '$dir': the package name came out empty"
   rm -rf "$dir"
   mkdir -p "$dir"
   # First column = source path in the tree, second = name inside the package.  A
