@@ -145,6 +145,13 @@ build_package() {
       Darwin) profile="release" ;;
       *)      profile="release-static" ;;
     esac
+    # A build tree made before the version moved carries the old version
+    # string inside the binaries, so packaging it would put '1.2.3-800' in an
+    # archive named for 1.2.4.  Rebuilding is the only way to restamp them.
+    if [[ -n "$version_arg" && -x "$bindir/Parallel" ]]; then
+      echo "(BUILD package): version set to $version — rebuilding so the binaries carry it ..."
+      rm -rf "$bindir"
+    fi
     if [[ ! -x "$bindir/Parallel" ]]; then
       echo "(BUILD package): .build/Parallel missing — building with '$profile' first ..."
       ( cd "$ROOT" && bash BUILD "$profile" )
@@ -307,10 +314,22 @@ fi
 # Always erase build directory to ensure peace of mind
 rm -rf _build
 
-# Emit version info.  The date is formatted by git itself (--date=format) rather
-# than `date -d @<ts>`, which is GNU-only and fails on macOS's BSD date; the
-# version stays the git file-change count.
-echo -e "include (\n  struct\n    let info = {\n      Tools.Argv.name = \"BiOCamLib\";\n      version = \"$(git log --pretty=format: --name-only | awk '{if ($0!="") print}' | wc -l)\";\n      date = \"$(git log -1 --format=%ad --date=format:'%d-%b-%Y')\"\n    }\n  end\n)" > lib/Info.ml
+# Emit version info.  The version is the release named in releases/CURRENT
+# followed by the commit-file count -- so the part people cite leads, and the
+# suffix still tells two builds of one release apart, which is the whole reason
+# to generate it rather than write it by hand.
+#
+# Two portability notes, both because this script also runs on the macOS CI.
+# The count comes from awk rather than `wc -l`, whose BSD implementation pads
+# its output with leading spaces that would land inside the version string; and
+# the date is formatted by git itself (--date=format) rather than by
+# `date -d @<ts>`, which is GNU-only and fails outright there.
+RELEASE="$(head -n 1 "$ROOT/releases/CURRENT" 2>/dev/null || true)"
+[[ "$RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || { echo "BUILD: releases/CURRENT does not hold a valid version (found '$RELEASE')" >&2; exit 1; }
+COUNT="$(git log --pretty=format: --name-only | awk 'NF {n++} END {print n+0}')"
+DATE="$(git log -1 --format=%ad --date=format:'%d-%b-%Y')"
+echo -e "include (\n  struct\n    let info = {\n      Tools.Argv.name = \"BiOCamLib\";\n      version = \"$RELEASE-$COUNT\";\n      date = \"$DATE\"\n    }\n  end\n)" > lib/Info.ml
 
 #FLAGS="--verbose"
 
