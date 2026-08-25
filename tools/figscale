@@ -64,7 +64,7 @@ case "${FIG,,}" in
     # -trim drops the white border, which is what the bbox crop used to do
     "${IM[@]}" "$SCRATCH/p.png" -trim +repage "$OUT"
     PATH_IN="$OUT"
-    echo "# rasterised $FIG -> $OUT  (move it under docs/ and fix the src= below)"
+    echo "# rasterized $FIG -> $OUT  (move it under docs/ and fix the src= below)"
     echo
     ;;
 esac
