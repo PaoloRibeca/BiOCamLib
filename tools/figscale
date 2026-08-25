@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+#
+# BiOCamLib/tools/figscale -- size a figure for a README and emit the paste-ready
+# snippet.
+#
+# Measures a raster figure's text size -- the median height of character-sized
+# connected components, which is about its x-height -- and computes the display
+# width that makes that text the same size as the README's body text.  Then
+# prints a Markdown snippet ready to drop into README.md and, for a figure
+# taller than about half a page, the split-across-pages dual element plus the
+# .print-splitfig rule to add to that repository's README.css.
+#
+#   figscale docs/fig.png                      measure and emit the snippet
+#   figscale docs/fig.png --target 6 --alt "Two-pass calibration workflow."
+#   figscale fig.pdf                           rasterise and trim a pdf first
+#
+# Why: a glyph g px tall in a W px wide PNG renders at g*d/W, so the display
+# width is target * W / g.  The default target of 6 is the body x-height of the
+# house 12px README font.  Aim every figure in one README at the SAME target.
+#
+# Needs ImageMagick (6.8.9 or later, for -connected-components) and, for PDF
+# input, pdftocairo from poppler.  It was Python once, and needed numpy, pillow
+# and scipy for what -connected-components does on its own.
+
+set -e
+
+SELF="$(basename "${BASH_SOURCE[0]}")"
+
+# ImageMagick 7 renamed the tool; 6 is what most of these machines still carry.
+if command -v magick >/dev/null 2>&1; then
+  IM=(magick); IDENTIFY=(magick identify)
+elif command -v convert >/dev/null 2>&1; then
+  IM=(convert); IDENTIFY=(identify)
+else
+  echo "$SELF: ImageMagick not found (needs 'magick' or 'convert')" >&2; exit 1
+fi
+
+FIG="" TARGET=6 DPI=300 ALT="DESCRIBE THE FIGURE" OUT=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --target) TARGET="${2:-}"; shift 2 ;;
+    --dpi)    DPI="${2:-}";    shift 2 ;;
+    --alt)    ALT="${2:-}";    shift 2 ;;
+    --out)    OUT="${2:-}";    shift 2 ;;
+    -*) echo "$SELF: unknown option '$1'" >&2; exit 1 ;;
+    *) [[ -z "$FIG" ]] || { echo "$SELF: one figure at a time" >&2; exit 1; }
+       FIG="$1"; shift ;;
+  esac
+done
+[[ -n "$FIG" ]] \
+  || { echo "Usage: $SELF <figure.png|figure.pdf> [--target N] [--alt TEXT] [--dpi N] [--out PNG]" >&2
+       exit 1; }
+[[ -f "$FIG" ]] || { echo "$SELF: '$FIG' not found" >&2; exit 1; }
+
+PATH_IN="$FIG"
+case "${FIG,,}" in
+  *.pdf)
+    command -v pdftocairo >/dev/null 2>&1 \
+      || { echo "$SELF: pdftocairo not found -- needed for PDF input" >&2; exit 1; }
+    [[ -n "$OUT" ]] || OUT="${FIG%.*}.png"
+    SCRATCH="$(mktemp -d)"
+    trap 'rm -rf "$SCRATCH"' EXIT
+    pdftocairo -png -singlefile -r "$DPI" "$FIG" "$SCRATCH/p"
+    # -trim drops the white border, which is what the bbox crop used to do
+    "${IM[@]}" "$SCRATCH/p.png" -trim +repage "$OUT"
+    PATH_IN="$OUT"
+    echo "# rasterised $FIG -> $OUT  (move it under docs/ and fix the src= below)"
+    echo
+    ;;
+esac
+
+# The trailing newline matters: without one 'read' hits EOF, returns non-zero,
+# and 'set -e' takes the script down having set the variables perfectly well
+read -r W H < <("${IDENTIFY[@]}" -format '%w %h\n' "$PATH_IN")
+[[ -n "$W" && -n "$H" ]] || { echo "$SELF: could not read '$PATH_IN'" >&2; exit 1; }
+
+# 150/255 is the ink threshold the measurement has always used.  After the
+# threshold the glyphs are black, and it is those components we want: the
+# background is one enormous white one, and the size filter below would drop it
+# anyway, but naming the colour says which set is meant.
+#
+# The verbose listing is 'id: WxH+X+Y centroid area colour', and IM6 and IM7
+# agree on that much; what differs is spacing, so the fields are taken by
+# position and the geometry split on x and +.
+CC="$("${IM[@]}" "$PATH_IN" -colorspace Gray -threshold 58.8% \
+        -define connected-components:verbose=true -connected-components 8 null: 2>/dev/null)"
+
+printf '%s\n' "$CC" | gawk -v w="$W" -v h="$H" -v target="$TARGET" -v alt="$ALT" \
+                           -v src="$PATH_IN" -v self="$SELF" '
+  /^ *[0-9]+:/ {
+    # Only the dark components; the page and any white panel are not glyphs
+    if ($5 !~ /\(0,0,0/) next
+    split($2, g, /[x+]/)
+    cw = g[1]; ch = g[2]
+    # Character-sized: tall enough not to be a rule or a stray pixel, short
+    # enough not to be a box, and not so wide as to be a line of a diagram
+    if (ch >= 4 && ch <= 40 && cw >= 2 && cw <= 60)
+      hs[n++] = ch
+  }
+  END {
+    if (n == 0) {
+      printf "%s: no character-sized components found (is this a text figure?)\n", self > "/dev/stderr"
+      exit 1
+    }
+    asort(hs)
+    median = (n % 2) ? hs[int(n / 2) + 1] : (hs[n / 2] + hs[n / 2 + 1]) / 2
+    width = int(target * w / median + 0.5)
+    box_h = int(width * h / w + 0.5)
+    # A4 content height at 96dpi: 297mm less two 14mm margins
+    frac = box_h / 1016.0
+    tall = (frac > 0.55)
+    # A figure named docs/x.png keeps its path; one measured elsewhere is
+    # assumed to be going there, which is where these repositories keep them
+    if (src !~ /^docs\//) {
+      nm = src; sub(/.*\//, "", nm); src = "docs/" nm
+    }
+    cls = src; sub(/.*\//, "", cls); sub(/\.[^.]*$/, "", cls)
+    cls = tolower(cls); gsub(/[^a-z0-9-]+/, "-", cls)
+    sub(/^-+/, "", cls); sub(/-+$/, "", cls)
+    if (cls == "") cls = "fig"
+    bn = src; sub(/.*\//, "", bn)
+    printf "# %s: %dx%dpx, median glyph %.1fpx -> width=%d (text ~%dpx), box %dx%dpx (~%.0f%% of a page)\n",
+      bn, w, h, median, width, target, width, box_h, frac * 100
+    printf "# %s\n\n", tall ? "TALL -> use the split-across-pages pattern" \
+                             : "short -> a plain <img> is fine"
+    print "# ---- paste into README.md ----"
+    if (!tall) {
+      printf "<p align=\"center\">\n  <img src=\"%s\" width=\"%d\"\n       alt=\"%s\">\n</p>\n",
+        src, width, alt
+    } else {
+      printf "<p align=\"center\" class=\"screen-only-fig\">\n  <img src=\"%s\" width=\"%d\"\n       alt=\"%s\">\n</p>\n",
+        src, width, alt
+      print "<!-- Print-only copy so this tall figure flows across PDF pages instead of"
+      print "     jumping whole to the next one (a raster <img> cannot be page-split);"
+      print "     invisible on screen/GitHub. -->"
+      printf "<div class=\"print-splitfig %s\" role=\"img\" aria-label=\"%s\"></div>\n", cls, alt
+      print ""
+      print "# ---- add inside the @media print block of this repository README.css ----"
+      printf "  .print-splitfig.%s { width: %dpx; height: %dpx;\n    background-image: url(\"%s\"); }\n",
+        cls, width, box_h, src
+    }
+  }'

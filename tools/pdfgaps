@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+#
+# BiOCamLib/tools/pdfgaps -- report bottom-whitespace per page of a PDF, to find
+# where a tall figure got pushed onto a fresh page and left a big gap behind it.
+#
+#   pdfgaps README.pdf            pages with more than 18% bottom whitespace
+#   pdfgaps README.pdf --min 30
+#
+# The LAST page's trailing whitespace is normal -- the document simply ends.  A
+# mid-document page over the threshold is a figure, or another monolithic block,
+# that did not fit and jumped to the next page.
+#
+# Needs pdftocairo (poppler) and ImageMagick.  It was Python once, and needed
+# pillow to do what a threshold and a one-pixel-wide scale do here.
+
+set -e
+
+SELF="$(basename "${BASH_SOURCE[0]}")"
+
+if command -v magick >/dev/null 2>&1; then
+  IM=(magick)
+elif command -v convert >/dev/null 2>&1; then
+  IM=(convert)
+else
+  echo "$SELF: ImageMagick not found (needs 'magick' or 'convert')" >&2; exit 1
+fi
+command -v pdftocairo >/dev/null 2>&1 \
+  || { echo "$SELF: pdftocairo not found" >&2; exit 1; }
+
+PDF="" MIN=18
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --min) MIN="${2:-}"; shift 2 ;;
+    -*) echo "$SELF: unknown option '$1'" >&2; exit 1 ;;
+    *) [[ -z "$PDF" ]] || { echo "$SELF: one PDF at a time" >&2; exit 1; }
+       PDF="$1"; shift ;;
+  esac
+done
+[[ -n "$PDF" ]] || { echo "Usage: $SELF <file.pdf> [--min PERCENT]" >&2; exit 1; }
+[[ -f "$PDF" ]] || { echo "$SELF: '$PDF' not found" >&2; exit 1; }
+
+SCRATCH="$(mktemp -d)"
+trap 'rm -rf "$SCRATCH"' EXIT
+
+pdftocairo -png -r 60 "$PDF" "$SCRATCH/p" \
+  || { echo "$SELF: pdftocairo failed" >&2; exit 1; }
+
+PAGES=("$SCRATCH"/p-*.png)
+[[ -e "${PAGES[0]}" ]] || { echo "$SELF: no pages rendered from '$PDF'" >&2; exit 1; }
+LAST="${PAGES[${#PAGES[@]} - 1]}"
+
+HITS=0
+for f in "${PAGES[@]}"; do
+  # Each row of the page is reduced to one pixel and its rows then read off, so
+  # that finding the last row carrying ink is a scan of a column rather than of
+  # the page.  The threshold comes FIRST and the image is then negated, so a row
+  # holding ink averages above zero while a blank one is exactly zero -- taking
+  # the mean of the greys instead would let a pale but non-empty row read as
+  # blank.  90% is the 230/255 this measurement has always used, and the depth
+  # of 16 is what keeps a row whose only ink is a single pixel from averaging
+  # down to zero and reading as empty.
+  #
+  # Note this looks at EVERY column, where the Python this replaces sampled one
+  # in three; on a page whose lowest ink falls between the sampled columns the
+  # two differ by a row or two, which is a percentage point of a page.  Checked
+  # over 42 reported pages of one README: forty agreed exactly and the two that
+  # did not were both this, the sampling missing ink that is really there.
+  read -r LASTINK HEIGHT < <(
+    "${IM[@]}" "$f" -colorspace Gray -threshold 90% -negate -scale 1x! -depth 16 txt:- 2>/dev/null \
+      | gawk -F'[,:]' '
+          /^[0-9]+,[0-9]+:/ {
+            y = $2
+            # "0,17: (0,0,0) #000000 gray(0)" -- blank rows are pure black once
+            # negated, so anything else is a row that carries something
+            if ($0 !~ /\(0,0,0\)/ && $0 !~ /gray\(0\)/) last = y
+            n = y
+          }
+          END { printf "%d %d\n", last, n + 1 }')
+  FRAC="$(gawk -v last="$LASTINK" -v h="$HEIGHT" 'BEGIN { printf "%.4f\n", (h - last) / h * 100 }')"
+  if gawk -v f="$FRAC" -v m="$MIN" 'BEGIN { exit !(f > m) }'; then
+    N="$(basename "$f" .png)"; N="${N##*-}"
+    TAIL=""
+    [[ "$f" == "$LAST" ]] && TAIL="  (last page -- normal)"
+    gawk -v n="$N" -v f="$FRAC" -v t="$TAIL" \
+      'BEGIN { printf "page %s: %.0f%% bottom whitespace%s\n", n, f, t }'
+    HITS=$((HITS + 1))
+  fi
+done
+
+(( HITS > 0 )) || echo "no pages over threshold"
