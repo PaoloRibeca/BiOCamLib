@@ -3,7 +3,7 @@
  (flags --dump --explain --automaton-graph --cmly))
 (ocamllex Trees_Lex Annotations_Lex)
 
-; Everything below the thirteen toplevel modules is private: the two [_Base]
+; Everything below the fourteen toplevel modules is private: the two [_Base]
 ; modules, the [Annotations] scaffolding, the five per-format modules, and the
 ; lexers and parsers.  Sealing a module that something re-exports takes one
 ; precaution, because an unconstrained [include M] -- or a [module X = M.Y]
