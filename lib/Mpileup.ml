@@ -296,6 +296,10 @@ include (
               (Printf.sprintf "Quality %d is outside 0..%d" q (range - 1));
           t.(q) <- t.(q) + 1
         let cardinal t = Array.fold_left ( + ) 0 t
+        (* Empty buckets are skipped, so a caller rebuilding a sparse structure
+           from this pays for the qualities that are there rather than for the
+           whole scale *)
+        let iter f t = Array.iteri (fun q c -> if c <> 0 then f q c) t
         let merge_into ~into t = Array.iteri (fun q n -> into.(q) <- into.(q) + n) t
         let mean t =
           let n = ref 0 and acc = ref 0 in
@@ -622,6 +626,9 @@ include (
         val make: unit -> t
         val add: t -> int -> unit
         val cardinal: t -> int
+        (* Over the qualities that are present, lowest first, each with the
+           number of times it was seen.  Empty buckets are skipped *)
+        val iter: (int -> int -> unit) -> t -> unit
         (* [into] gains what the other holds: the null distribution of a variant
            is every other genotype taken together *)
         val merge_into: into:t -> t -> unit

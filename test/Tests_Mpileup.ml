@@ -309,6 +309,23 @@ let test_qualities () =
       (M.Qualities.mean_above_fraction (of_list [ 10; 20; 30; 40 ]) 0.);
     Testing.check_float "and dropping everything leaves nothing" ~expected:0.
       (M.Qualities.mean_above_fraction (of_list [ 10; 20; 30; 40 ]) 1.);
+    (* Iteration is what a caller rebuilding a sparse distribution needs, and
+       it must offer the qualities that are there and only those: a walk over
+       the whole scale would hand back a hundred-odd zeroes to be filtered. *)
+    Testing.check_string "iteration gives the qualities present, lowest first"
+      ~expected:"10x1 20x2 30x1"
+      (let acc = ref [] in
+       M.Qualities.iter (fun q c -> acc := Printf.sprintf "%dx%d" q c :: !acc)
+         (of_list [ 20; 10; 30; 20 ]);
+       List.rev !acc |> String.concat " ");
+    Testing.check_int "and skips the empty buckets" ~expected:0
+      (let n = ref 0 in
+       M.Qualities.iter (fun _ _ -> incr n) (M.Qualities.make ());
+       !n);
+    Testing.check_int "what it reports sums back to the cardinal" ~expected:4
+      (let n = ref 0 in
+       M.Qualities.iter (fun _ c -> n := !n + c) (of_list [ 20; 10; 30; 20 ]);
+       !n);
     Testing.check_raises "a quality outside the scale is refused"
       (fun () -> M.Qualities.add (M.Qualities.make ()) 200))
 
