@@ -147,8 +147,12 @@ module Memory:
       end
   end
 = struct
+    (* An empty header -- '-o rss=' -- is how the header line is suppressed
+       portably: procps also accepts '--no-headers', and BSD ps, which is what
+       macOS has, refuses it and exits 1, so the resident size could not be read
+       there at all *)
     let get_rs_size () =
-      Unix.getpid () |> Printf.sprintf "ps -p %d -o rss --no-headers" |>
+      Unix.getpid () |> Printf.sprintf "ps -p %d -o rss=" |>
           Subprocess.spawn_and_read_single_line |> float_of_string
     let get_gc_size () =
       (Gc.stat ()).major_words *. 8.
