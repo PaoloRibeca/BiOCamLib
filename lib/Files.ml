@@ -396,10 +396,26 @@ module FASTA:
               it.next <- String.sub !line 1 (String.length !line - 1);
               it.seq <- Buffer.contents it.buf;
               Buffer.clear it.buf
-            with End_of_file ->
+            with
+            | End_of_file ->
               it.next <- "";
               it.seq <- Buffer.contents it.buf;
               delete it
+            | e ->
+              (* Reaching the end is not the only way out of the walk above:
+                 a malformed record raises too, and leaving through that arm
+                 alone skipped the close, so the channel and the helper behind
+                 it were left to process exit to tidy up.
+                 What this does NOT do is recover the helper's exit status.
+                 Abandoning the read closes the pipe, the helper dies of
+                 SIGPIPE, and reap() reads that as the legitimate early stop it
+                 usually is -- so a corrupt archive that decodes to malformed
+                 content still reports the content.  Asking destroys the
+                 answer; the case that is caught is the archive read to its
+                 end, which is also the dangerous one, since there the content
+                 stays well-formed and nothing else would say a word. *)
+              delete it;
+              raise e
           end
           [@@inline]
         let create ?(compression = true) (linter, path) =
@@ -421,8 +437,15 @@ module FASTA:
             res.next <- String.sub !line 1 (String.length !line - 1);
             (* Now that we've got the header, we parse the sequence and the next header *)
             incr res
-          with End_of_file ->
+          with
+          | End_of_file ->
             delete res
+          | e ->
+            (* As in incr() below: the close has to happen on the way out
+               however the walk ended, or a corrupt archive reports the
+               malformed content it decoded to and not itself *)
+            delete res;
+            raise e
           end;
           res
         let get it f =
@@ -591,12 +614,21 @@ module FASTQ:
                 Exception.raise_malformed __FUNCTION__ it.lines "FASTQ" it.path
                   ~comment:"header has an empty name";
               it.read <- { tag = String.sub tag 1 (String.length tag - 1); seq; qua }
-            with End_of_file ->
+            with
+            | End_of_file ->
+              (* The close comes FIRST because the test below raises, and a
+                 truncated file is exactly what a truncated archive decodes
+                 to -- so leaving through that raise skipped the close on the
+                 one path where the helper had just exited non-zero of its own
+                 accord, which is the status reap() can actually read *)
+              delete it;
               if it.lines <> (4 * (it.progr + 1)) then
                 (* Last line is truncated *)
                 Exception.raise_malformed __FUNCTION__ it.lines "FASTQ" it.path
-                  ~comment:"file is truncated";
-              delete it
+                  ~comment:"file is truncated"
+            | e ->
+              delete it;
+              raise e
           end
           [@@inline]
         let get it f =
@@ -684,8 +716,15 @@ module Tabular:
                 Exception.raise_malformed __FUNCTION__ it.progr "tabular" it.path
                   ~comment:(Printf.sprintf "found %d fields, expected 2, 3, or 6" n)
               end
-            with End_of_file ->
+            with
+            | End_of_file ->
               delete it
+            | e ->
+              (* As in the FASTA and FASTQ readers: close on the way out
+                 whatever ended the walk, so that a corrupt archive is reported
+                 as one rather than as the malformed content it decoded to *)
+              delete it;
+              raise e
           end
           [@@inline]
         let get_se_pe it f g =

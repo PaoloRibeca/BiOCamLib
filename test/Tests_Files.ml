@@ -150,6 +150,90 @@ let test_sequence_readers () =
         Files.FASTA.iter ~verbose:false (fun _ -> ())
           "/nonexistent/BiOCamLib_Tests_missing.fasta"))
 
+(* Transparent decompression.  The readers take a path and decide from the magic
+   number whether to spawn a decompressor, so what is checked here is that the
+   same records come back however the file is packed, and -- the part that had
+   no coverage at all -- that a helper which fails is HEARD.  A corrupt archive
+   exits non-zero, and swallowing that is how a short read becomes a short
+   dataset with every downstream ratio computed over whatever arrived.
+
+   The compressors are looked up rather than assumed: where they are absent the
+   checks say so and are skipped, because a group that quietly ran nothing is
+   indistinguishable from one that passed. *)
+
+let have cmd =
+  Sys.command (Printf.sprintf "command -v %s >/dev/null 2>&1" cmd) = 0
+
+let with_packed ~how text f =
+  let path = Filename.temp_file "BiOCamLib_Tests_" ".seq" in
+  let oc = open_out path in
+  output_string oc text;
+  close_out oc;
+  Fun.protect ~finally:(fun () -> List.iter (fun p -> try Sys.remove p with _ -> ()) [ path ])
+    (fun () ->
+      (* The compressor replaces the file, so the packed one carries the suffix
+         it chooses; the reader never looks at the name, only at the bytes *)
+      let packed = path ^ (if how = "gzip" then ".gz" else ".bz2") in
+      Fun.protect ~finally:(fun () -> try Sys.remove packed with _ -> ())
+        (fun () ->
+          if Sys.command (Printf.sprintf "%s -c %s > %s" how (Filename.quote path)
+                            (Filename.quote packed)) <> 0 then
+            failwith (how ^ " failed");
+          f packed))
+
+let read_tags path =
+  let acc = ref [] in
+  Files.FASTA.iter ~verbose:false
+    (fun (_, _, r) -> List.accum acc r.Files.Base.Read.tag) path;
+  List.rev !acc |> String.concat " "
+
+let test_compression () =
+  Testing.section "Transparent decompression" (fun () ->
+    let fasta = ">a\nACGT\n>b\nTTTT\n" in
+    List.iter
+      (fun how ->
+        if not (have how) then
+          Testing.check_bool
+            (Printf.sprintf "SKIPPED: %s is not installed, so its reading is unchecked" how)
+            ~expected:true true
+        else begin
+          Testing.check_string (Printf.sprintf "a %s archive reads as the plain file does" how)
+            ~expected:"a b" (with_packed ~how fasta read_tags);
+          (* Truncating an archive leaves the decompressor exiting non-zero part
+             way through.  What must NOT happen is the reader taking the short
+             output for the whole file: the records it did get are perfectly
+             well-formed, so nothing about them says anything is missing. *)
+          Testing.check_raises
+            (Printf.sprintf "and a truncated %s archive is refused, not silently short" how)
+            (fun () ->
+              with_packed ~how fasta (fun packed ->
+                let n = (Unix.stat packed).Unix.st_size in
+                let ic = open_in_bin packed in
+                let head = really_input_string ic (max 1 (n / 2)) in
+                close_in ic;
+                let oc = open_out_bin packed in
+                output_string oc head;
+                close_out oc;
+                read_tags packed))
+        end)
+      [ "gzip"; "bzip2" ];
+    (* The case where the two failures coincide, which is the usual one: a
+       corrupt archive decodes to malformed content, and the reader used to
+       report the content and never reach the helper's exit status at all --
+       naming the symptom and swallowing the cause. *)
+    (* What is NOT asserted here, deliberately.  A corrupt archive that decodes
+       to malformed content reports the content, not the decompressor, and that
+       cannot be repaired by closing the helper on the way out: abandoning the
+       read closes the pipe, the helper dies of SIGPIPE, and reap() treats that
+       as the legitimate early stop it usually is.  Its true exit status is
+       destroyed by the very act of asking for it.  The protection that DOES
+       hold is the one above -- an archive read to its end is checked -- and it
+       is the one that matters, because a truncated archive whose content stays
+       well-formed is the case that would otherwise pass silently. *)
+    ())
+
+
 let run () =
   test_quoted_path ();
-  test_sequence_readers ()
+  test_sequence_readers ();
+  test_compression ()
