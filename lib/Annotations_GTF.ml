@@ -116,7 +116,7 @@ module GTF: Format_t = struct
       seq = Seq.intern seqs r.gtf_seq;
       source = intern_source_field values r.gtf_source;
       intervals =
-        [ interval_of_1_based ~lo:r.gtf_lo ~hi:r.gtf_hi ];
+        [ Segment.make (interval_of_1_based ~lo:r.gtf_lo ~hi:r.gtf_hi) ];
       score = r.gtf_score;
       strand = r.gtf_strand;
       phase = r.gtf_phase;
@@ -133,7 +133,7 @@ module GTF: Format_t = struct
     {
       seq = Seq.intern seqs seq;
       source = intern_source_field values source;
-      intervals = [ interval_of_1_based ~lo ~hi ];
+      intervals = [ Segment.make (interval_of_1_based ~lo ~hi) ];
       (* A synthesised parent has no score of its own: GTF gives one only to
          the rows actually present in the file. *)
       score = None;
@@ -355,9 +355,9 @@ module GTF: Format_t = struct
          attribute list. *)
       if s = "" then "" else s ^ ";" in
     let _, rows =
-      List.fold_left (fun (consumed, acc) (i: Sequences.Types.simple_interval_t) ->
-        let lo, hi = OneBased.bounds i in
-        consumed + i.length,
+      List.fold_left (fun (consumed, acc) (s: Segment.t) ->
+        let lo, hi = OneBased.bounds s.span in
+        consumed + s.span.length,
         Printf.sprintf
           "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s"
           seq src leaf lo hi (field_of_score feature.score) strand (phase_of consumed) attrs

@@ -595,7 +595,12 @@ let () =
        LOCATION; a zero-length site is written lo^hi rather than as the reversed
        range a naive lo+1..lo+length would produce. *)
     let location_of feature =
-      List.map (fun i -> A.OneBased.(of_interval i |> to_string))
+      (* The partiality markers go in, since a defline saying where a feature
+         is should not claim it is complete when the record says otherwise *)
+      List.map
+        (fun (s: A.Segment.t) ->
+          let body = A.OneBased.(of_interval s.span |> to_string) in
+          (if s.partial_low then "<" else "") ^ body ^ (if s.partial_high then ">" else ""))
         feature.A.Annotation.intervals
       |> String.concat "," in
     (* A feature need not carry an id: GenBank derives one from /locus_tag, or

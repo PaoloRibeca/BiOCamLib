@@ -286,17 +286,28 @@ include (
         let feature_dna ann feature =
           let r = require_reference ann "feature_dna" in
           let name = seq_name ann feature in
+          (* The whole thing is reverse-complemented once at the end when the
+             feature is on the minus strand, which is why the pieces are stored
+             in genomic order.  A piece whose own strand DISAGREES with the
+             feature's -- only a mixed-strand join produces one -- has to be
+             complemented here so that the final pass puts it back: a forward
+             piece of a reverse feature is complemented twice and comes out
+             forward, which is what trans-splicing means. *)
+          let is_rev = function Some (Sequences.Types.Reverse _) -> true | _ -> false in
+          let feature_rev = is_rev feature.strand in
           let stitched =
-            List.map (fun (i: Sequences.Types.simple_interval_t) ->
+            List.map (fun (s: Segment.t) ->
               let str_iv: Sequences.Types.stranded_interval_t = {
-                low = { name = Sequences.Types.Forward name; position = i.low };
-                length = i.length
+                low = { name = Sequences.Types.Forward name; position = s.span.low };
+                length = s.span.length
               } in
-              Sequences.Reference.get_sequence r str_iv) feature.intervals
+              let piece = Sequences.Reference.get_sequence r str_iv in
+              let piece_rev =
+                match s.strand with None -> feature_rev | some -> is_rev some in
+              if piece_rev <> feature_rev then Sequences.Lint.rc piece else piece)
+              feature.intervals
             |> String.concat "" in
-          match feature.strand with
-          | Some (Sequences.Types.Reverse _) -> Sequences.Lint.rc stitched
-          | _ -> stitched
+          if feature_rev then Sequences.Lint.rc stitched else stitched
         let feature_table ann feature =
           let r = require_reference ann "feature_table" in
           let name = seq_name ann feature in
@@ -318,8 +329,24 @@ include (
           let coding =
             if phase >= String.length dna then ""
             else String.sub dna phase (String.length dna - phase) in
+          (* A 5'-partial CDS has no start codon in the record: the real one lies
+             off the end of what was sequenced, and the record says so with a
+             [<] or a [>].  Rewriting its first codon to methionine would assert
+             exactly what the record denies -- a TTG at a truncated 5' end is
+             leucine, not a start.  Which end is 5' depends on the strand: the
+             low end of the FIRST piece going forward, the high end of the LAST
+             going back, the pieces being stored in genomic order either way. *)
+          let five_prime_partial =
+            let is_rev =
+              match feature.strand with Some (Sequences.Types.Reverse _) -> true | _ -> false in
+            match feature.intervals with
+            | [] -> false
+            | segs ->
+              if is_rev then (List.rev segs |> List.hd).Segment.partial_high
+              else (List.hd segs).Segment.partial_low in
           Sequences.Translation.translate
-            ~replace_alternative_start_codons_with_methionine:true ~stop_on_first_stop:true
+            ~replace_alternative_start_codons_with_methionine:(not five_prime_partial)
+            ~stop_on_first_stop:true
             (feature_table ann feature) coding
         type on_violation_t =
           path:string -> feature_id:string -> message:string -> unit
@@ -366,7 +393,8 @@ include (
                 with _ -> -1 in
               if len < 0 then ()
               else
-                List.iter (fun (i: Sequences.Types.simple_interval_t) ->
+                List.iter (fun (s: Segment.t) ->
+                  let i = s.span in
                   if i.low < 0 || i.low + i.length > len then
                     on_violation
                       ~path:(Path.to_string (paths ann) path)
@@ -544,6 +572,28 @@ include (
     module Seq: Intern_t
     (* Interned attribute keys: the column-9 names ([ID], [Parent], [gene_id],
        ...).  GENCODE has some twenty of them across millions of rows. *)
+    (* One piece of a feature's location.  Most features are a single one of
+       these; a GenBank [join(...)], or a set of GFF3 rows sharing an ID, is
+       several, in genomic order.
+       Two things live here rather than on the feature, and both because a join
+       can disagree with itself.  Partiality is per piece -- [<1..9] says the
+       feature began before what was sequenced, and only the first piece knows
+       that -- and so is the strand, since [complement(join(A,B))] and
+       [join(complement(A),B)] are both legal INSDC, the second being how
+       trans-splicing is spelled.  A [strand] of [None] means the feature's
+       own, which is the ordinary case. *)
+    module Segment:
+      sig
+        type t = {
+          span: Sequences.Types.simple_interval_t;
+          partial_low: bool;
+          partial_high: bool;
+          strand: Sequences.Types.strand_t option
+        }
+        val make:
+          ?partial_low:bool -> ?partial_high:bool -> ?strand:Sequences.Types.strand_t ->
+          Sequences.Types.simple_interval_t -> t
+      end
     module AttrKey: Intern_t
     (* A feature's attributes, keyed by [AttrKey.t] and IN THE ORDER THE FILE
        GAVE THEM.  The values are an array rather than a single item so that a
@@ -663,9 +713,11 @@ include (
           | Order of t list
           | Remote of string * int option * t
         val of_string: string -> t
+        (* Each piece carries its own partiality and strand, a join being able
+           to disagree with itself on both; the second component is the strand
+           of the feature as a whole, and is [None] when they do not agree *)
         val intervals:
-          t -> (string option * Sequences.Types.simple_interval_t) list *
-               Sequences.Types.strand_t option
+          t -> (string option * Segment.t) list * Sequences.Types.strand_t option
       end
     (* A whole annotation, format-independent: the hierarchy it was read under,
        the four interning tables its features refer to, the features themselves,
@@ -679,7 +731,7 @@ include (
         type feature_t = {
           seq: Seq.t;
           source: Value.t option;
-          intervals: Sequences.Types.simple_interval_t list;
+          intervals: Segment.t list;
           score: float option;
           strand: Sequences.Types.strand_t option;
           phase: int option;

@@ -233,7 +233,7 @@ module GenBank:
               } in
               { seq = Seq.intern (seqs !ann) locus;
                 source = None;
-                intervals = [ source_iv ];
+                intervals = [ Segment.make source_iv ];
                 score = None;
                 strand = None;
                 phase = None;
@@ -294,8 +294,32 @@ module GenBank:
       (* [OneBased] carries the zero-length case: a site between two bases is
          INSDC's [lo^hi], and running it through the ordinary formula would
          emit the reversed range [low+1..low] instead, which this reader
-         rejects and no other tool would accept either. *)
-      List.map (fun i -> OneBased.(of_interval i |> to_string)) intervals in
+         rejects and no other tool would accept either.
+         The markers go where INSDC puts them, on the ENDPOINT rather than
+         around the range: [<1..500] and [1..>500].  And a piece whose strand
+         differs from the feature's -- which is what a mixed-strand join is --
+         gets its own [complement(...)], since the one around the whole
+         location can no longer speak for all of them. *)
+      List.map
+        (fun (s: Segment.t) ->
+          let body = OneBased.(of_interval s.span |> to_string) in
+          let body =
+            if s.partial_low then "<" ^ body else body in
+          let body =
+            if s.partial_high then
+              (* After the [..], which is where the upper bound lives *)
+              match String.index_opt body '.' with
+              | Some i when i + 1 < String.length body && body.[i + 1] = '.' ->
+                String.sub body 0 (i + 2) ^ ">" ^
+                  String.sub body (i + 2) (String.length body - i - 2)
+              | _ -> body ^ ">"
+            else
+              body in
+          match s.strand, strand with
+          | Some (Sequences.Types.Reverse _), Some (Sequences.Types.Reverse _) -> body
+          | Some (Sequences.Types.Reverse _), _ -> Printf.sprintf "complement(%s)" body
+          | _ -> body)
+        intervals in
     let body =
       match parts with
       | [] -> "1"
@@ -329,8 +353,8 @@ module GenBank:
       let total_len =
         List.fold_left (fun acc (_, f) ->
           List.fold_left
-            (fun acc (i : Sequences.Types.simple_interval_t) ->
-              max acc (i.low + i.length)) acc f.intervals
+            (fun acc (s : Segment.t) ->
+              max acc (s.span.low + s.span.length)) acc f.intervals
         ) 0 feats in
       Printf.bprintf buf "LOCUS       %-16s%d bp    DNA\n"
         seq total_len;

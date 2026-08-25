@@ -284,6 +284,30 @@ module Attributes:
         l @ [ k, v ]
   end
 
+(* One piece of a feature's location.  Most features are a single one of
+   these; a GenBank [join(...)], or a set of GFF3 rows sharing an ID, is
+   several, in genomic order.
+   Two things live here rather than on the feature, and both for the same
+   reason -- a join can disagree with itself.  Partiality is per piece:
+   [<1..9] says the feature began before what was sequenced, and only the
+   first piece knows that.  So is the strand, because
+   [complement(join(A,B))] and [join(complement(A),B)] are both legal
+   INSDC -- the second is how trans-splicing is spelled -- and a feature
+   carrying one strand between them could only refuse the second or
+   silently reverse-complement half of it. *)
+module Segment =
+  struct
+    type t = {
+      span: Sequences.Types.simple_interval_t;
+      partial_low: bool;
+      partial_high: bool;
+      (* [None] is "whatever the feature says", which is the ordinary case *)
+      strand: Sequences.Types.strand_t option
+    }
+    let make ?(partial_low = false) ?(partial_high = false) ?strand span =
+      { span; partial_low; partial_high; strand }
+  end
+
 (* Adaptive value representation.  The first time a value string is
    seen during parse it is stored as [Value.String s]; the
    second-and-subsequent occurrences trigger promotion in
@@ -500,7 +524,7 @@ module Annotation:
     type feature_t = {
       seq: Seq.t;
       source: Value.t option;
-      intervals: Sequences.Types.simple_interval_t list;
+      intervals: Segment.t list;
       score: float option;
       strand: Sequences.Types.strand_t option;
       phase: int option;
@@ -547,7 +571,7 @@ module Annotation:
     type feature_t = {
       seq: Seq.t;
       source: Value.t option;
-      intervals: Sequences.Types.simple_interval_t list;
+      intervals: Segment.t list;
       score: float option;
       strand: Sequences.Types.strand_t option;
       phase: int option;

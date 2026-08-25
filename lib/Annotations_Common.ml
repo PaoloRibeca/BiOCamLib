@@ -319,10 +319,13 @@ module GenBankLocation:
   sig
     include module type of Annotations_Base.GenBankLocation
     val of_string: string -> t
+    (* Each piece carries its own partiality and strand, because a join can
+       disagree with itself on both; the second component is the strand of the
+       feature as a whole, and is [None] when the pieces do not agree -- which
+       is legal INSDC and is how trans-splicing is spelled. *)
     val intervals:
       t ->
-      (string option * Sequences.Types.simple_interval_t) list
-      * Sequences.Types.strand_t option
+      (string option * Segment.t) list * Sequences.Types.strand_t option
   end
 = struct
     include Annotations_Base.GenBankLocation
@@ -333,11 +336,20 @@ module GenBankLocation:
     let intervals loc =
       let mk_simple low length : Sequences.Types.simple_interval_t =
         { low; length } in
+      (* [<] and [>] say the feature runs past what was sequenced, and they
+         belong to the piece that carries them: only the first piece of a join
+         knows the feature began before the record does.  They were parsed and
+         then dropped here, which is what made a partial CDS indistinguishable
+         from a complete one -- and a 5'-partial CDS has its first codon
+         rewritten to methionine on that belief. *)
+      let seg ?(partial_low = false) ?(partial_high = false) strand span =
+        Segment.make ~partial_low ~partial_high ?strand span in
       let rec walk strand seq = function
         | Point e ->
           (* Through [interval_of_1_based] rather than [mk_simple], so that a
              point location of 0 is caught by the same check as a range. *)
-          [ seq, interval_of_1_based ~lo:e.pos ~hi:e.pos ], strand
+          [ seq, seg ~partial_low:e.fuzzy_left ~partial_high:e.fuzzy_right
+                   strand (interval_of_1_based ~lo:e.pos ~hi:e.pos) ], strand
         | Range (a, b) ->
           (* GenBank spells a between-bases site [lo^hi], so it has no use for
              the inverted pair [interval_of_1_based] tolerates on behalf of the
@@ -348,10 +360,11 @@ module GenBankLocation:
             Exception.raise __FUNCTION__ IO_Format
               (Printf.sprintf "Invalid range (%d..%d): a between-bases site is spelled %d^%d"
                  a.pos b.pos b.pos a.pos);
-          [ seq, interval_of_1_based ~lo:a.pos ~hi:b.pos ], strand
+          [ seq, seg ~partial_low:a.fuzzy_left ~partial_high:b.fuzzy_right
+                   strand (interval_of_1_based ~lo:a.pos ~hi:b.pos) ], strand
         | Between (a, _) ->
           (* Zero-length feature between [a] and [a+1]. *)
-          [ seq, mk_simple a 0 ], strand
+          [ seq, seg strand (mk_simple a 0) ], strand
         | Complement inner ->
           let flipped =
             match strand with
@@ -362,21 +375,24 @@ module GenBankLocation:
         | Join parts
         | Order parts ->
           (* Every part is resolved under the strand in force at this level, and
-             the parts have to agree.  A feature carries ONE strand, so a
+             the parts no longer have to agree: each piece carries its own, so a
              mixed-strand join -- legal INSDC, and how trans-splicing is spelled
-             -- cannot be represented here.  Refusing it is the point: the
-             previous version kept whichever strand came last, which silently
-             reverse-complemented the parts that disagreed with it. *)
-          let acc = ref [] and st = ref strand and seen = ref false in
+             -- is represented rather than refused.  What the whole feature gets
+             is [None] in that case, which is the honest answer to "which strand
+             is this on".
+             This used to raise, which was right while a feature carried one
+             strand for all of its parts; before THAT it kept whichever came
+             last, silently reverse-complementing the parts that disagreed. *)
+          let acc = ref [] and st = ref strand and seen = ref false
+          and mixed = ref false in
           List.iter (fun p ->
             let pieces, s = walk strand seq p in
             if !seen && s <> !st then
-              Exception.raise __FUNCTION__ IO_Format
-                "Mixed-strand join/order is not representable: a feature carries a \
-                 single strand, so its parts must all lie on the same one";
+              mixed := true;
             st := s;
             seen := true;
             acc := !acc @ pieces) parts;
+          let st = if !mixed then ref None else st in
           (* INSDC 3.4.3 gives complement(join(A,B)) and join(complement(B),
              complement(A)) as two spellings of ONE feature, but they arrive
              here in opposite orders: the first stores [A; B], the second
@@ -388,10 +404,24 @@ module GenBankLocation:
              The test is the parts' strand against the strand already in force:
              they differ exactly when the complement was distributed over the
              parts rather than wrapped around them. *)
-          if !seen && !st <> strand then List.rev !acc, !st else !acc, !st
+          if (not !mixed) && !seen && !st <> strand then
+            List.rev !acc, !st
+          else
+            !acc, !st
         | Remote (acc_name, _, inner) ->
           walk strand (Some acc_name) inner in
-      walk None None loc
+      let pieces, overall = walk None None loc in
+      (* A piece's strand is [None] when it agrees with the feature's, which is
+         what [None] is documented to mean and what keeps the ordinary case
+         uncluttered.  The walk cannot know that as it goes -- it sees only the
+         strand in force at each level -- so it marks every piece and the ones
+         that agree are cleared here.  What is left is exactly the pieces a
+         reader has to act on. *)
+      List.map
+        (fun (seq, (s: Segment.t)) ->
+          seq, if s.strand = overall then { s with strand = None } else s)
+        pieces,
+      overall
   end
 
 (* Iterate over the lines of a TSV-style format (GFF3 / GTF):

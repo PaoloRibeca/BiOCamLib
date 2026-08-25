@@ -72,16 +72,30 @@ module Tbl: Writer_t = struct
              which is also the correct reading of complement(join(A,B)), namely
              B' followed by A'. *)
           let ivs = if reverse then List.rev feature.intervals else feature.intervals in
-          List.iteri (fun i (iv: Sequences.Types.simple_interval_t) ->
-            if iv.length = 0 then
+          List.iteri (fun i (s: Segment.t) ->
+            if s.span.length = 0 then
               Exception.raise __FUNCTION__ IO_Format
                 (Printf.sprintf
                    "Feature %S on %S is zero-length, which a feature table has no way to spell"
                    category seq);
-            let lo, hi = OneBased.bounds iv in
+            let lo, hi = OneBased.bounds s.span in
             let a, b = if reverse then hi, lo else lo, hi in
-            if i = 0 then Printf.bprintf buf "%d\t%d\t%s\n" a b category
-            else Printf.bprintf buf "%d\t%d\n" a b) ivs;
+            (* Partiality: a feature running past what was sequenced is spelled
+               by marking the bound it runs past, and this is the format that
+               most needs it -- a submission-grade table says so or the record
+               claims a completeness it does not have.  The marker travels with
+               the BOUND, so reversing the pair for a minus-strand feature has
+               to take it along: the [<] belongs to the low end of the span
+               whichever column that ends up in. *)
+            let mark_a, mark_b =
+              if reverse then
+                (if s.partial_high then ">" else ""), (if s.partial_low then "<" else "")
+              else
+                (if s.partial_low then "<" else ""), (if s.partial_high then ">" else "") in
+            if i = 0 then
+              Printf.bprintf buf "%s%d\t%s%d\t%s\n" mark_a a mark_b b category
+            else
+              Printf.bprintf buf "%s%d\t%s%d\n" mark_a a mark_b b) ivs;
           (* Qualifiers sit on their own continuation lines, indented by three
              empty columns.  A valueless one simply omits the fifth. *)
           let has_codon_start = ref false in

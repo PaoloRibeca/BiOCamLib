@@ -47,10 +47,21 @@ let lines = String.concat "\n"
 (* Render a parsed LOCATION as "lo..hi,lo..hi" in 1-based inclusive form, with a
    zero-length interval shown as "lo^" so the degenerate case stays visible
    instead of collapsing into a reversed range. *)
+(* The pieces as the walk hands them back.  Partiality and a piece's own strand
+   are shown, since both are now carried and both used to be dropped: a [<] or
+   [>] where the record has one, and [c] before a piece that runs against the
+   feature's own direction, which only a mixed-strand join produces. *)
 let intervals_to_string ivs =
-  List.map (fun ((_: string option), (i: T.simple_interval_t)) ->
-    if i.length = 0 then Printf.sprintf "%d^" i.low
-    else Printf.sprintf "%d..%d" (i.low + 1) (i.low + i.length)) ivs
+  List.map (fun ((_: string option), (s: A.Segment.t)) ->
+    let i = s.span in
+    let body =
+      if i.length = 0 then Printf.sprintf "%d^" i.low
+      else Printf.sprintf "%d..%d" (i.low + 1) (i.low + i.length) in
+    let body = (if s.partial_low then "<" else "") ^ body in
+    let body = body ^ (if s.partial_high then ">" else "") in
+    match s.strand with
+    | Some (T.Reverse _) -> "c" ^ body
+    | Some (T.Forward _) | None -> body) ivs
   |> String.concat ","
 
 let strand_to_string = function
@@ -138,14 +149,20 @@ let test_locations () =
     Testing.check_string "a distributed complement stores its parts in genomic order"
       ~expected:(location "complement(join(1..9,20..28))" |> fst |> intervals_to_string)
       (location "join(complement(20..28),complement(1..9))" |> fst |> intervals_to_string);
-    (* Trans-splicing: one part forward, one part reverse.  A feature_t carries a
-       single strand, so this is not representable and is refused.  It used to
-       keep whichever strand came last, which silently reverse-complemented the
-       parts that disagreed with it -- a wrong answer rather than no answer.
-       Representing it properly would need a strand per interval. *)
-    Testing.check_raises ~re:".*[Mm]ixed-strand.*"
-      "a mixed-strand join is refused rather than silently flattened"
-      (fun () -> location "join(1..9,complement(20..28))");
+    (* Trans-splicing: one part forward, one part reverse.  Each piece carries
+       its own strand now, so this is represented rather than refused -- the
+       reverse part is marked and the forward one is not.  Two earlier readings
+       of it are both wrong and both worth remembering: the first kept whichever
+       strand came last, silently reverse-complementing the parts that disagreed,
+       and the second refused the record outright, which was honest but lost a
+       construct INSDC allows. *)
+    Testing.check_string "a mixed-strand join keeps each part on its own strand"
+      ~expected:"1..9,c20..28"
+      (location "join(1..9,complement(20..28))" |> fst |> intervals_to_string);
+    (* And the feature as a whole has no strand, which is the honest answer to
+       "which strand is this on" when its parts disagree. *)
+    Testing.check_string "and the feature itself is left without one"
+      ~expected:"." (location "join(1..9,complement(20..28))" |> snd |> strand_to_string);
     (* GenBank spells a between-bases site lo^hi, so it has no use for the
        inverted pair the shared 1-based helper tolerates on behalf of the
        formats that cannot spell one.  Here 200..199 is simply malformed. *)
@@ -393,13 +410,10 @@ let test_feature_sequence () =
           | None -> Sequences.Translation.Table_1));
     (* A CDS whose 5' end is partial does not begin at a start codon at all, so
        rewriting its first codon to M invents a residue the record does not
-       claim -- TTG is Leu here, not Met.  Fixing it properly needs the
-       partiality the LOCATION parser already sees but discards at the boundary
-       with feature_t (endpoint_t carries fuzzy_left/fuzzy_right; feature_t has
-       nowhere to put them), which is the same missing slot the feature-table
-       writer needs and is tracked as an open item in the design note. *)
+       claim -- TTG is Leu here, not Met.  The partiality the LOCATION parser
+       reads now reaches the feature, so the rewrite is asked for only where the
+       record actually claims a start codon. *)
     Testing.check_string
-      ~known_bug:"5' partiality is parsed and then dropped, so feature_protein cannot see it"
       "a 5'-partial CDS does not have its first codon rewritten to methionine"
       ~expected:"LPG"
       (protein
@@ -768,8 +782,8 @@ let test_tabular () =
         List.accum acc
           (Printf.sprintf "%s|%s|%s|%s|%s|%s|%s"
              (A.Annotation.path_to_string path) (A.Annotation.seq_name ann f)
-             (List.map (fun (i: T.simple_interval_t) ->
-                Printf.sprintf "%d+%d" i.low i.length) f.A.Annotation.intervals
+             (List.map (fun (s: A.Segment.t) ->
+                Printf.sprintf "%d+%d" s.span.low s.span.length) f.A.Annotation.intervals
               |> String.concat ",")
              (match f.A.Annotation.strand with
               | Some (T.Forward _) -> "+" | Some (T.Reverse _) -> "-" | None -> ".")
@@ -903,7 +917,7 @@ let test_tabular () =
        defined format never fails silently. *)
     let doc_with rows attrs =
       String.concat "\n"
-        ([ metadata_header; "!format-version\t1"; "!hierarchy\t(source (gene, CDS))";
+        ([ metadata_header; "!format-version\t2"; "!hierarchy\t(source (gene, CDS))";
            features_header ]
          @ rows @ [ attributes_header ] @ attrs @ [ "" ]) in
     Testing.check_raises ~re:".*unreachable.*"
@@ -1152,7 +1166,7 @@ let test_add_invariants () =
     let feature seq =
       { A.Annotation.empty_feature with
         A.Annotation.seq = A.Annotation.intern_seq ann seq;
-        intervals = [ { T.low = 0; length = 10 } ] } in
+        intervals = [ A.Segment.make { T.low = 0; length = 10 } ] } in
     Testing.check_string "a hierarchy round-trips through to_string"
       ~expected:"(gene ((mRNA (exon))))" (A.Hierarchy.to_string h);
     (* The DFS-ordered-insertion invariant: an internal path segment must already
@@ -1187,7 +1201,7 @@ let test_insertion_cost () =
           A.Annotation.add !ann ~path:[ "annotation"; "gene" ]
             { A.Annotation.empty_feature with
               A.Annotation.seq;
-              intervals = [ { T.low = i * 100; length = 50 } ] }
+              intervals = [ A.Segment.make { T.low = i * 100; length = 50 } ] }
       done;
       Unix.gettimeofday () -. started in
     (* Large enough that both measurements sit well clear of scheduler noise --
@@ -1213,12 +1227,12 @@ let test_insertion_cost () =
            A.Annotation.add !ann ~path:[ "annotation"; "gene" ]
              { A.Annotation.empty_feature with
                A.Annotation.seq;
-               intervals = [ { T.low = i * 100; length = 50 } ] }
+               intervals = [ A.Segment.make { T.low = i * 100; length = 50 } ] }
        done;
        let acc = ref [] in
        A.Annotation.iter (fun ~path:_ f ->
          match f.A.Annotation.intervals with
-         | i :: _ -> List.accum acc (string_of_int i.T.low)
+         | s :: _ -> List.accum acc (string_of_int s.A.Segment.span.T.low)
          | [] -> ()) !ann;
        List.rev !acc |> String.concat ","))
 

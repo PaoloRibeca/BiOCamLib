@@ -116,7 +116,7 @@ module GFF3:
     let feature = {
       seq;
       source;
-      intervals = [ interval_of_1_based ~lo ~hi ];
+      intervals = [ Segment.make (interval_of_1_based ~lo ~hi) ];
       score;
       strand;
       phase;
@@ -351,9 +351,9 @@ module GFF3:
       | None -> "."
       | Some p -> string_of_int (((p - consumed) mod 3 + 3) mod 3) in
     let _, rows =
-      List.fold_left (fun (consumed, acc) (ivl: Sequences.Types.simple_interval_t) ->
-        let lo, hi = OneBased.bounds ivl in
-        consumed + ivl.length,
+      List.fold_left (fun (consumed, acc) (ivl: Segment.t) ->
+        let lo, hi = OneBased.bounds ivl.Segment.span in
+        consumed + ivl.Segment.span.length,
         Printf.sprintf "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s"
           seq src ftype lo hi score strand (phase_of consumed) attrs :: acc)
         (0, []) feature.intervals in

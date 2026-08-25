@@ -60,7 +60,7 @@ module Tabular: Format_t = struct
      than installing a default over a file that brought its own. *)
   let default_hierarchy = default_gff3_hierarchy
   let dialects = [ "standard", default_hierarchy ]
-  let format_version = "1"
+  let format_version = "2"
   let hash_recipe = "fnv1a64/1"
   (* FNV-1a over 64 bits, written out rather than reached for.  [Hashtbl.hash]
      would have been wrong twice over: it yields about 30 usable bits, where
@@ -89,22 +89,48 @@ module Tabular: Format_t = struct
     | s -> Some (decode s)
   (* Intervals, in the INSDC spelling: 1-based inclusive, comma-joined, in the
      order stored rather than sorted, with a zero-length site as [lo^hi]. *)
+  (* A piece is its one-based range, and then two things the range alone cannot
+     say.  Partiality wraps it in the markers GenBank uses for the same purpose,
+     [<] for a feature that began before the record and [>] for one that runs
+     past its end -- here on the whole piece rather than on the endpoint, since
+     this is our own format and the ends of a piece are unambiguous.  A piece on
+     the opposite strand from its feature -- which only a mixed-strand join
+     produces -- is wrapped in [complement(...)], GenBank's own spelling, so
+     that what it means is legible without a key.
+     Both have to be here or the format stops round-tripping, which is the one
+     thing it exists for. *)
+  let interval_to_field (s: Segment.t) =
+    let body = OneBased.(of_interval s.span |> to_string) in
+    let body =
+      (if s.partial_low then "<" else "") ^ body ^ (if s.partial_high then ">" else "") in
+    match s.strand with
+    | Some (Sequences.Types.Reverse _) -> "complement(" ^ body ^ ")"
+    | Some (Sequences.Types.Forward _) | None -> body
   let intervals_to_field intervals =
     match intervals with
     | [] -> "."
-    | _ ->
-      List.map (fun i -> OneBased.(of_interval i |> to_string)) intervals
-      |> String.concat ","
+    | _ -> List.map interval_to_field intervals |> String.concat ","
   (* The exact inverse of the above, so that what this format writes is what it
      reads.  [OneBased] is what refuses a between-bases site whose positions are
      not consecutive: accepting any [hi] meant [100^999] parsed happily and was
      then re-emitted as [100^101], so a hand-edited file was silently rewritten
      rather than diagnosed -- and hand editing is what this format is for. *)
+  (* The exact inverse of [interval_to_field], peeled in the order it wrapped *)
+  let interval_of_field piece =
+    let piece, strand =
+      if String.starts_with ~prefix:"complement(" piece
+         && String.ends_with ~suffix:")" piece then
+        String.sub piece 11 (String.length piece - 12), Some Sequences.Types.reverse
+      else
+        piece, None in
+    let partial_low = String.starts_with ~prefix:"<" piece in
+    let piece = if partial_low then String.sub piece 1 (String.length piece - 1) else piece in
+    let partial_high = String.ends_with ~suffix:">" piece in
+    let piece = if partial_high then String.sub piece 0 (String.length piece - 1) else piece in
+    Segment.make ~partial_low ~partial_high ?strand OneBased.(of_string piece |> to_interval)
   let intervals_of_field = function
     | "." | "" -> []
-    | s ->
-      String.Split.on_char_as_list ',' s
-      |> List.map (fun piece -> OneBased.(of_string piece |> to_interval))
+    | s -> String.Split.on_char_as_list ',' s |> List.map interval_of_field
   let strand_to_field = function
     | Some (Sequences.Types.Forward _) -> "+"
     | Some (Sequences.Types.Reverse _) -> "-"
