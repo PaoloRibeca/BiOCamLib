@@ -708,20 +708,29 @@ module Float:
 module type IntParameter_t = sig val n: int end
 module type TypeContainer_t = sig type t end
 
-(* General C++-style iterator *)
-module type Iterator_t =
+(* General C++-style iterator, in two parts.  Everything but the creation is
+   here, because the creation is the one member that varies: a reader that can
+   decompress takes a flag the general form has no use for, and a signature
+   cannot include another and then override a val.  Splitting it is what lets
+   those readers INCLUDE this rather than write its members out again, which is
+   how a member added here fails to reach them *)
+module type Iterator_base_t =
   sig
     type init_t
     type t
     type ret_t
     val empty: unit -> t
     val is_empty: t -> bool
-    val create: init_t -> t
     (* The get() functions apply the function argument to one or more elements *)
     val get: t -> (ret_t -> unit) -> unit
     val get_and_incr: t -> (ret_t -> unit) -> unit
     val incr: t -> unit
     val delete: t -> unit (* I am Ozymandias *)
+  end
+module type Iterator_t =
+  sig
+    include Iterator_base_t
+    val create: init_t -> t
   end
 (* Implementation for Stdlib modules built upon Seq *)
 module Seq =

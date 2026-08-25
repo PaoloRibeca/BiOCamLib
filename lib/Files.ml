@@ -294,19 +294,14 @@ module Base =
         type init_t = linter_t * string
         (* Return type is read ID, segment ID, and (tag, sequence, qualities) *)
         type ret_t = int * int * Read.t
-        (* The same as Better's Iterator_t, except that create() also accepts the optional
-            flag which enables transparent decompression *)
         module type Type_t =
           sig
-            type t
-            val empty: unit -> t
-            val is_empty: t -> bool
+            (* Everything a general iterator has but the creation, which is the
+               member that differs: this one takes a flag enabling transparent
+               decompression.  Included rather than written out again, so that a
+               member added to Iterator_base_t cannot quietly fail to arrive *)
+            include Iterator_base_t with type init_t := init_t and type ret_t := ret_t
             val create: ?compression:bool -> init_t -> t
-            (* The get() functions apply the function argument to one or more elements *)
-            val get: t -> (ret_t -> unit) -> unit
-            val get_and_incr: t -> (ret_t -> unit) -> unit
-            val incr: t -> unit
-            val delete: t -> unit (* I am Ozymandias *)
             (* Returns file path and number of parsed lines *)
             val info: t -> string * int
             (* Same as get(), but applies different functions to SE and PE records.
@@ -746,17 +741,10 @@ module Reads:
         type init_t = Base.linter_t * t
         (* Return type is read ID, segment ID, and (tag, sequence, qualities) *)
         type ret_t = int * int * Base.Read.t
-        (* The same as Better's Iterator_t, except that create() also accepts the optional
-            flag which enables transparent decompression *)
-        type t
-        val empty: unit -> t
-        val is_empty: t -> bool
+        (* As in Base.Iterator above: everything but the creation, which takes
+           the flag enabling transparent decompression *)
+        include Iterator_base_t with type init_t := init_t and type ret_t := ret_t
         val create: ?compression:bool -> init_t -> t
-        (* The get() functions apply the function argument to one or more elements *)
-        val get: t -> (ret_t -> unit) -> unit
-        val get_and_incr: t -> (ret_t -> unit) -> unit
-        val incr: t -> unit
-        val delete: t -> unit (* I am Ozymandias *)
       end
     (* OCaml-style iterators *)
     val iter: t Base.Iterator.t
