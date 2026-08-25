@@ -15,7 +15,7 @@
 # figures to split needs no stylesheet of its own at all.
 #
 # Note what is deliberately NOT here: measuring the width a figure should be
-# included at.  That is tools/figscale.py, run by hand when a figure is added or
+# included at.  That is tools/figscale, run by hand when a figure is added or
 # changed, because the width it computes is then baked into README.md and this
 # script only renders what is already there.
 
