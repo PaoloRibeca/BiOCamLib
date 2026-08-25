@@ -301,11 +301,16 @@ module Tabular: Format_t = struct
         id (if parent = "" then "." else parent) (encode (seq_name ann feature))
         (path_to_field path) (encode_opt feature.id) (encode_opt (feature_source ann feature))
         (field_of_score_exact feature.score) strand phase intervals;
-      (* Sorted, because AttrMap order is an interning artefact: a format whose
-         point is to be diffable cannot inherit an order nobody controls. *)
+      (* In source order, which is what the attributes now hold.  This used to
+         sort, because the order was an interning artefact and a format whose
+         point is to be diffable cannot inherit an order nobody controls -- but
+         sorting now DISCARDS an order somebody does control, and a round trip
+         through this format would put a feature's qualifiers back in the wrong
+         sequence.  It is still deterministic, which is what diffability
+         actually needs. *)
       let pairs = ref [] in
       attr_iter ann (fun k vs -> List.accum pairs (k, vs)) feature;
-      List.sort (fun (a, _) (b, _) -> compare a b) !pairs
+      List.rev !pairs
         |> List.iter (fun (k, vs) ->
           match vs with
           (* No values at all is not the same as one empty value, but the row
@@ -494,10 +499,10 @@ module Tabular: Format_t = struct
       let attr_map =
         List.fold_left (fun m (k, v) ->
           let kid = AttrKey.intern (attr_keys !ann) k in
-          let existing = match AttrMap.find_opt kid m with Some a -> Array.to_list a | None -> [] in
-          AttrMap.add kid
+          let existing = match Attributes.find_opt kid m with Some a -> Array.to_list a | None -> [] in
+          Attributes.add kid
             (Array.of_list (existing @ [ ValueTable.intern (values !ann) v ])) m)
-          AttrMap.empty attrs in
+          Attributes.empty attrs in
       let feature = {
         seq = Seq.intern (seqs !ann) (decode (field row 2 "features" 10));
         source =

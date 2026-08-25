@@ -102,12 +102,12 @@ module GFF3:
         let arr =
           Array.of_list
             (List.map (ValueTable.intern values) vs) in
-        AttrMap.add kid arr m
-      ) AttrMap.empty attrs in
+        Attributes.add kid arr m
+      ) Attributes.empty attrs in
     let id_key = AttrKey.intern attr_keys "ID"
     and parent_key = AttrKey.intern attr_keys "Parent" in
     let first_string m k =
-      match AttrMap.find_opt k m with
+      match Attributes.find_opt k m with
       | Some arr when Array.length arr > 0 ->
         Some (ValueTable.to_string values arr.(0))
       | _ -> None in

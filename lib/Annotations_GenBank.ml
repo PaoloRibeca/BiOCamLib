@@ -103,25 +103,27 @@ module GenBank:
      Multi-interval (join/order) features fold to a single
      feature with multiple intervals; the strand carries
      through. *)
-  (* Aggregate qualifier repeats into per-key lists, then
-     freeze to an [AttrMap.t] over interned values.  Used both
-     by [feature_to_pair] and by the source-feature synthesis
-     in [read] below. *)
+  (* Aggregate qualifier repeats into per-key lists, and freeze them into
+     [Attributes] over interned values.  Used both by [feature_to_pair] and by
+     the source-feature synthesis in [read] below.
+     The qualifiers are walked ONCE, in the order the file wrote them: a key
+     already seen has its value appended and keeps the position it had, and a
+     new key goes last.  Aggregating into a StringMap first and folding that,
+     as this did, gathered the repeats correctly and then handed the keys back
+     in ALPHABETICAL order -- so a feature whose file says /product before
+     /gene came out with them the other way round, and no format could put it
+     right because the order was gone by then. *)
   let attrs_of_qualifiers ~attr_keys ~values qualifiers =
-    let acc_lists =
-      List.fold_left (fun m (k, v) ->
-        let prev = try StringMap.find k m with Not_found -> [] in
-        StringMap.add k (prev @ [v]) m
-      ) StringMap.empty qualifiers in
-    let attrs =
-      StringMap.fold (fun k vs m ->
-        let kid = AttrKey.intern attr_keys k in
-        let arr =
-          Array.of_list
-            (List.map (ValueTable.intern values) vs) in
-        AttrMap.add kid arr m
-      ) acc_lists AttrMap.empty in
-    acc_lists, attrs
+    let acc_lists = ref StringMap.empty and attrs = ref Attributes.empty in
+    List.iter
+      (fun (k, v) ->
+        let vs = (try StringMap.find k !acc_lists with Not_found -> []) @ [ v ] in
+        acc_lists := StringMap.add k vs !acc_lists;
+        let kid = AttrKey.intern attr_keys k
+        and arr = Array.of_list (List.map (ValueTable.intern values) vs) in
+        attrs := Attributes.add kid arr !attrs)
+      qualifiers;
+    !acc_lists, !attrs
   let feature_to_pair ~seqs ~attr_keys ~values
                       hierarchy seq_name
                       (f : GenBankRecord.feature_t) =
@@ -236,7 +238,7 @@ module GenBank:
                 strand = None;
                 phase = None;
                 id = Some locus;
-                attributes = AttrMap.empty } in
+                attributes = Attributes.empty } in
           ann := add !ann ~path:source_path source_feature
         end;
         (* The LOCUS line is regenerated canonically by the

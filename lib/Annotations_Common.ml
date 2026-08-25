@@ -448,7 +448,7 @@ let add_dfs_with_seq_bloom ann_ref features =
    its [string list] form.  Format-specific writers thread the result through
    their own per-pair formatters.
    The order is NOT the order the keys appeared in the source, whatever an
-   earlier version of this comment claimed.  [AttrMap] is keyed by the integer
+   earlier version of this comment claimed.  [Attributes] is keyed by the integer
    [AttrKey] id, and ids are handed out on first intern across the whole
    annotation, so what comes out is global first-intern order -- which, because
    the GenBank reader folds a [StringMap] to build each feature's qualifiers, is

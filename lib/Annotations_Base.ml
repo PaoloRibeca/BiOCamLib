@@ -200,7 +200,7 @@ module type Intern_t =
   end
 
 (* Generic single-string interner used by [Seq] and [AttrKey].
-   [t] is [int] rather than abstract, which is what lets [AttrMap] be
+   [t] is [int] rather than abstract, which is what lets [Attributes] be
    [Better.IntMap]: the map hands its keys back as [int], and there is no
    coercion from one into an abstract type. *)
 module MakeStringIntern (): Intern_t = struct
@@ -251,12 +251,38 @@ module Seq = MakeStringIntern ()
    across millions of rows -- interning collapses the duplication. *)
 module AttrKey = MakeStringIntern ()
 
-(* Per-feature attribute map: keys are interned [AttrKey.t], values
-   are a [Value.t array] so genuinely repeated qualifiers (GenBank
-   /db_xref, GFF3 comma lists split on parse) can be preserved
-   without lossy joining, in a flat layout that's ~half the size of
-   a cons-cell list. *)
-module AttrMap = IntMap
+(* Per-feature attributes: keys are interned [AttrKey.t], values are a
+   [Value.t array] so genuinely repeated qualifiers (GenBank /db_xref, GFF3
+   comma lists split on parse) can be preserved without lossy joining.
+   Ordered, and a list rather than a map for exactly that reason.  Keyed by
+   intern id, a map put a feature's qualifiers in the order the keys were first
+   seen ANYWHERE in the file -- an artefact of interning, and nothing to do with
+   this feature -- so a round trip silently reordered them and the tabular
+   writer had to sort its output to hide it.  A feature carries a handful of
+   attributes, so the linear lookup below costs less than the reordering did. *)
+module Attributes:
+  sig
+    type 'a t = (AttrKey.t * 'a) list
+    val empty: 'a t
+    val is_empty: 'a t -> bool
+    val find_opt: AttrKey.t -> 'a t -> 'a option
+    val iter: (AttrKey.t -> 'a -> unit) -> 'a t -> unit
+    (* Replacing a key keeps the position it already had, and a new one goes
+       last, which is where the file would have put it *)
+    val add: AttrKey.t -> 'a -> 'a t -> 'a t
+  end
+= struct
+    type 'a t = (AttrKey.t * 'a) list
+    let empty = []
+    let is_empty = function [] -> true | _ -> false
+    let find_opt = List.assoc_opt
+    let iter f = List.iter (fun (k, v) -> f k v)
+    let add k v l =
+      if List.mem_assoc k l then
+        List.map (fun (k', v') -> k', if k' = k then v else v') l
+      else
+        l @ [ k, v ]
+  end
 
 (* Adaptive value representation.  The first time a value string is
    seen during parse it is stored as [Value.String s]; the
@@ -479,7 +505,7 @@ module Annotation:
       strand: Sequences.Types.strand_t option;
       phase: int option;
       id: string option;
-      attributes: Value.t array AttrMap.t
+      attributes: Value.t array Attributes.t
     }
     val empty_feature: feature_t
     type t
@@ -526,7 +552,7 @@ module Annotation:
       strand: Sequences.Types.strand_t option;
       phase: int option;
       id: string option;
-      attributes: Value.t array AttrMap.t
+      attributes: Value.t array Attributes.t
     }
     let empty_feature = {
       seq = 0;
@@ -536,7 +562,7 @@ module Annotation:
       strand = None;
       phase = None;
       id = None;
-      attributes = AttrMap.empty
+      attributes = Attributes.empty
     }
     (* Siblings are stored MOST RECENT FIRST, not in insertion order.  [add]
        always appends at one end and always drills through the node most
@@ -588,10 +614,10 @@ module Annotation:
       |> List.map (ValueTable.to_string t.values)
     let attr_get t f key =
       let id = AttrKey.intern t.attr_keys key in
-      AttrMap.find_opt id f.attributes
+      Attributes.find_opt id f.attributes
       |> Option.map (value_array_to_strings t)
     let attr_iter t f feature =
-      AttrMap.iter (fun id arr ->
+      Attributes.iter (fun id arr ->
         f (AttrKey.to_string t.attr_keys id)
           (value_array_to_strings t arr)
       ) feature.attributes
@@ -601,7 +627,7 @@ module Annotation:
         Array.of_list
           (List.map (ValueTable.intern t.values) str_values) in
       { feature with
-        attributes = AttrMap.add id arr feature.attributes }
+        attributes = Attributes.add id arr feature.attributes }
     (* Walk every feature's attribute arrays and rewrite any
        [Value.String s] for which [s] now has a promoted id, in
        place.  After this pass, [Value.String s] is the unique
@@ -609,7 +635,7 @@ module Annotation:
     let cleanup_values t =
       let rec walk_nodes nodes =
         List.iter (fun n ->
-          AttrMap.iter (fun _kid arr ->
+          Attributes.iter (fun _kid arr ->
             Array.iteri (fun i v ->
               match v with
               | Value.String s ->

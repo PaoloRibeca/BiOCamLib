@@ -10,7 +10,7 @@
     [Format_t] interfaces -- names the five per-format modules that
     live in files of their own, dispatches over them through [Format]
     and [Writer], and re-exports the [Path], [Seq], [AttrKey],
-    [AttrMap], [Value] and [ValueTable] interning modules from
+    [Attributes], [Value] and [ValueTable] interning modules from
     [Annotations_Base], so that a consumer needs one import.  To those
     it adds what belongs to no single format: the [Annotation] AST
     extended with binary I/O, the validation actions and the
@@ -52,8 +52,7 @@ open Better
    resolve for a consumer, and neither does a [module type of] on one.  So what
    exists only inside a sealed module is written out here -- that is the price
    of sealing, and it is also just an interface -- while anything with a public
-   interface elsewhere is referred to rather than restated: [AttrMap] is
-   [Better.IntMap] in one line instead of fifty of [Map.Make], and the field and
+   interface elsewhere is referred to rather than restated: the field and
    argument types reach for [Better.Hashtbl] and [Sequences.Types] by name.
    What repeats within the signature is named too, rather than repeated: [Seq]
    and [AttrKey] are one functor applied twice and share [Intern_t], and the
@@ -234,7 +233,7 @@ include (
            being a shape the type still accepts, would corrupt silently rather than
            fail.  The previous released version is 2026-05-09; no archive carrying
            an intermediate value ever left this branch, so one bump covers both. *)
-        let archive_version = "2026-08-21"
+        let archive_version = "2026-08-25"
         let make_filename_binary = function
           | w when String.length w >= 5 && String.sub w 0 5 = "/dev/" -> w
           | prefix -> prefix ^ ".Annotation"
@@ -546,11 +545,25 @@ include (
     (* Interned attribute keys: the column-9 names ([ID], [Parent], [gene_id],
        ...).  GENCODE has some twenty of them across millions of rows. *)
     module AttrKey: Intern_t
-    (* A feature's attributes, keyed by [AttrKey.t].  The values are an array
-       rather than a single item so that a genuinely repeated qualifier -- a
-       GenBank [/db_xref], a GFF3 comma list -- survives without being joined
-       into one string.  Reach for [Annotation.attr_get] in preference. *)
-    module AttrMap: module type of IntMap
+    (* A feature's attributes, keyed by [AttrKey.t] and IN THE ORDER THE FILE
+       GAVE THEM.  The values are an array rather than a single item so that a
+       genuinely repeated qualifier -- a GenBank [/db_xref], a GFF3 comma
+       list -- survives without being joined into one string.  Reach for
+       [Annotation.attr_get] in preference.
+       A list rather than a map, and the order is the reason: keyed by intern
+       id, a map ordered a feature's qualifiers by when each key was first seen
+       ANYWHERE in the file, which says nothing about this feature and silently
+       reordered a round trip. *)
+    module Attributes:
+      sig
+        type 'a t = (AttrKey.t * 'a) list
+        val empty: 'a t
+        val is_empty: 'a t -> bool
+        val find_opt: AttrKey.t -> 'a t -> 'a option
+        val iter: (AttrKey.t -> 'a -> unit) -> 'a t -> unit
+        (* Replacing a key keeps the position it had; a new one goes last *)
+        val add: AttrKey.t -> 'a -> 'a t -> 'a t
+      end
     (* How an attribute value is held.  A string seen exactly once is kept
        inline as [String]; one seen twice or more is promoted into the
        annotation's [ValueTable] and kept as [Hashed].  The distinction is an
@@ -671,7 +684,7 @@ include (
           strand: Sequences.Types.strand_t option;
           phase: int option;
           id: string option;
-          attributes: Value.t array AttrMap.t;
+          attributes: Value.t array Attributes.t;
         }
         val empty_feature: feature_t
         type t

@@ -697,15 +697,13 @@ let test_attribute_order () =
     (match feature_at ann "CDS" with
      | Some (_, f) -> A.Annotation.attr_iter ann (fun k _ -> List.accum keys k) f
      | None -> ());
-    (* attrs_of_qualifiers folds a StringMap and AttrMap is keyed by the
-       resulting intern ids, so what comes out is global first-intern order,
-       not the order the qualifiers appeared in.  Preserving true per-feature
-       source order would take a list rather than a map, so this is pinned
-       rather than fixed -- and a format that wants a predictable order has to
-       sort explicitly, which is what the tabular writer does. *)
-    Testing.check_string
-      ~known_bug:"AttrMap is keyed by intern id, so per-feature source order is not kept"
-      "attributes are emitted in source order"
+    (* The order a feature's qualifiers were written in, which is now kept:
+       the qualifiers are walked once and each key holds the position of its
+       first appearance.  It used to be global first-intern order -- an
+       artefact of when a key was first seen anywhere in the file -- and the
+       fixture is chosen so the two disagree, /product preceding /gene where
+       alphabetical order would not. *)
+    Testing.check_string "attributes are emitted in source order"
       ~expected:"product,gene" (List.rev !keys |> String.concat ",");
     (* What IS guaranteed is that the order is deterministic: the same input
        gives the same output, which is what a diffable text format needs. *)

@@ -22,7 +22,7 @@
 ; type of], not as a module-type equation, because each of those leaves the
 ; consumer with something it must expand and cannot.  What lives only inside a
 ; sealed module is therefore written out; what has a public interface elsewhere
-; is named ([AttrMap] is [Better.IntMap]).  Writing it out is the standing cost
+; is named.  Writing it out is the standing cost
 ; of sealing a module whose types are part of the API, and the reason to accept
 ; it is that the result is an interface rather than a re-export.
 

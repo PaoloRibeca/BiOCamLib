@@ -110,8 +110,8 @@ module GTF: Format_t = struct
     let attr_map =
       StringMap.fold (fun k vs m ->
         let kid = AttrKey.intern attr_keys k in
-        AttrMap.add kid (value_array_of_strings values vs) m
-      ) r.gtf_attrs AttrMap.empty in
+        Attributes.add kid (value_array_of_strings values vs) m
+      ) r.gtf_attrs Attributes.empty in
     {
       seq = Seq.intern seqs r.gtf_seq;
       source = intern_source_field values r.gtf_source;
@@ -128,8 +128,8 @@ module GTF: Format_t = struct
     let attr_map =
       List.fold_left (fun m (k, vs) ->
         let kid = AttrKey.intern attr_keys k in
-        AttrMap.add kid (value_array_of_strings values vs) m
-      ) AttrMap.empty attrs in
+        Attributes.add kid (value_array_of_strings values vs) m
+      ) Attributes.empty attrs in
     {
       seq = Seq.intern seqs seq;
       source = intern_source_field values source;
