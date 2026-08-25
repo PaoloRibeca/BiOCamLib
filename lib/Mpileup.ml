@@ -437,7 +437,7 @@ include (
        [strand], when given, keeps only the reads on it: a directional protocol
        is evidence about one strand and the other's reads are not evidence
        about it. *)
-    let summarise ?(quality_offset = 33) ?strand ?line_number line =
+    let summarize ?(quality_offset = 33) ?strand ?line_number line =
       let where = line_number in
       let n_columns, starts, stops = columns_of_line line in
       if n_columns < 6 then
@@ -669,7 +669,7 @@ include (
     (* The same line counted rather than kept, which is what a variant caller
        wants and is reached without building a read.  [strand] keeps only the
        reads on it *)
-    val summarise:
+    val summarize:
       ?quality_offset:int -> ?strand:Sequences.Types.strand_t -> ?line_number:int ->
       string -> Summary.t
     val to_string: ?quality_offset:int -> t -> string

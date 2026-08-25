@@ -515,7 +515,7 @@ include (
               incr line_number;
               let line =
                 input_line input
-                  |> Mpileup'.summarise ~quality_offset ~line_number:!line_number
+                  |> Mpileup'.summarize ~quality_offset ~line_number:!line_number
                   |> of_summary in
               if line.seq <> !curr_seq_name then begin
                 output_current ();

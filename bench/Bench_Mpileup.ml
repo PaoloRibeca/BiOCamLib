@@ -159,7 +159,7 @@ let old_style_of_line ?(quality_offset = 33) line =
    dense histogram, which is one array increment and nothing allocated. *)
 module QualitiesDistribution = Map.Make (Int)
 
-let sinple_style_summarise ?(quality_offset = 33) line =
+let sinple_style_summarize ?(quality_offset = 33) line =
   let columns = Array.of_list (String.split_on_char '\t' line) in
   if Array.length columns < 6 then
     Exception.raise __FUNCTION__ IO_Format "Insufficient number of fields";
@@ -270,9 +270,9 @@ let () =
          which is what a variant caller does at every position of a genome. *)
       let sinple_time =
         measure "count: old" (fun () ->
-          List.iter (fun l -> ignore (sinple_style_summarise l)) all) n_lines n_bases
-      and summarise_time =
+          List.iter (fun l -> ignore (sinple_style_summarize l)) all) n_lines n_bases
+      and summarize_time =
         measure "count: new" (fun () ->
-          List.iter (fun l -> ignore (Mpileup.summarise l)) all) n_lines n_bases in
-      Printf.printf "  %-12s %8.2fx\n\n%!" "speed-up" (sinple_time /. summarise_time))
+          List.iter (fun l -> ignore (Mpileup.summarize l)) all) n_lines n_bases in
+      Printf.printf "  %-12s %8.2fx\n\n%!" "speed-up" (sinple_time /. summarize_time))
     [ 2000, 50; 2000, 200; 500, 1000 ]

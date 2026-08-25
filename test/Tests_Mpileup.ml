@@ -194,8 +194,8 @@ let test_iteration () =
    the same vote and must land in the same bucket, or one genotype silently
    becomes two and the reference allele is under-counted. *)
 
-let summarise ?strand s =
-  M.summarise ?strand s
+let summarize ?strand s =
+  M.summarize ?strand s
 
 let show_genotypes (u: M.Summary.t) =
   List.map
@@ -223,21 +223,21 @@ let test_summary () =
     (* Reference matches and explicit bases are one genotype, not two. *)
     Testing.check_string "a dot and the base it stands for are the same vote"
       ~expected:"A:4@40"
-      (show_genotypes (summarise (line [ "c"; "1"; "A"; "4"; ".,Aa"; "IIII" ])));
+      (show_genotypes (summarize (line [ "c"; "1"; "A"; "4"; ".,Aa"; "IIII" ])));
     Testing.check_string "and a different base is a different vote"
       ~expected:"A:2@40 G:2@40"
-      (show_genotypes (summarise (line [ "c"; "1"; "A"; "4"; ".,Gg"; "IIII" ])));
+      (show_genotypes (summarize (line [ "c"; "1"; "A"; "4"; ".,Gg"; "IIII" ])));
     (* Indels are genotypes of their own, classified by length because the model
        above this gives short and long ones different error rates. *)
     Testing.check_string "an indel is a genotype in its own right"
       ~expected:"A:2@40 +AC:1"
-      (show_genotypes (summarise (line [ "c"; "1"; "A"; "2"; ".+2AC,"; "II" ])));
+      (show_genotypes (summarize (line [ "c"; "1"; "A"; "2"; ".+2AC,"; "II" ])));
     Testing.check_string "a single base deleted is a short indel"
       ~expected:"Short_indel"
-      (kind_of_indel (summarise (line [ "c"; "1"; "A"; "1"; ".-1G"; "I" ])));
+      (kind_of_indel (summarize (line [ "c"; "1"; "A"; "1"; ".-1G"; "I" ])));
     Testing.check_string "and several bases a long one"
       ~expected:"Long_indel"
-      (kind_of_indel (summarise (line [ "c"; "1"; "A"; "1"; ".-2GG"; "I" ])));
+      (kind_of_indel (summarize (line [ "c"; "1"; "A"; "1"; ".-2GG"; "I" ])));
     Testing.check_bool "an indel carries no quality, rather than a zero one"
       ~expected:true
       (List.for_all
@@ -246,29 +246,29 @@ let test_summary () =
            | M.Genotype.Base, Some _ -> true
            | (M.Genotype.Short_indel | M.Genotype.Long_indel), None -> true
            | _ -> false)
-         (summarise (line [ "c"; "1"; "A"; "2"; ".+2AC,"; "II" ])).M.Summary.genotypes);
+         (summarize (line [ "c"; "1"; "A"; "2"; ".+2AC,"; "II" ])).M.Summary.genotypes);
     (* A read inside a deletion or skipping the reference is counted by the
        aligner but votes for nothing. *)
     Testing.check_string "gaps and skips are counted apart from the votes"
       ~expected:"depth 4, voting 1, gaps 2, skips 1"
-      (let u = summarise (line [ "c"; "1"; "A"; "4"; ".*#>"; "IIII" ]) in
+      (let u = summarize (line [ "c"; "1"; "A"; "4"; ".*#>"; "IIII" ]) in
        Printf.sprintf "depth %d, voting %d, gaps %d, skips %d"
          u.M.Summary.depth u.M.Summary.voting u.M.Summary.gaps u.M.Summary.skips);
     Testing.check_string "and contribute no genotype" ~expected:"A:1@40"
-      (show_genotypes (summarise (line [ "c"; "1"; "A"; "4"; ".*#>"; "IIII" ])));
+      (show_genotypes (summarize (line [ "c"; "1"; "A"; "4"; ".*#>"; "IIII" ])));
     (* A directional protocol is evidence about one strand only. *)
     Testing.check_string "a strand filter keeps only the reads on it"
       ~expected:"A:1@40 G:1@40"
       (show_genotypes
-         (summarise ~strand:Sequences.Types.forward
+         (summarize ~strand:Sequences.Types.forward
             (line [ "c"; "1"; "A"; "4"; ".,Gg"; "IIII" ])));
     Testing.check_string "and the other strand sees the others"
       ~expected:"A:1@40 G:1@40"
       (show_genotypes
-         (summarise ~strand:Sequences.Types.reverse
+         (summarize ~strand:Sequences.Types.reverse
             (line [ "c"; "1"; "A"; "4"; ".,Gg"; "IIII" ])));
     Testing.check_string "a line at depth zero has nothing to say" ~expected:""
-      (show_genotypes (summarise (line [ "c"; "1"; "A"; "0"; "*"; "*" ]))))
+      (show_genotypes (summarize (line [ "c"; "1"; "A"; "0"; "*"; "*" ]))))
 
 (* The quality histogram, which is what the model's likelihood is computed
    over: a null distribution built by merging every genotype but one, and the
@@ -357,43 +357,43 @@ let test_agreement () =
        and two commas. *)
     Testing.check_string "reference matches on both strands are one genotype"
       ~expected:"A:4@40 G:2@40"
-      (show_genotypes (summarise (line [ "polio"; "100"; "A"; "6"; ".,.,Gg"; "IIIIII" ])));
+      (show_genotypes (summarize (line [ "polio"; "100"; "A"; "6"; ".,.,Gg"; "IIIIII" ])));
     (* A read starting here votes like any other. *)
     Testing.check_string "a read that starts here still votes"
       ~expected:"C:5@40"
-      (show_genotypes (summarise (line [ "polio"; "101"; "C"; "5"; "....^K."; "IIIII" ])));
+      (show_genotypes (summarize (line [ "polio"; "101"; "C"; "5"; "....^K."; "IIIII" ])));
     Testing.check_string "and one that ends here"
       ~expected:"G:4@40"
-      (show_genotypes (summarise (line [ "polio"; "102"; "G"; "4"; ".,.$,"; "IIII" ])));
+      (show_genotypes (summarize (line [ "polio"; "102"; "G"; "4"; ".,.$,"; "IIII" ])));
     (* The read carrying an insertion votes twice: once for the base it agreed
        on, once for the insertion.  SiNPle counts four Ts AND one +AC. *)
     Testing.check_string "a read with an insertion votes for its base and the indel"
       ~expected:"T:4@40 +AC:1"
-      (show_genotypes (summarise (line [ "polio"; "103"; "T"; "4"; "..+2AC.."; "IIII" ])));
+      (show_genotypes (summarize (line [ "polio"; "103"; "T"; "4"; "..+2AC.."; "IIII" ])));
     Testing.check_string "and likewise with a deletion"
       ~expected:"A:4@34.75 -G:1"
-      (show_genotypes (summarise (line [ "polio"; "104"; "A"; "4"; ".,-1G.,"; "IIH5" ])));
+      (show_genotypes (summarize (line [ "polio"; "104"; "A"; "4"; ".,-1G.,"; "IIH5" ])));
     (* The mean of I, I, H and 5 -- 40, 40, 39 and 20 -- is 34.75, which SiNPle
        printed to three figures as 34.8. *)
     Testing.check_float "the mean quality is over every read that voted"
       ~expected:34.75
-      (match (summarise (line [ "polio"; "104"; "A"; "4"; ".,-1G.,"; "IIH5" ]))
+      (match (summarize (line [ "polio"; "104"; "A"; "4"; ".,-1G.,"; "IIH5" ]))
                .M.Summary.genotypes with
        | { M.Genotype.qualities = Some q; _ } :: _ -> M.Qualities.mean q
        | _ -> nan);
     (* A read inside a deletion from an earlier line votes for nothing: SiNPle
        counts three Cs where the column holds four calls. *)
     Testing.check_string "a gap is not a vote" ~expected:"C:3@40"
-      (show_genotypes (summarise (line [ "polio"; "105"; "C"; "4"; ".*.,"; "IIII" ])));
+      (show_genotypes (summarize (line [ "polio"; "105"; "C"; "4"; ".*.,"; "IIII" ])));
     Testing.check_string "though it is still counted"
       ~expected:"depth 4, voting 3, gaps 1"
-      (let u = summarise (line [ "polio"; "105"; "C"; "4"; ".*.,"; "IIII" ]) in
+      (let u = summarize (line [ "polio"; "105"; "C"; "4"; ".*.,"; "IIII" ]) in
        Printf.sprintf "depth %d, voting %d, gaps %d"
          u.M.Summary.depth u.M.Summary.voting u.M.Summary.gaps);
     (* A position with no coverage has nothing to say about any genotype, which
        is what SiNPle's bare 'polio 106' says too. *)
     Testing.check_string "and a position with no coverage says nothing" ~expected:""
-      (show_genotypes (summarise (line [ "polio"; "106"; "T"; "0"; "*"; "*" ]))))
+      (show_genotypes (summarize (line [ "polio"; "106"; "T"; "0"; "*"; "*" ]))))
 
 let run () =
   test_columns ();
