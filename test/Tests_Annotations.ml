@@ -229,6 +229,28 @@ let test_genbank_records () =
 
 let test_genbank_round_trip () =
   Testing.section "GenBank round trip" (fun () ->
+    (* INSDC gives the feature key columns 6-20 and starts the location at 22,
+       which a fixed 16-wide field spells exactly -- until the key reaches 16
+       characters and the padding disappears, running the location straight into
+       it with nothing between.  Real SO terms get there: [protein_hmm_match] is
+       seventeen, and the line that used to produce was not parseable by
+       anything, this reader included.  Written through the AST rather than
+       parsed from text, since text carrying such a key is what cannot be read. *)
+    Testing.check_bool "a feature key too long for its column keeps a separator"
+      ~expected:true
+      (let h = A.Hierarchy.of_string "(protein_hmm_match)" in
+       let ann = A.Annotation.create h in
+       let f =
+         { A.Annotation.empty_feature with
+           A.Annotation.seq = A.Annotation.intern_seq ann "chr";
+           intervals = [ A.Segment.make { T.low = 0; length = 15 } ] } in
+       let ann = A.Annotation.add ann ~path:[ "annotation"; "protein_hmm_match" ] f in
+       List.exists
+         (fun l ->
+           let l = String.trim l in
+           String.starts_with ~prefix:"protein_hmm_match" l
+           && String.length l > 17 && l.[17] = ' ')
+         (String.Split.on_char_as_list '\n' (A.GenBank.to_string ann)));
     let round_trip feature_lines =
       let once = genbank feature_lines |> A.GenBank.of_string in
       A.GenBank.to_string once,

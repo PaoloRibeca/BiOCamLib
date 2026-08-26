@@ -289,6 +289,16 @@ module GenBank:
      standard 21-column qualifier indentation.  Locations
      are reconstructed from [intervals] and [strand].  ORIGIN
      is emitted when a [Sequences.Reference] is attached. *)
+  (* INSDC gives the feature key columns 6-20 and starts the location at column
+     22, which "%-16s" spells exactly -- right up until the key is 16 characters
+     or longer, when the padding vanishes and the location runs straight into
+     it.  Real SO terms reach that: [protein_hmm_match] is seventeen.  A writer
+     must not emit a line nothing can read back, so an over-long key keeps its
+     separating space and pushes the location right instead; the column is lost
+     either way, and losing the column is recoverable where losing the boundary
+     is not. *)
+  let pad_to_column ~width s =
+    if String.length s >= width then s ^ " " else Printf.sprintf "%-*s" width s
   let format_intervals_strand intervals strand =
     let parts =
       (* [OneBased] carries the zero-length case: a site between two bases is
@@ -356,8 +366,10 @@ module GenBank:
             (fun acc (s : Segment.t) ->
               max acc (s.span.low + s.span.length)) acc f.intervals
         ) 0 feats in
-      Printf.bprintf buf "LOCUS       %-16s%d bp    DNA\n"
-        seq total_len;
+      (* The same hazard as the FEATURES key below: a locus name of sixteen
+         characters or more would run into the length with nothing between *)
+      Printf.bprintf buf "LOCUS       %s%d bp    DNA\n"
+        (pad_to_column ~width:16 seq) total_len;
       (* A sub-keyword sits in column 3 with its value in column 13, and has to
          follow the keyword it belongs to.  The metadata map is ordered by key,
          so ORGANISM would otherwise come out at column 1 and in alphabetical
@@ -386,7 +398,7 @@ module GenBank:
         let name = if leaf = "" then "misc_feature" else leaf in
         let location =
           format_intervals_strand f.intervals f.strand in
-        Printf.bprintf buf "     %-16s%s\n" name location;
+        Printf.bprintf buf "     %s%s\n" (pad_to_column ~width:16 name) location;
         attr_iter ann (fun k vs ->
           List.iter (fun v ->
             Printf.bprintf buf
