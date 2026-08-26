@@ -1881,10 +1881,79 @@ let test_mutation () =
         |> String.concat ","))
 
 
+(* Reading an annotation from something that is not a plain uncompressed file.
+   Both of these went through [read_file], which opened the path itself and
+   asked the channel its length -- so a stream had no length and raised, and a
+   compressed file was handed to the parser as its own bytes. *)
+
+let test_input_kinds () =
+  Testing.section "Annotation input kinds" (fun () ->
+    let gff3 = "chr\t.\tgene\t1\t10\t.\t+\t.\tID=g1\n" in
+    let ids path =
+      let ann = A.GFF3.of_file path in
+      let acc = ref [] in
+      A.Annotation.iter (fun ~path:_ f -> List.accum acc (A.Annotation.seq_name ann f)) ann;
+      List.rev !acc |> String.concat "," in
+    (* A FIFO has no length, which is what /dev/stdin is when a shell pipes
+       into it.  This used to raise Sys_error "Invalid seek", uncaught, and be
+       reported as an internal error rather than as anything actionable. *)
+    Testing.check_string "an annotation reads from a stream, which has no length"
+      ~expected:"chr"
+      (let dir = Filename.temp_file "BiOCamLib_Tests_" "" in
+       Sys.remove dir;
+       Unix.mkdir dir 0o700;
+       let fifo = Filename.concat dir "in.gff3" in
+       Unix.mkfifo fifo 0o600;
+       Fun.protect
+         ~finally:(fun () -> (try Sys.remove fifo with _ -> ()); (try Unix.rmdir dir with _ -> ()))
+         (fun () ->
+           (* Written by a child, since opening a FIFO for reading blocks until
+              a writer arrives and the reader is this process *)
+           match Unix.fork () with
+           | 0 ->
+             let oc = open_out fifo in
+             output_string oc gff3;
+             close_out oc;
+             Stdlib.exit 0
+           | pid ->
+             let r = ids fifo in
+             ignore (Unix.waitpid [] pid);
+             r));
+    (* And a compressed one is decompressed rather than parsed as its bytes,
+       which used to report "row has 1 columns, expected 9" -- an error about
+       the content that named nothing about the compression causing it. *)
+    List.iter
+      (fun how ->
+        if Sys.command (Printf.sprintf "command -v %s >/dev/null 2>&1" how) <> 0 then
+          Testing.check_bool
+            (Printf.sprintf "SKIPPED: %s is not installed, so its reading is unchecked" how)
+            ~expected:true true
+        else
+          Testing.check_string
+            (Printf.sprintf "and from a %s archive, which is decompressed first" how)
+            ~expected:"chr"
+            (let plain = Filename.temp_file "BiOCamLib_Tests_" ".gff3" in
+             let packed = plain ^ (if how = "gzip" then ".gz" else ".bz2") in
+             Fun.protect
+               ~finally:(fun () ->
+                 List.iter (fun p -> try Sys.remove p with _ -> ()) [ plain; packed ])
+               (fun () ->
+                 let oc = open_out plain in
+                 output_string oc gff3;
+                 close_out oc;
+                 if Sys.command
+                      (Printf.sprintf "%s -c %s > %s" how (Filename.quote plain)
+                         (Filename.quote packed)) <> 0 then
+                   failwith (how ^ " failed");
+                 ids packed)))
+      [ "gzip"; "bzip2" ])
+
+
 let run () =
   test_one_based ();
   test_reference_linting ();
   test_locations ();
+  test_input_kinds ();
   test_genbank_records ();
   test_genbank_round_trip ();
   test_genbank_headers ();
