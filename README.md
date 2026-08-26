@@ -72,8 +72,8 @@ RC -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is RC version 3 [02-Jan-2024]
- compiled against: BiOCamLib version 242 [23-Jan-2024]
+This is RC version 1.3.3-851 [25-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-851 [25-Aug-2026]
  (c) 2023-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -123,8 +123,8 @@ Octopus -h
 in your terminal. You will see a header containing information about the version:
 
 ```
-This is Octopus version 6 [02-Jan-2024]
- compiled against: BiOCamLib version 242 [23-Jan-2024]
+This is Octopus version 1.3.3-851 [25-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-851 [25-Aug-2026]
  (c) 2016-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -159,8 +159,8 @@ Parallel -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is Parallel version 8 [18-Jan-2024]
- compiled against: BiOCamLib version 242 [23-Jan-2024]
+This is Parallel version 1.3.3-851 [25-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-851 [25-Aug-2026]
  (c) 2019-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -274,8 +274,8 @@ FASTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is FASTools version 8 [18-Mar-2024]
- compiled against: BiOCamLib version 245 [14-Feb-2024]
+This is FASTools version 1.3.3-851 [25-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-851 [25-Aug-2026]
  (c) 2022-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -472,8 +472,8 @@ TREx -m 50 -M 10 < genome.fasta > repeats.tsv
 ### Command line options for `TREx`
 
 ```
-This is TREx version 4 [16-Apr-2024]
- compiled against: BiOCamLib version 500 [06-Apr-2026]
+This is TREx version 1.3.3-851 [25-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-851 [25-Aug-2026]
  (c) 2023-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -515,8 +515,8 @@ Cophenetic -t 4 < tree.nwk > distances.tsv
 ### Command line options for `Cophenetic`
 
 ```
-This is Cophenetic version 2 [06-Jun-2024]
- compiled against: BiOCamLib version 500 [06-Apr-2026]
+This is Cophenetic version 1.3.3-851 [25-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-851 [25-Aug-2026]
  (c) 2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -574,8 +574,8 @@ The output is plain Newick, which is what most other programs expect. `-r`/`--ri
 ### Command line options for `NJ`
 
 ```
-This is NJ version 2 [22-Aug-2026]
- compiled against: BiOCamLib version 746 [22-Aug-2026]
+This is NJ version 1.3.3-851 [25-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-851 [25-Aug-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -630,8 +630,8 @@ Yggdrasill  -i splits -t tree -O dropped
 ### Command line options for `Yggdrasill`
 
 ```
-This is Yggdrasill version 5 [05-Feb-2025]
- compiled against: BiOCamLib version 500 [06-Apr-2026]
+This is Yggdrasill version 1.3.3-851 [25-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-851 [25-Aug-2026]
  (c) 2024-2025 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -671,8 +671,8 @@ AnnoTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is AnnoTools version 3 [21-Aug-2026]
- compiled against: BiOCamLib version 638 [21-Aug-2026]
+This is AnnoTools version 1.3.3-851 [25-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-851 [25-Aug-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
