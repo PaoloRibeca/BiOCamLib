@@ -197,9 +197,14 @@ module Tabular: Format_t = struct
      someone handed a file rather than a prefix, and refusing it because its
      name lacks a suffix we invented would be unhelpful. *)
   let looks_like_document path =
-    match open_in path with
+    (* Through the same decompression the reader uses.  Sniffing the raw bytes
+       while [read_file] decompresses them would let the two disagree about
+       what a file IS: a compressed document read as its own bytes looks like
+       nothing, is taken for a prefix, and the reader then goes looking for
+       files that were never written. *)
+    match Files.Compressed.open_input path with
     | exception _ -> false
-    | ic ->
+    | (ic, close) ->
       (* [read] tolerates a preamble before the first banner, so the sniff has
          to skip the same thing rather than decide on line one -- otherwise a
          document carrying a comment header is taken for a prefix and the reader
@@ -223,8 +228,11 @@ module Tabular: Format_t = struct
             else
               trimmed = metadata_header || trimmed = features_header
               || trimmed = attributes_header in
-      let verdict = scan 100 in
-      close_in_noerr ic;
+      let verdict = try scan 100 with _ -> false in
+      (* [close] reaps a decompressor, and one killed part way through a sniff
+         exits by a signal that the reaper reads as the ordinary early stop --
+         but a failure here must not turn a yes-or-no question into a raise *)
+      (try close () with _ -> ());
       verdict
   (* Rendering.  Every feature is visited once, in DFS pre-order, and its id is
      computed from its identity chained through its parent's id -- so an id
