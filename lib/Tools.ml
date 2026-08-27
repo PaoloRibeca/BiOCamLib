@@ -848,7 +848,14 @@ module Argv:
         let res = ref "" in
         String.iter
           (function
+            (* '$' belongs here for a reason the rest do not: pandoc reads the
+               text between two of them as TeX math, so an option whose help
+               quotes a regexp -- '^mat_peptide$' and '^...$' in the same
+               cell -- had everything between the two anchors swallowed into a
+               formula that then failed to parse.  The PDF was still written,
+               with the text mangled and only a warning to say so *)
             | '\\' | '`' | '*' | '_' | '{' | '}' | '[' | ']' | '(' | ')' | '#' | '+' | '-' | '.' | '!' | '~'
+            | '$'
                 as c when escape ->
               "\\" ^ string_of_char c |> String.accum res
             | '<' when escape ->
