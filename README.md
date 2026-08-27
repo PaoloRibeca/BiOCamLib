@@ -459,6 +459,114 @@ AnnoTools --from-genbank NC_000913.gb -R 'type~CDS' --extract-protein proteins.f
 ```
 A feature's intervals are spliced in the order they are stored, so a `join(...)` location comes out as one record rather than one per exon; the result is reverse-complemented as a whole when the feature is on the minus strand. For `--extract-protein` the phase bases are dropped from the 5' end and the feature's `/transl_table` is honoured when it carries one. Because a GenBank file supplies its own sequence through its `ORIGIN` block, the example above needs nothing else; for GFF3 or GTF input, add `--from-fasta` first.
 
+### Command line options for `AnnoTools`
+
+This is the full list of command line options available for the program `AnnoTools`. You can visualise the list by typing
+```bash
+AnnoTools -h
+```
+in your terminal. You will see a header containing information about the version:
+```
+This is AnnoTools version 3 [21-Aug-2026]
+ compiled against: BiOCamLib version 638 [21-Aug-2026]
+ (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
+```
+followed by detailed information. The general form(s) the command can be used is:
+```
+AnnoTools [ACTIONS]
+```
+
+**Actions.**
+They are executed delayed and in order of specification.
+
+*Operations on the annotation register:*
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-0`<br>`--empty` |  |  load an empty annotation into the register |  |
+| `-i`<br>`--input` | _binary\_file\_prefix_ |  load into the register the annotation present in the specified binary file \(extension '\.Annotation' is appended unless the path is under '/dev/\*'\) |  |
+| `-o`<br>`--output` | _binary\_file\_prefix_ |  write the current register to the specified binary file \(extension '\.Annotation' is appended unless under '/dev/\*'\) |  |
+
+*Hierarchy.*
+Override the active hierarchy for a given format. The override is sticky: every subsequent input operation in that format uses it until another `--hierarchy` or `--dialect` replaces it. Reverting to the format's default is just `--dialect <fmt> standard`.
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `--hierarchy` | `gff3`&#124;`gtf`&#124;`genbank` _S\-expression_ |  set the hierarchy to use for subsequent input operations in the named format |  |
+| `--dialect` | `gff3`&#124;`gtf`&#124;`genbank` _name_ |  switch subsequent input operations in the named format to one of its built\-in dialects\.<br>Currently only GFF3 ships more than one dialect \(`standard` and `gencode`\) |  |
+
+*Annotation input.*
+Long form: action mode + format + path. Short forms `--from-gff3`, `--from-gtf`, `--from-genbank` default to `replace`.
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-a`<br>`--annotation` | `replace`&#124;`add` `gff3`&#124;`gtf`&#124;`genbank` _file_ |  merge or replace the register from _file_ in the named format\.<br>When the format is GenBank and the input carries an ORIGIN section, the reference sequence is replaced as well |  |
+| `--from-gff3` | _file_ |  shorthand for `--annotation replace gff3 <file>` |  |
+| `--from-gtf` | _file_ |  shorthand for `--annotation replace gtf <file>` |  |
+| `--from-genbank` | _file_ |  shorthand for `--annotation replace genbank <file>` |  |
+| `--from-tsv`<br>`--from-tabular` | _prefix_ |  shorthand for `--annotation replace tsv <prefix>`; reads the `.Annotation*.txt` tables written from that prefix, and the `.AnnotationReference.fasta` beside them when there is one. A path under `/dev/*`, or an ordinary file that turns out to be a whole tabular document, is read as one document instead |  |
+
+*Reference (multi-FASTA) input.*
+Long form takes the same mode keyword as `--annotation`. Short form `--from-fasta` defaults to `replace`.
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-r`<br>`--reference` | `replace`&#124;`add` _file_ |  merge or replace the register's reference from _file_ |  |
+| `--from-fasta` | _file_ |  shorthand for `--reference replace <file>` |  |
+
+*Validation.*
+Each check raises and exits non-zero on the first violation. All require a reference to be set.
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `--validate-sequences-present` |  |  every sequence referenced by an annotation feature must also exist in the reference |  |
+| `--validate-feature-bounds` |  |  every feature interval must lie within the corresponding sequence's length |  |
+| `--validate-translation` |  |  translated CDS features must agree with their `/translation=` qualifier |  |
+| `--validate` |  |  run every validation in turn |  |
+| `--validate-report` | _file_ |  run every validation against the whole register \(do not stop at the first violation\) and write a tab\-separated report \(`check`, `path`, `feature_id`, `message`\) to _file_; exit non\-zero iff any violation was found |  |
+| `--summary` |  |  print a one\-line summary of the current register to stderr |  |
+
+*Actions involving the selection register.*
+The selection restricts `--selection-print` and the `--extract-*` actions to the features it matches. The `--to-*` writers and `-o` always write the whole register, because a feature whose parent is not selected would be emitted without it. The selection is sticky, and starts out matching everything.
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `-L`<br>`--labels`<br>`--selection-from-labels` | _feature\_id_\[`,`...`,`_feature\_id_\] |  put into the selection register the features carrying the given identifiers, matched exactly rather than as patterns. A feature's identifier comes from `ID=` \(GFF3\), `/locus_tag` or `/gene` \(GenBank\), or `gene_id`/`transcript_id` \(GTF, gene and transcript levels only\); features with none cannot be matched this way. See above for worked examples |  |
+| `-R`<br>`--regexps`<br>`--selection-from-regexps` | _field_`~`_regexp_\[`,`...`,`_field_`~`_regexp_\] |  put into the selection register the features whose named fields match the given regexps; criteria separated by `,` must all match. A field is one of `type`, `path`, `seq`, `strand`, `id` or `source`, and any other name is read as an attribute. The regexp is unanchored, so `type~gene` also matches `pseudogene`. See above for worked examples |  |
+| `--selection-negate` |  |  negate the current selection |  |
+| `--selection-print` |  |  print the features currently selected, one per line, to standard output |  |
+| `--selection-clear` |  |  reset the selection register so that it matches everything |  |
+
+*Sequence extraction.*
+Emit the sequence denoted by each selected feature as FASTA. A feature's intervals are spliced in the order they are stored and the result is reverse-complemented when the feature is on the minus strand; a protein is that sequence with the phase bases dropped from its 5' end, translated with the feature's `/transl_table` when it carries one. Requires a reference to have been loaded.
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `--extract` | `dna`&#124;`protein` _file_ |  write the sequence of every selected feature to _file_ |  |
+| `--extract-dna` | _file_ |  shorthand for `--extract dna <file>` |  |
+| `--extract-protein` | _file_ |  shorthand for `--extract protein <file>` |  |
+
+*Annotation output.*
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `--to` | `gff3`&#124;`gtf`&#124;`genbank`&#124;`tsv`&#124;`tbl` _file\_or\_prefix_ |  write the register to _file\_or\_prefix_ in the named format. `tbl` is NCBI's submission feature table, which is write\-only |  |
+| `--to-gff3` | _file_ |  shorthand for `--to gff3 <file>` |  |
+| `--to-gtf` | _file_ |  shorthand for `--to gtf <file>` |  |
+| `--to-genbank` | _file_ |  shorthand for `--to genbank <file>` |  |
+| `--to-tsv`<br>`--to-tabular` | _prefix_ |  shorthand for `--to tsv <prefix>`; writes a *collection* of files &mdash; the `.Annotation*.txt` tables, plus `.AnnotationReference.fasta` when the register carries a sequence. A prefix under `/dev/*` writes all of it to that one path instead, as a single document |  |
+| `--to-tbl`<br>`--to-feature-table` | _file_ |  shorthand for `--to tbl <file>`; writes an NCBI submission feature table |  |
+
+**Miscellaneous options.**
+They are set immediately.
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `--fasta-width` | _&lt;non\_negative\_integer&gt;_ |  wrap sequence lines at this width wherever FASTA is emitted  \('\-\-to\-gff3', '\-\-to\-tsv' and the '\-\-extract\-\*' actions\),  with '0' meaning one line per sequence\.  Without this option  each format keeps its own convention: GFF3 wraps its  '\#\#FASTA' section at 60, while the tabular format and the  extraction actions emit one line per sequence, so that every  line of their output is a whole record | <ins>default=<mark>_each format's own convention_</mark></ins> |
+| `-v`<br>`--verbose` |  |  set verbose execution | <ins>default=<mark>_quiet execution_</mark></ins> |
+| `-V`<br>`--version` |  |  print version and exit |  |
+| `-h`<br>`--help` |  |  print syntax and exit |  |
+
 ## Using `TREx`
 
 `TREx` finds exact tandem repeats in all the sequences present in a FASTA file read on standard input, and writes a tab-separated record per identified locus to standard output (sequence name, start and end coordinates, unit length, repeat count, and the repeat unit itself). The output is convenient for downstream filtering by length, intersection against an annotation, or visualisation as a per-sequence track.
@@ -660,114 +768,6 @@ They are set immediately\.
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
 | `-v`<br>`--verbose` |  |  set verbose execution \(global option\) | <ins>default=<mark>_quiet execution_</mark></ins> |
-| `-V`<br>`--version` |  |  print version and exit |  |
-| `-h`<br>`--help` |  |  print syntax and exit |  |
-
-### Command line options for `AnnoTools`
-
-This is the full list of command line options available for the program `AnnoTools`. You can visualise the list by typing
-```bash
-AnnoTools -h
-```
-in your terminal. You will see a header containing information about the version:
-```
-This is AnnoTools version 3 [21-Aug-2026]
- compiled against: BiOCamLib version 638 [21-Aug-2026]
- (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
-```
-followed by detailed information. The general form(s) the command can be used is:
-```
-AnnoTools [ACTIONS]
-```
-
-**Actions.**
-They are executed delayed and in order of specification.
-
-*Operations on the annotation register:*
-
-| Option | Argument(s) | Effect | Note(s) |
-|-|-|-|-|
-| `-0`<br>`--empty` |  |  load an empty annotation into the register |  |
-| `-i`<br>`--input` | _binary\_file\_prefix_ |  load into the register the annotation present in the specified binary file \(extension '\.Annotation' is appended unless the path is under '/dev/\*'\) |  |
-| `-o`<br>`--output` | _binary\_file\_prefix_ |  write the current register to the specified binary file \(extension '\.Annotation' is appended unless under '/dev/\*'\) |  |
-
-*Hierarchy.*
-Override the active hierarchy for a given format. The override is sticky: every subsequent input operation in that format uses it until another `--hierarchy` or `--dialect` replaces it. Reverting to the format's default is just `--dialect <fmt> standard`.
-
-| Option | Argument(s) | Effect | Note(s) |
-|-|-|-|-|
-| `--hierarchy` | `gff3`&#124;`gtf`&#124;`genbank` _S\-expression_ |  set the hierarchy to use for subsequent input operations in the named format |  |
-| `--dialect` | `gff3`&#124;`gtf`&#124;`genbank` _name_ |  switch subsequent input operations in the named format to one of its built\-in dialects\.<br>Currently only GFF3 ships more than one dialect \(`standard` and `gencode`\) |  |
-
-*Annotation input.*
-Long form: action mode + format + path. Short forms `--from-gff3`, `--from-gtf`, `--from-genbank` default to `replace`.
-
-| Option | Argument(s) | Effect | Note(s) |
-|-|-|-|-|
-| `-a`<br>`--annotation` | `replace`&#124;`add` `gff3`&#124;`gtf`&#124;`genbank` _file_ |  merge or replace the register from _file_ in the named format\.<br>When the format is GenBank and the input carries an ORIGIN section, the reference sequence is replaced as well |  |
-| `--from-gff3` | _file_ |  shorthand for `--annotation replace gff3 <file>` |  |
-| `--from-gtf` | _file_ |  shorthand for `--annotation replace gtf <file>` |  |
-| `--from-genbank` | _file_ |  shorthand for `--annotation replace genbank <file>` |  |
-| `--from-tsv`<br>`--from-tabular` | _prefix_ |  shorthand for `--annotation replace tsv <prefix>`; reads the `.Annotation*.txt` tables written from that prefix, and the `.AnnotationReference.fasta` beside them when there is one. A path under `/dev/*`, or an ordinary file that turns out to be a whole tabular document, is read as one document instead |  |
-
-*Reference (multi-FASTA) input.*
-Long form takes the same mode keyword as `--annotation`. Short form `--from-fasta` defaults to `replace`.
-
-| Option | Argument(s) | Effect | Note(s) |
-|-|-|-|-|
-| `-r`<br>`--reference` | `replace`&#124;`add` _file_ |  merge or replace the register's reference from _file_ |  |
-| `--from-fasta` | _file_ |  shorthand for `--reference replace <file>` |  |
-
-*Validation.*
-Each check raises and exits non-zero on the first violation. All require a reference to be set.
-
-| Option | Argument(s) | Effect | Note(s) |
-|-|-|-|-|
-| `--validate-sequences-present` |  |  every sequence referenced by an annotation feature must also exist in the reference |  |
-| `--validate-feature-bounds` |  |  every feature interval must lie within the corresponding sequence's length |  |
-| `--validate-translation` |  |  translated CDS features must agree with their `/translation=` qualifier |  |
-| `--validate` |  |  run every validation in turn |  |
-| `--validate-report` | _file_ |  run every validation against the whole register \(do not stop at the first violation\) and write a tab\-separated report \(`check`, `path`, `feature_id`, `message`\) to _file_; exit non\-zero iff any violation was found |  |
-| `--summary` |  |  print a one\-line summary of the current register to stderr |  |
-
-*Actions involving the selection register.*
-The selection restricts `--selection-print` and the `--extract-*` actions to the features it matches. The `--to-*` writers and `-o` always write the whole register, because a feature whose parent is not selected would be emitted without it. The selection is sticky, and starts out matching everything.
-
-| Option | Argument(s) | Effect | Note(s) |
-|-|-|-|-|
-| `-L`<br>`--labels`<br>`--selection-from-labels` | _feature\_id_\[`,`...`,`_feature\_id_\] |  put into the selection register the features carrying the given identifiers, matched exactly rather than as patterns. A feature's identifier comes from `ID=` \(GFF3\), `/locus_tag` or `/gene` \(GenBank\), or `gene_id`/`transcript_id` \(GTF, gene and transcript levels only\); features with none cannot be matched this way. See above for worked examples |  |
-| `-R`<br>`--regexps`<br>`--selection-from-regexps` | _field_`~`_regexp_\[`,`...`,`_field_`~`_regexp_\] |  put into the selection register the features whose named fields match the given regexps; criteria separated by `,` must all match. A field is one of `type`, `path`, `seq`, `strand`, `id` or `source`, and any other name is read as an attribute. The regexp is unanchored, so `type~gene` also matches `pseudogene`. See above for worked examples |  |
-| `--selection-negate` |  |  negate the current selection |  |
-| `--selection-print` |  |  print the features currently selected, one per line, to standard output |  |
-| `--selection-clear` |  |  reset the selection register so that it matches everything |  |
-
-*Sequence extraction.*
-Emit the sequence denoted by each selected feature as FASTA. A feature's intervals are spliced in the order they are stored and the result is reverse-complemented when the feature is on the minus strand; a protein is that sequence with the phase bases dropped from its 5' end, translated with the feature's `/transl_table` when it carries one. Requires a reference to have been loaded.
-
-| Option | Argument(s) | Effect | Note(s) |
-|-|-|-|-|
-| `--extract` | `dna`&#124;`protein` _file_ |  write the sequence of every selected feature to _file_ |  |
-| `--extract-dna` | _file_ |  shorthand for `--extract dna <file>` |  |
-| `--extract-protein` | _file_ |  shorthand for `--extract protein <file>` |  |
-
-*Annotation output.*
-
-| Option | Argument(s) | Effect | Note(s) |
-|-|-|-|-|
-| `--to` | `gff3`&#124;`gtf`&#124;`genbank`&#124;`tsv`&#124;`tbl` _file\_or\_prefix_ |  write the register to _file\_or\_prefix_ in the named format. `tbl` is NCBI's submission feature table, which is write\-only |  |
-| `--to-gff3` | _file_ |  shorthand for `--to gff3 <file>` |  |
-| `--to-gtf` | _file_ |  shorthand for `--to gtf <file>` |  |
-| `--to-genbank` | _file_ |  shorthand for `--to genbank <file>` |  |
-| `--to-tsv`<br>`--to-tabular` | _prefix_ |  shorthand for `--to tsv <prefix>`; writes a *collection* of files &mdash; the `.Annotation*.txt` tables, plus `.AnnotationReference.fasta` when the register carries a sequence. A prefix under `/dev/*` writes all of it to that one path instead, as a single document |  |
-| `--to-tbl`<br>`--to-feature-table` | _file_ |  shorthand for `--to tbl <file>`; writes an NCBI submission feature table |  |
-
-**Miscellaneous options.**
-They are set immediately.
-
-| Option | Argument(s) | Effect | Note(s) |
-|-|-|-|-|
-| `--fasta-width` | _&lt;non\_negative\_integer&gt;_ |  wrap sequence lines at this width wherever FASTA is emitted  \('\-\-to\-gff3', '\-\-to\-tsv' and the '\-\-extract\-\*' actions\),  with '0' meaning one line per sequence\.  Without this option  each format keeps its own convention: GFF3 wraps its  '\#\#FASTA' section at 60, while the tabular format and the  extraction actions emit one line per sequence, so that every  line of their output is a whole record | <ins>default=<mark>_each format's own convention_</mark></ins> |
-| `-v`<br>`--verbose` |  |  set verbose execution | <ins>default=<mark>_quiet execution_</mark></ins> |
 | `-V`<br>`--version` |  |  print version and exit |  |
 | `-h`<br>`--help` |  |  print syntax and exit |  |
 
