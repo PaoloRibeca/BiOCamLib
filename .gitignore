@@ -6,3 +6,4 @@ BiOCamLib.opam
 # source-of-truth (MANIFEST, CURRENT) stays tracked.
 releases/CURRENT~
 releases/BiOCamLib-*
+.claude
