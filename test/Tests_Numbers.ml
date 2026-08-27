@@ -242,6 +242,36 @@ let test_frequencies () =
       ~expected:(13. /. 7.) (FV.mean (a ()));
     Testing.check_float "sum_abs agrees with sum on a non-negative vector"
       ~expected:13. (FV.sum_abs (a ()));
+    (* The moments.  For 0,0,0.5,1,3.5,4,4 the squared deviations from the mean
+       sum to 45.5 - 13^2/7, which is what both variances divide down.  They are
+       accumulated one element at a time as the vector is built, so the case to
+       state is the FIRST element: there is no deviation to add yet, and the
+       increment has to be skipped rather than evaluated. *)
+    let sum_sq_dev = 45.5 -. 13. *. 13. /. 7. in
+    Testing.check_float "the population variance divides by n"
+      ~expected:(sum_sq_dev /. 7.) (FV.variance (a ()));
+    Testing.check_float "and the sample variance by n - 1"
+      ~expected:(sum_sq_dev /. 6.) (FV.sample_variance (a ()));
+    Testing.check_float "the standard deviation is its root"
+      ~expected:(sqrt (sum_sq_dev /. 7.)) (FV.standard_deviation (a ()));
+    Testing.check_float "and the sample standard deviation the root of the other"
+      ~expected:(sqrt (sum_sq_dev /. 6.)) (FV.sample_standard_deviation (a ()));
+    (* This vector is non-negative, so its absolute moments must agree with the
+       plain ones.  Over a signed vector they do not, which is why both are
+       kept: the absolute ones describe the magnitudes and not the values. *)
+    Testing.check_float "the absolute variance agrees with it on a non-negative vector"
+      ~expected:(sum_sq_dev /. 7.) (FV.variance_abs (a ()));
+    let signed () = let v = FV.make () in FV.add v (-2.); FV.add v 2.; v in
+    Testing.check_float "on a signed one the values are spread"
+      ~expected:4. (FV.variance (signed ()));
+    Testing.check_float "while their magnitudes are not"
+      ~expected:0. (FV.variance_abs (signed ()));
+    (* The degenerate lengths.  One element has a variance and it is zero, and
+       an empty vector answers zero rather than a negative zero. *)
+    Testing.check_float "a single element has zero variance"
+      ~expected:0. (let v = FV.make () in FV.add v 7.; FV.variance v);
+    Testing.check_string "and an empty vector zero rather than minus zero"
+      ~expected:"0" (FV.sample_variance (FV.make ()) |> Printf.sprintf "%g");
     (* The ends of the order, which is where the two instantiations differ. *)
     Testing.check_float "first is the smallest under the natural order"
       ~expected:0. (FV.first (a ()));
