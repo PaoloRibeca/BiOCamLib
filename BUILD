@@ -3,6 +3,9 @@
 set -e
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Everything below is relative to the tree this script sits in, and not to
+# wherever it was invoked from.
+cd "$ROOT"
 
 # Everything below that is not specific to this repository lives in tools/,
 # which every repository of the family reaches through its BiOCamLib submodule
@@ -10,12 +13,29 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # repository builds and the profiles it builds with.
 TOOLS="$ROOT/tools"
 
+# Every dune invocation names the root explicitly, as the tools above do.
+# Without it dune takes the OUTERMOST enclosing dune-project, which for a tree
+# checked out inside another one -- a git worktree under .claude/, say -- is a
+# different project altogether, and the build then either fails or silently
+# builds the wrong tree.
+DUNE=(dune build --root "$ROOT")
+
 if [[ "${1:-}" == "README.pdf" ]]; then
   bash "$TOOLS/readme-pdf" --root "$ROOT" --title BiOCamLib
   exit 0
 fi
 
-
+# The assertion suite (test/Tests.exe, whose harness is BiOCamLib.Testing).
+#   ./BUILD test [<profile>]   build and run it without rebuilding the binaries
+# It is also run at the end of every ordinary build.  A non-zero exit means
+# either a check failed or a known-bug marker went stale, and both should stop
+# a build.
+run_tests() {
+  local profile="${1:-$PROFILE}"
+  echo
+  "${DUNE[@]}" --profile="$profile" test/Tests.exe $FLAGS
+  ./_build/default/test/Tests.exe
+}
 
 # Release packaging and the macOS CI live in tools/release, which takes the
 # project name and reads the rest from releases/MANIFEST:
@@ -63,15 +83,15 @@ bash "$TOOLS/stamp-version" --root "$ROOT" --out "$ROOT/lib/Info.ml" \
 
 #FLAGS="--verbose"
 
-dune build --profile="$PROFILE" bin/Parallel.exe $FLAGS
-dune build --profile="$PROFILE" bin/Octopus.exe $FLAGS
-dune build --profile="$PROFILE" bin/RC.exe $FLAGS
-dune build --profile="$PROFILE" bin/FASTools.exe $FLAGS
-dune build --profile="$PROFILE" bin/AnnoTools.exe $FLAGS
-dune build --profile="$PROFILE" bin/TREx.exe $FLAGS
-dune build --profile="$PROFILE" bin/Cophenetic.exe $FLAGS
-dune build --profile="$PROFILE" bin/NJ.exe $FLAGS
-dune build --profile="$PROFILE" bin/Yggdrasill.exe $FLAGS
+"${DUNE[@]}" --profile="$PROFILE" bin/Parallel.exe $FLAGS
+"${DUNE[@]}" --profile="$PROFILE" bin/Octopus.exe $FLAGS
+"${DUNE[@]}" --profile="$PROFILE" bin/RC.exe $FLAGS
+"${DUNE[@]}" --profile="$PROFILE" bin/FASTools.exe $FLAGS
+"${DUNE[@]}" --profile="$PROFILE" bin/AnnoTools.exe $FLAGS
+"${DUNE[@]}" --profile="$PROFILE" bin/TREx.exe $FLAGS
+"${DUNE[@]}" --profile="$PROFILE" bin/Cophenetic.exe $FLAGS
+"${DUNE[@]}" --profile="$PROFILE" bin/NJ.exe $FLAGS
+"${DUNE[@]}" --profile="$PROFILE" bin/Yggdrasill.exe $FLAGS
 
 rm -rf .build
 mkdir .build
