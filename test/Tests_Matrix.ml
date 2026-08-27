@@ -160,6 +160,32 @@ let test_file_io () =
     Testing.check_string "the written form is a header and one row per line"
       ~expected:"\tc1\tc2\tc3\nr1\t1\t2\t3\nr2\t4\t5\t6\n"
       (with_temp (fun path -> Matrix.to_file ~verbose:false m23 path; read_back path));
+    (* A matrix of counts is mostly zeros once the k-mers grow long, and zeros
+       compress: what this reads is therefore quite often a compressed file, and
+       it used to be handed to the parser as its own bytes.  Nothing here seeks,
+       so a stream works too -- [of_channel] reads with [input_line], the
+       parallelism being in processing the chunks rather than reading them. *)
+    List.iter
+      (fun how ->
+        if Sys.command (Printf.sprintf "command -v %s >/dev/null 2>&1" how) <> 0 then
+          Testing.check_bool
+            (Printf.sprintf "SKIPPED: %s is not installed, so its reading is unchecked" how)
+            ~expected:true true
+        else
+          Testing.check_string
+            (Printf.sprintf "a %s-compressed matrix reads as the plain one does" how)
+            ~expected:(show m23)
+            (with_temp (fun path ->
+               Matrix.to_file ~verbose:false m23 path;
+               let packed = path ^ (if how = "gzip" then ".gz" else ".bz2") in
+               Fun.protect ~finally:(fun () -> try Sys.remove packed with _ -> ())
+                 (fun () ->
+                   if Sys.command
+                        (Printf.sprintf "%s -c %s > %s" how (Filename.quote path)
+                           (Filename.quote packed)) <> 0 then
+                     failwith (how ^ " failed");
+                   show (Matrix.of_file ~verbose:false packed)))))
+      [ "gzip"; "bzip2" ];
     (* A file written by something else has to read, which is the half a round
        trip cannot tell you about.  R quotes names by default. *)
     Testing.check_string "a file written elsewhere reads, quotes and all"
