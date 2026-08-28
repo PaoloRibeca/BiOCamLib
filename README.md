@@ -72,8 +72,8 @@ RC -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is RC version 1.3.3-938 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
+This is RC version 1.3.3-948 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
  (c) 2023-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -123,8 +123,8 @@ Octopus -h
 in your terminal. You will see a header containing information about the version:
 
 ```
-This is Octopus version 1.3.3-938 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
+This is Octopus version 1.3.3-948 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
  (c) 2016-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -159,8 +159,8 @@ Parallel -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is Parallel version 1.3.3-938 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
+This is Parallel version 1.3.3-948 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
  (c) 2019-2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -274,8 +274,8 @@ FASTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is FASTools version 1.3.3-938 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
+This is FASTools version 1.3.3-948 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
  (c) 2022-2025 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -293,7 +293,7 @@ Executed delayed in order of specification, default=`compact`\.
 | `revcom`<br>`-r`<br>`--revcom` |  |  reverse\-complement sequences \(and reverse qualities if present\) in FASTA/FASTQ records or tab\-separated lines |  |
 | `dropq`<br>`-d`<br>`--dropq` |  |  drop qualities in FASTA/FASTQ records or tab\-separated lines |  |
 | `match`<br>`-m`<br>`--match` | _regexp_ |  select sequence names matching the specified regexp in FASTA/FASTQ records or tab\-separated lines\.<br>The regexp must be defined according to [https://ocaml.org/api/Str.html](https://ocaml.org/api/Str.html)\.<br>For paired\-end files, the pair matches when at least one name matches\. |  |
-| `rename`<br>`-R`<br>`--rename` | _regexp_ _replacement_ |  replace with the provided pattern all the instances of the specified regexp occurring in the sequence names of FASTA/FASTQ records or tab\-separated lines\.<br>The regexp must be defined according to [https://ocaml.org/api/Str.html](https://ocaml.org/api/Str.html)\.<br>Replacement expressions can contain identifiers \\1 \.\.\. \\9 for the groups matched by the regular expression; \\0 represents the full match |  |
+| `rename`<br>`-R`<br>`--rename` | _regexp_ _replacement_ |  replace with the provided pattern all the instances of the specified regexp occurring in the sequence names of FASTA/FASTQ records or tab\-separated lines\.<br>The regexp must be defined according to [https://ocaml.org/api/Str.html](https://ocaml.org/api/Str.html)\.<br>Replacement expressions can contain identifiers `\1` \.\.\. `\9` for the groups matched by the regular expression; `\0` represents the full match |  |
 
 **Input/Output\.**
 Executed delayed in order of specification, default=`-F`\.
@@ -468,8 +468,8 @@ AnnoTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is AnnoTools version 1.3.3-938 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
+This is AnnoTools version 1.3.3-948 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -614,8 +614,8 @@ TREx -m 50 -M 10 < genome.fasta > repeats.tsv
 ### Command line options for `TREx`
 
 ```
-This is TREx version 1.3.3-938 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
+This is TREx version 1.3.3-948 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
  (c) 2023-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -657,8 +657,8 @@ Cophenetic -t 4 < tree.nwk > distances.tsv
 ### Command line options for `Cophenetic`
 
 ```
-This is Cophenetic version 1.3.3-938 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
+This is Cophenetic version 1.3.3-948 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
  (c) 2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -716,8 +716,8 @@ The output is plain Newick, which is what most other programs expect. `-r`/`--ri
 ### Command line options for `NJ`
 
 ```
-This is NJ version 1.3.3-938 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
+This is NJ version 1.3.3-948 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -772,8 +772,8 @@ Yggdrasill  -i splits -t tree -O dropped
 ### Command line options for `Yggdrasill`
 
 ```
-This is Yggdrasill version 1.3.3-938 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
+This is Yggdrasill version 1.3.3-948 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
  (c) 2024-2025 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*

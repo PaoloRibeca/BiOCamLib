@@ -103,8 +103,8 @@ let () =
           "regexp occurring in the sequence names of FASTA/FASTQ records";
           "or tab-separated lines.";
           "The regexp must be defined according to <https://ocaml.org/api/Str.html>.";
-          "Replacement expressions can contain identifiers \\1 ... \\9 for the groups";
-          "matched by the regular expression; \\0 represents the full match" ],
+          "Replacement expressions can contain identifiers '\\1' ... '\\9' for the groups";
+          "matched by the regular expression; '\\0' represents the full match" ],
         TA.Optional,
         (fun _ ->
           let regexp = TA.get_parameter () |> Str.regexp in
