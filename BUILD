@@ -21,7 +21,7 @@ TOOLS="$ROOT/tools"
 DUNE=(dune build --root "$ROOT")
 
 if [[ "${1:-}" == "README.pdf" ]]; then
-  bash "$TOOLS/readme-pdf" --root "$ROOT" --title BiOCamLib
+  bash "$TOOLS/markdown-pdf" --root "$ROOT" --title BiOCamLib
   exit 0
 fi
 

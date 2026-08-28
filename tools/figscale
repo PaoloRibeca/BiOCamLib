@@ -8,7 +8,7 @@
 # width that makes that text the same size as the README's body text.  Then
 # prints a Markdown snippet ready to drop into README.md and, for a figure
 # taller than about half a page, the split-across-pages dual element plus the
-# .print-splitfig rule to add to that repository's README.css.
+# .print-splitfig rule to add to that repository's markdown.css.
 #
 #   figscale docs/fig.png                      measure and emit the snippet
 #   figscale docs/fig.png --target 6 --alt "Two-pass calibration workflow."
@@ -135,7 +135,7 @@ printf '%s\n' "$CC" | gawk -v w="$W" -v h="$H" -v target="$TARGET" -v alt="$ALT"
       print "     invisible on screen/GitHub. -->"
       printf "<div class=\"print-splitfig %s\" role=\"img\" aria-label=\"%s\"></div>\n", cls, alt
       print ""
-      print "# ---- add inside the @media print block of this repository README.css ----"
+      print "# ---- add inside the @media print block of this repository markdown.css ----"
       printf "  .print-splitfig.%s { width: %dpx; height: %dpx;\n    background-image: url(\"%s\"); }\n",
         cls, width, box_h, src
     }

@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+#
+# BiOCamLib/tools/markdown-pdf -- render a repository's markdown to PDF.
+#
+#   markdown-pdf --root <dir> [--title <Title>] [--toc] [<file.md> ...]
+#
+# With no file named it renders README.md, which is the common case and what
+# every repository's BUILD asks for.  Each <file>.md becomes <file>.pdf beside
+# it, so a repository with more than one document -- a gallery, a manual, a
+# format specification -- renders them all in one call.
+#
+# Markdown -> self-contained HTML (pandoc, GitHub-flavoured, images and CSS
+# embedded) -> PDF (headless Chrome/Chromium, the same engine GitHub's "print to
+# PDF" uses).  Needs pandoc and google-chrome/chromium.
+#
+# --title names one document; with several, each takes its own first '# '
+# heading, falling back to its basename.  The title reaches the PDF's metadata
+# rather than its first page: the stylesheet hides pandoc's title block, since
+# the document's own heading is already there.
+#
+# --toc asks pandoc for a generated table of contents, which the stylesheet
+# styles.  It is off by default because several of these READMEs write their
+# contents out by hand -- with their own numbering, which a generated one does
+# not reproduce -- and asking for both gives the reader two.
+#
+# Two stylesheets are passed, in order: this directory's markdown.css, which is
+# the house look and the print machinery every repository shares, and then the
+# repository's own markdown.css if it has one -- which is where a per-figure
+# rule belongs, since only that repository has the figure.  A repository with no
+# figures to split needs no stylesheet of its own at all.
+#
+# Note what is deliberately NOT here: measuring the width a figure should be
+# included at.  That is tools/figscale, run by hand when a figure is added or
+# changed, because the width it computes is then baked into the markdown and
+# this script only renders what is already there.
+
+set -e
+
+SELF="$(basename "${BASH_SOURCE[0]}")"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  echo "Usage: $SELF --root <dir> [--title <Title>] [--toc] [<file.md> ...]" >&2
+  exit 1
+}
+
+ROOT="" TITLE="" TOC=""
+DOCS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --root)  ROOT="${2:-}";  shift 2 ;;
+    --title) TITLE="${2:-}"; shift 2 ;;
+    --toc)   TOC=--toc;      shift ;;
+    -*) echo "$SELF: unknown option '$1'" >&2; usage ;;
+    *)  DOCS+=("$1"); shift ;;
+  esac
+done
+[[ -n "$ROOT" ]] || usage
+[[ ${#DOCS[@]} -gt 0 ]] || DOCS=(README.md)
+# One title cannot name several documents, and silently giving them all the
+# same one would be worse than saying so.
+[[ -n "$TITLE" && ${#DOCS[@]} -gt 1 ]] \
+  && { echo "$SELF: --title names one document, but ${#DOCS[@]} were given" >&2; exit 1; }
+
+cd "$ROOT"
+command -v pandoc >/dev/null 2>&1 || { echo "$SELF: pandoc not found" >&2; exit 1; }
+CHROME=""
+for c in google-chrome google-chrome-stable chromium chromium-browser; do
+  if command -v "$c" >/dev/null 2>&1; then CHROME="$c"; break; fi
+done
+[[ -n "$CHROME" ]] || { echo "$SELF: no google-chrome/chromium found" >&2; exit 1; }
+
+HTML="$(mktemp --suffix=.html)"
+# Private profile dir so this Chrome never blocks on the default-profile
+# singleton lock held by an unrelated Chrome already running on the host.
+UDD="$(mktemp -d)"
+# Render to a temp PDF; only move it into place once it IS a valid PDF, so that
+# a Chrome crash never leaves a stale PDF looking like success.
+PDF="$(mktemp --suffix=.pdf)"
+LOG="$(mktemp)"
+trap 'rm -rf "$HTML" "$UDD" "$PDF" "$LOG"' EXIT
+
+# --embed-resources (pandoc >= 2.19) supersedes the older --self-contained; use
+# whichever this pandoc advertises so the build also works on older installs.
+EMBED=--embed-resources
+pandoc --help 2>/dev/null | grep -q -- --embed-resources || EMBED=--self-contained
+
+# pandoc resolves a stylesheet's url() relative to that stylesheet's directory,
+# so a per-figure background image named 'docs/FIG.png' has to be reached from a
+# markdown.css sitting in the repository root -- which is exactly where a
+# repository's own stylesheet is.  The shared one carries no url() for that
+# reason.
+CSS=(--css "$HERE/markdown.css")
+[[ -f markdown.css ]] && CSS+=(--css markdown.css)
+
+for DOC in "${DOCS[@]}"; do
+  [[ -f "$DOC" ]] || { echo "$SELF: no $DOC in $ROOT" >&2; exit 1; }
+  OUT="${DOC%.md}.pdf"
+  # A document below the root reaches its own images by names relative to
+  # itself, so its directory goes on the resource path ahead of the root.
+  DIR="$(dirname "$DOC")"
+  # The title is the document's own first heading where it has one, since that
+  # is what it calls itself, and its file name where it does not.
+  T="$TITLE"
+  if [[ -z "$T" ]]; then
+    T="$(sed -n 's/^# *//p' "$DOC" | head -1)"
+    [[ -n "$T" ]] || T="$(basename "${DOC%.md}")"
+  fi
+  pandoc "$DOC" -f gfm -t html5 --standalone "$EMBED" $TOC \
+         --resource-path "$DIR:." "${CSS[@]}" --metadata title="$T" -o "$HTML"
+  # --disable-background-networking is essential: the GCM/SSL phone-home Chrome
+  # otherwise attempts stalls -- and on some builds crashes (dangling raw_ptr) --
+  # the headless render of a large image-heavy page.  The rest is headless
+  # hygiene so the render is fully self-contained.
+  if "$CHROME" --headless=new --no-sandbox --disable-gpu \
+       --disable-dev-shm-usage --disable-background-networking \
+       --disable-default-apps --disable-extensions --disable-sync \
+       --disable-component-update --no-first-run --metrics-recording-only \
+       --user-data-dir="$UDD" --no-pdf-header-footer \
+       --print-to-pdf="$PDF" "$HTML" 2>"$LOG"; then
+    if [[ -s "$PDF" ]] && [[ "$(head -c4 "$PDF")" == "%PDF" ]]; then
+      mv "$PDF" "$OUT"
+      echo "$SELF: wrote $OUT"
+      continue
+    fi
+  fi
+  echo "$SELF: $OUT FAILED — pandoc or headless Chrome error:" >&2
+  sed 's/^/    /' "$LOG" >&2
+  exit 1
+done
