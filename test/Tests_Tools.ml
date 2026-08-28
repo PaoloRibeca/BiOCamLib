@@ -345,6 +345,11 @@ let captured f =
     close_in ic;
     s)
 
+(* The usage is colourised, so a value printed inside quotes has escape
+   sequences sitting between it and them.  Checking what the terminal SAYS,
+   rather than how it paints it, means taking those out first. *)
+let uncoloured = Str.global_replace (Str.regexp "\027\\[[0-9;]*m") ""
+
 let contains needle haystack =
   let n = String.length needle and l = String.length haystack in
   let rec walk i = i + n <= l && (String.sub haystack i n = needle || walk (i + 1)) in
@@ -452,12 +457,21 @@ let test_argv_parse () =
       [ [ "-n"; "--number" ], Some "<n>", [ "how many things" ], TA.Optional, (fun _ -> ());
         [ "-w" ], Some "<keep|drop>", [ "pass 'keep' or see <https://example.org/x>" ],
           TA.Optional, (fun _ -> ());
-        [ "-d" ], None, [ "a default" ], TA.Default (fun () -> "42"), (fun _ -> ()) ];
+        [ "-d" ], None, [ "a default" ], TA.Default (fun () -> "42"), (fun _ -> ());
+        [ "-j" ], None, [ "detected" ], TA.Detected ((fun () -> "8"), "nproc"), (fun _ -> ()) ];
     let printed = captured (fun oc -> TA.usage ~output:oc ()) in
     List.iter (fun needle ->
       Testing.check_bool (Printf.sprintf "the usage mentions %S" needle) ~expected:true
         (contains needle printed))
       [ "-n"; "--number"; "<n>"; "how many things"; "42" ];
+    (* A detected default is the one place the terminal and the page must NOT
+       agree: the value is true on the machine printing it and false in a page
+       generated once and read everywhere, so the terminal takes the value and
+       the markdown takes the name of what was read. *)
+    Testing.check_bool "the usage gives a detected default as the value read" ~expected:true
+      (contains "default='8'" (uncoloured printed));
+    Testing.check_bool "and never as the name of what read it" ~expected:false
+      (contains "nproc" printed);
     (* The markdown twin is what a README is generated from, so it renders the
        same specs as a table.  What is worth pinning is how the three things a
        help string writes for a terminal are re-said for a page: a name in angle
@@ -478,7 +492,11 @@ let test_argv_parse () =
         "sets a quoted literal as code", "pass `keep` or see";
         "makes a bracketed URL a live link",
           "[https://example.org/x](https://example.org/x)";
-        "shows a default where there is one", "default=<mark>_42_</mark>" ];
+        "shows a default where there is one", "default=<mark>_42_</mark>";
+        "gives a detected default as what was read, not as this machine's answer",
+          "default=<mark>_nproc_</mark>" ];
+    Testing.check_bool "so that no machine-dependent value is written into the page"
+      ~expected:false (contains "default=<mark>_8_</mark>" md);
     Testing.check_bool "so that no raw angle bracket reaches the page" ~expected:true
       (not (contains "<n>" md)))
 

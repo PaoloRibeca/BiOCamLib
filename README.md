@@ -72,8 +72,8 @@ RC -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is RC version 1.3.3-933 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
+This is RC version 1.3.3-938 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
  (c) 2023-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -123,8 +123,8 @@ Octopus -h
 in your terminal. You will see a header containing information about the version:
 
 ```
-This is Octopus version 1.3.3-933 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
+This is Octopus version 1.3.3-938 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
  (c) 2016-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -159,8 +159,8 @@ Parallel -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is Parallel version 1.3.3-933 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
+This is Parallel version 1.3.3-938 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
  (c) 2019-2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -186,7 +186,7 @@ Parallel [OPTIONS] -- [COMMAND TO PARALLELIZE AND ITS OPTIONS]
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-t`<br>`--threads` | _positive\_integer_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_4_</mark></ins> |
+| `-t`<br>`--threads` | _positive\_integer_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_nproc_</mark></ins> |
 | `-v`<br>`--verbose` |  |  set verbose execution | <ins>default=<mark>_quiet execution_</mark></ins> |
 | `-d`<br>`--debug` |  |  output debugging information | <ins>default=<mark>_false_</mark></ins> |
 | `-V`<br>`--version` |  |  print version and exit |  |
@@ -274,8 +274,8 @@ FASTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is FASTools version 1.3.3-933 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
+This is FASTools version 1.3.3-938 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
  (c) 2022-2025 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -468,8 +468,8 @@ AnnoTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is AnnoTools version 1.3.3-933 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
+This is AnnoTools version 1.3.3-938 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -614,8 +614,8 @@ TREx -m 50 -M 10 < genome.fasta > repeats.tsv
 ### Command line options for `TREx`
 
 ```
-This is TREx version 1.3.3-933 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
+This is TREx version 1.3.3-938 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
  (c) 2023-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -657,8 +657,8 @@ Cophenetic -t 4 < tree.nwk > distances.tsv
 ### Command line options for `Cophenetic`
 
 ```
-This is Cophenetic version 1.3.3-933 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
+This is Cophenetic version 1.3.3-938 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
  (c) 2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -676,7 +676,7 @@ Cophenetic [OPTIONS]
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-t`<br>`-T`<br>`--threads` | _computing\_threads_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_4_</mark></ins> |
+| `-t`<br>`-T`<br>`--threads` | _computing\_threads_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_nproc_</mark></ins> |
 | `-v`<br>`--verbose` |  |  set verbose execution \(global option\) | <ins>default=<mark>_false_</mark></ins> |
 | `-V`<br>`--version` |  |  print version and exit |  |
 | `-h`<br>`--help` |  |  print syntax and exit |  |
@@ -716,8 +716,8 @@ The output is plain Newick, which is what most other programs expect. `-r`/`--ri
 ### Command line options for `NJ`
 
 ```
-This is NJ version 1.3.3-933 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
+This is NJ version 1.3.3-938 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -749,7 +749,7 @@ The distance matrix is the tab\-separated form the rest of this suite reads and
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-t`<br>`-T`<br>`--threads` | _computing\_threads_ |  number of concurrent computing threads to be spawned  \(used when reading the matrix; the joining itself is sequential\)  \(default automatically detected from your configuration\) | <ins>default=<mark>_4_</mark></ins> |
+| `-t`<br>`-T`<br>`--threads` | _computing\_threads_ |  number of concurrent computing threads to be spawned  \(used when reading the matrix; the joining itself is sequential\)  \(default automatically detected from your configuration\) | <ins>default=<mark>_nproc_</mark></ins> |
 | `-v`<br>`--verbose` |  |  set verbose execution \(global option\) | <ins>default=<mark>_false_</mark></ins> |
 | `-V`<br>`--version` |  |  print version and exit |  |
 | `-h`<br>`--help` |  |  print syntax and exit |  |
@@ -772,8 +772,8 @@ Yggdrasill  -i splits -t tree -O dropped
 ### Command line options for `Yggdrasill`
 
 ```
-This is Yggdrasill version 1.3.3-933 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
+This is Yggdrasill version 1.3.3-938 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-938 [28-Aug-2026]
  (c) 2024-2025 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*

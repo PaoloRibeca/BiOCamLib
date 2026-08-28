@@ -202,7 +202,7 @@ let () =
         Some "<computing_threads>",
         [ "number of concurrent computing threads to be spawned";
           " (default automatically detected from your configuration)" ],
-        TA.Default (string_of_int !Parameters.threads |> Fun.const),
+        TA.Detected (string_of_int !Parameters.threads |> Fun.const, "nproc"),
         (fun _ -> Parameters.threads := TA.get_parameter_int_pos ());
   *)
       [ "-v"; "--verbose" ],

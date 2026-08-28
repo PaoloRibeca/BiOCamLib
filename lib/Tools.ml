@@ -663,6 +663,13 @@ module Argv:
       | Mandatory (* Implies no default *)
       | Optional (* Implies no default *)
       | Default of (unit -> string) (* Implies optional - the function prints the default *)
+      (* As Default, plus the name of what was read off the machine to get it.
+         The two are needed because a detected default is true where it is
+         printed and false where it is copied: a terminal says '(default=8)',
+         which answers the question on the machine asking it, while a generated
+         page is written once and read everywhere, so it says 'nproc' instead of
+         the core count of whichever machine happened to generate it *)
+      | Detected of (unit -> string) * string
     (* Each spec from which the usage is produced is a tuple with the following elements:
         (1) Equivalent option names
         (2) Optional explanation for the argument(s)
@@ -717,6 +724,7 @@ module Argv:
       | Mandatory
       | Optional
       | Default of (unit -> string)
+      | Detected of (unit -> string) * string
     type argv_spec_t = string list * string option * string list * arg_t * (string -> unit)
     (* The header and its markdown version are different *)
     let _header = ref ""
@@ -1079,10 +1087,13 @@ module Argv:
               "   " ^ grey "*" ^ " (" ^ red "mandatory" ^ ")\n" |> accum_usage;
               accum_md_usage "*(mandatory)*"
             | Optional -> ()
-            | Default def ->
+            | Default def | Detected (def, _) ->
               "   " ^ grey "│" ^ " (default='" ^ (def () |> bold |> under) ^ "')\n" |> accum_usage;
               accum_md_usage "<ins>default=<mark>_";
-              def () |> accum_md_usage ~escape:true;
+              begin match class_ with
+              | Detected (_, name) -> accum_md_usage ~escape:true name
+              | _ -> def () |> accum_md_usage ~escape:true
+              end;
               accum_md_usage "_</mark></ins>"
             end;
             if opts <> [] && help <> [] then

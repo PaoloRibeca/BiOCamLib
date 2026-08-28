@@ -132,7 +132,7 @@ let () =
         [ "number of concurrent computing threads to be spawned";
           " (used when reading the matrix; the joining itself is sequential)";
           " (default automatically detected from your configuration)" ],
-        TA.Default (string_of_int Defaults.threads |> Fun.const),
+        TA.Detected (string_of_int Defaults.threads |> Fun.const, "nproc"),
         (fun _ -> Parameters.threads := TA.get_parameter_int_pos ());
       [ "-v"; "--verbose" ],
         None,
