@@ -869,6 +869,61 @@ module Argv:
           s;
         String.accum _md_usage !res
       and need_table_header = ref false in
+      (* A single-quoted run in a help string is a string literal -- an option
+         value, a file extension, a regexp -- and it reads as one only when it is
+         set as code.  Quotes say that in a terminal and backticks say it in
+         markdown, so a run becomes a code span here, its content left unescaped
+         since a backslash inside a code span is a backslash and not an escape.
+         An apostrophe must not open one, or "the feature's own gene's name"
+         would pair the two apostrophes and set the words between them as code:
+         a quote preceded by a letter or a digit never opens a run, and one
+         followed by either never closes it, which is what tells the two apart.
+         With ~italics the text around the runs is emphasised and the pieces are
+         spaced, which is what an argument descriptor wants -- 'a'|'b' becoming
+         `a` _|_ `b`; without it the text is left as it is, which is what prose
+         wants *)
+      let accum_md_literals ?(italics = false) s =
+        let l = String.length s and emitted = ref false and plain = ref "" in
+        let is_word i =
+          i >= 0 && i < l && (match s.[i] with 'a'..'z' | 'A'..'Z' | '0'..'9' -> true | _ -> false) in
+        let separate () = if italics && !emitted then accum_md_usage " " in
+        let flush () =
+          let t = if italics then String.trim !plain else !plain in
+          plain := "";
+          if t <> "" then begin
+            separate ();
+            if italics then accum_md_usage "_";
+            accum_md_usage ~escape:true t;
+            if italics then accum_md_usage "_";
+            emitted := true
+          end in
+        (* The first quote that can close the run does, so that 'a'|'b' pairs as
+           two runs and not as one holding the separator *)
+        let rec closing j =
+          if j >= l then None
+          else if s.[j] = '\'' && not (is_word (j + 1)) then Some j
+          else closing (j + 1) in
+        let rec scan i =
+          if i < l then begin
+            match if s.[i] = '\'' && not (is_word (i - 1)) then closing (i + 1) else None with
+            | Some j when j > i + 1 && not (String.contains (String.sub s (i + 1) (j - i - 1)) '`') ->
+              flush ();
+              separate ();
+              accum_md_usage "`";
+              (* A pipe inside a code span still divides a table cell, and a
+                 backslash before it is what GFM gives to keep it *)
+              String.sub s (i + 1) (j - i - 1)
+                |> String.iter
+                     (fun c -> accum_md_usage (if c = '|' then "\\|" else string_of_char c));
+              accum_md_usage "`";
+              emitted := true;
+              scan (j + 1)
+            | _ ->
+              plain := !plain ^ string_of_char s.[i];
+              scan (i + 1)
+          end in
+        scan 0;
+        flush () in
       let emit_table_header_if_needed () =
         if !need_table_header then begin
           need_table_header := false;
@@ -887,7 +942,7 @@ module Argv:
                 if line <> "" then begin
                   if i = 0 then
                     accum_md_usage "**";
-                  accum_md_usage ~escape:true line;
+                  accum_md_literals line;
                   if i = 0 then
                     accum_md_usage "**";
                   accum_md_usage "\n"
@@ -932,9 +987,7 @@ module Argv:
             begin match vl with
             | None -> ()
             | Some vl ->
-              accum_md_usage "_";
-              accum_md_usage ~escape:true vl;
-              accum_md_usage "_"
+              accum_md_literals ~italics:true vl
             end;
             accum_md_usage " | "
           end;
@@ -971,7 +1024,7 @@ module Argv:
                     else
                       ""
                   end;
-                  accum_md_usage ~escape:true help)
+                  accum_md_literals help)
               else
                 (* Case of a separator *)
                 (fun i help ->
