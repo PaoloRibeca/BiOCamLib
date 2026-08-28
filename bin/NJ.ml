@@ -86,10 +86,13 @@ let () =
         [ "also write a two-line table of what the distance matrix is: its";
           " shape, whether it can be joined at all, how far it disagrees with";
           " itself across the diagonal and where, how many cells are negative";
-          " (a distance is not, so those are however the matrix writes 'not";
-          " measured'), and, for the tree, how many branches came out negative";
-          " and what they add up to.  Written even for a matrix that is then";
-          " refused, that being when a description is worth the most" ],
+          (* Kept whole rather than broken across the two lines it used to
+             span: a literal is set as code when generating markdown, and a
+             run whose quotes are in different strings is not seen at all *)
+          " (a distance is not, so those are however the matrix writes";
+          " 'not measured'), and, for the tree, how many branches came out";
+          " negative and what they add up to.  Written even for a matrix that";
+          " is then refused, that being when a description is worth the most" ],
         TA.Optional,
         (fun _ -> Parameters.statistics := TA.get_parameter ());
       [ "-r"; "--rich-format" ],

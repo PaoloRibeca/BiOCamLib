@@ -903,19 +903,54 @@ module Argv:
           if j >= l then None
           else if s.[j] = '\'' && not (is_word (j + 1)) then Some j
           else closing (j + 1) in
+        let code t =
+          accum_md_usage "`";
+          (* A pipe inside a code span still divides a table cell, and a
+             backslash before it is what GFM gives to keep it *)
+          t |> String.iter (fun c -> accum_md_usage (if c = '|' then "\\|" else string_of_char c));
+          accum_md_usage "`" in
+        (* An angle-bracketed run names something rather than quoting it, and the
+           brackets are how a terminal says so.  Markdown says it by setting the
+           name in italics, so they go: <positive_integer> is _positive\_integer_
+           wherever it appears, in a descriptor and in the prose that refers back
+           to it.  A run holding alternatives is not a name but a list of the
+           values themselves, each of which is a literal and set as code.  And a
+           bracketed URL is markdown's own autolink, which escaping the brackets
+           turns into inert text *)
+        let angle j0 =
+          let rec find j =
+            if j >= l then None
+            else match s.[j] with '>' -> Some j | '<' -> None | _ -> find (j + 1) in
+          find j0 in
         let rec scan i =
           if i < l then begin
-            match if s.[i] = '\'' && not (is_word (i - 1)) then closing (i + 1) else None with
-            | Some j when j > i + 1 && not (String.contains (String.sub s (i + 1) (j - i - 1)) '`') ->
+            match
+              if s.[i] = '\'' && not (is_word (i - 1)) then `Quote (closing (i + 1))
+              else if s.[i] = '<' then `Angle (angle (i + 1))
+              else `Plain
+            with
+            | `Quote (Some j)
+                when j > i + 1 && not (String.contains (String.sub s (i + 1) (j - i - 1)) '`') ->
               flush ();
               separate ();
-              accum_md_usage "`";
-              (* A pipe inside a code span still divides a table cell, and a
-                 backslash before it is what GFM gives to keep it *)
-              String.sub s (i + 1) (j - i - 1)
-                |> String.iter
-                     (fun c -> accum_md_usage (if c = '|' then "\\|" else string_of_char c));
-              accum_md_usage "`";
+              String.sub s (i + 1) (j - i - 1) |> code;
+              emitted := true;
+              scan (j + 1)
+            | `Angle (Some j) when j > i + 1 ->
+              let t = String.sub s (i + 1) (j - i - 1) in
+              flush ();
+              separate ();
+              if String.starts_with ~prefix:"http://" t || String.starts_with ~prefix:"https://" t then
+                Printf.sprintf "[%s](%s)" t t |> accum_md_usage
+              else if String.contains t '|' then
+                String.Split.on_char_as_list '|' t
+                  |> List.iteri
+                       (fun k alt -> if k > 0 then accum_md_usage "&#124;"; code alt)
+              else begin
+                accum_md_usage "_";
+                accum_md_usage ~escape:true t;
+                accum_md_usage "_"
+              end;
               emitted := true;
               scan (j + 1)
             | _ ->

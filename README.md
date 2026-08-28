@@ -72,8 +72,8 @@ RC -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is RC version 1.3.3-930 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-930 [28-Aug-2026]
+This is RC version 1.3.3-933 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
  (c) 2023-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -123,8 +123,8 @@ Octopus -h
 in your terminal. You will see a header containing information about the version:
 
 ```
-This is Octopus version 1.3.3-930 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-930 [28-Aug-2026]
+This is Octopus version 1.3.3-933 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
  (c) 2016-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -159,8 +159,8 @@ Parallel -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is Parallel version 1.3.3-930 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-930 [28-Aug-2026]
+This is Parallel version 1.3.3-933 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
  (c) 2019-2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -178,15 +178,15 @@ Parallel [OPTIONS] -- [COMMAND TO PARALLELIZE AND ITS OPTIONS]
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-l`<br>`--lines-per-block` | _&lt;positive\_integer&gt;_ |  number of lines to be processed per block | <ins>default=<mark>_10000_</mark></ins> |
-| `-i`<br>`--input` | _&lt;input\_file&gt;_ |  name of input file | <ins>default=<mark>_/dev/stdin_</mark></ins> |
-| `-o`<br>`--output` | _&lt;output\_file&gt;_ |  name of output file | <ins>default=<mark>_/dev/stdout_</mark></ins> |
+| `-l`<br>`--lines-per-block` | _positive\_integer_ |  number of lines to be processed per block | <ins>default=<mark>_10000_</mark></ins> |
+| `-i`<br>`--input` | _input\_file_ |  name of input file | <ins>default=<mark>_/dev/stdin_</mark></ins> |
+| `-o`<br>`--output` | _output\_file_ |  name of output file | <ins>default=<mark>_/dev/stdout_</mark></ins> |
 
 **Miscellaneous**
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-t`<br>`--threads` | _&lt;positive\_integer&gt;_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_4_</mark></ins> |
+| `-t`<br>`--threads` | _positive\_integer_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_4_</mark></ins> |
 | `-v`<br>`--verbose` |  |  set verbose execution | <ins>default=<mark>_quiet execution_</mark></ins> |
 | `-d`<br>`--debug` |  |  output debugging information | <ins>default=<mark>_false_</mark></ins> |
 | `-V`<br>`--version` |  |  print version and exit |  |
@@ -274,8 +274,8 @@ FASTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is FASTools version 1.3.3-930 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-930 [28-Aug-2026]
+This is FASTools version 1.3.3-933 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
  (c) 2022-2025 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -292,27 +292,27 @@ Executed delayed in order of specification, default=`compact`\.
 | `expand`<br>`-e`<br>`--expand` |  |  split each tab\-separated line into one or more FASTA/FASTQ records |  |
 | `revcom`<br>`-r`<br>`--revcom` |  |  reverse\-complement sequences \(and reverse qualities if present\) in FASTA/FASTQ records or tab\-separated lines |  |
 | `dropq`<br>`-d`<br>`--dropq` |  |  drop qualities in FASTA/FASTQ records or tab\-separated lines |  |
-| `match`<br>`-m`<br>`--match` | _&lt;regexp&gt;_ |  select sequence names matching the specified regexp in FASTA/FASTQ records or tab\-separated lines\.<br>The regexp must be defined according to &lt;https://ocaml\.org/api/Str\.html&gt;\.<br>For paired\-end files, the pair matches when at least one name matches\. |  |
-| `rename`<br>`-R`<br>`--rename` | _&lt;regexp&gt; &lt;replacement&gt;_ |  replace with the provided pattern all the instances of the specified regexp occurring in the sequence names of FASTA/FASTQ records or tab\-separated lines\.<br>The regexp must be defined according to &lt;https://ocaml\.org/api/Str\.html&gt;\.<br>Replacement expressions can contain identifiers \\1 \.\.\. \\9 for the groups matched by the regular expression; \\0 represents the full match |  |
+| `match`<br>`-m`<br>`--match` | _regexp_ |  select sequence names matching the specified regexp in FASTA/FASTQ records or tab\-separated lines\.<br>The regexp must be defined according to [https://ocaml.org/api/Str.html](https://ocaml.org/api/Str.html)\.<br>For paired\-end files, the pair matches when at least one name matches\. |  |
+| `rename`<br>`-R`<br>`--rename` | _regexp_ _replacement_ |  replace with the provided pattern all the instances of the specified regexp occurring in the sequence names of FASTA/FASTQ records or tab\-separated lines\.<br>The regexp must be defined according to [https://ocaml.org/api/Str.html](https://ocaml.org/api/Str.html)\.<br>Replacement expressions can contain identifiers \\1 \.\.\. \\9 for the groups matched by the regular expression; \\0 represents the full match |  |
 
 **Input/Output\.**
 Executed delayed in order of specification, default=`-F`\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-f`<br>`--fasta` | _&lt;fasta\_file\_name&gt;_ |  process FASTA input file containing sequences |  |
+| `-f`<br>`--fasta` | _fasta\_file\_name_ |  process FASTA input file containing sequences |  |
 | `-F` |  |  process FASTA sequences from standard input |  |
-| `-s`<br>`--single-end` | _&lt;fastq\_file\_name&gt;_ |  process FASTQ input file containing single\-end sequencing reads |  |
+| `-s`<br>`--single-end` | _fastq\_file\_name_ |  process FASTQ input file containing single\-end sequencing reads |  |
 | `-S` |  |  process single\-end FASTQ sequencing reads from standard input |  |
-| `-p`<br>`--paired-end` | _&lt;fastq\_file\_name1&gt; &lt;fastq\_file\_name2&gt;_ |  process FASTQ input files containing paired\-end sequencing reads |  |
+| `-p`<br>`--paired-end` | _fastq\_file\_name1_ _fastq\_file\_name2_ |  process FASTQ input files containing paired\-end sequencing reads |  |
 | `-P` |  |  process interleaved FASTQ sequencing reads from standard input |  |
-| `-t`<br>`--tabular` | _&lt;tabular\_file\_name&gt;_ |  process input file containing FAST\[A&#124;Q\] records as tab\-separated lines |  |
+| `-t`<br>`--tabular` | _tabular\_file\_name_ |  process input file containing FAST\[A&#124;Q\] records as tab\-separated lines |  |
 | `-T` |  |  process FAST\[A&#124;Q\] records in tabular form from standard input |  |
 | `-l`<br>`--linter` | `none` _&#124;_ `DNA` _&#124;_ `dna` _&#124;_ `protein` |  sets linter for sequence\.<br>All non\-base \(for DNA\) or non\-AA \(for protein\) characters  are converted to unknowns | <ins>default=<mark>_none_</mark></ins> |
 | `--linter-keep-lowercase` | `true` _&#124;_ `false` |  sets whether the linter should keep lowercase DNA/protein characters  appearing in sequences rather than capitalise them | <ins>default=<mark>_false_</mark></ins> |
 | `--linter-keep-dashes` | `true` _&#124;_ `false` |  sets whether the linter should keep dashes appearing in sequences  rather than convert them to unknowns | <ins>default=<mark>_false_</mark></ins> |
-| `-o`<br>`--output` | _&lt;output\_file\_name&gt;_ |  set the name of the output file\.<br>Files are kept open, and it is possible to switch between them  by repeatedly using this option\.<br>Use `/dev/stdout` for standard output | <ins>default=<mark>_/dev/stdout_</mark></ins> |
-| `-O`<br>`--paired-end-output` | _&lt;output\_file\_name\_1&gt; &lt;output\_file\_name\_2&gt;_ |  set the names of paired\-end FASTQ output files\.<br>Files are kept open, and it is possible to switch between them  by repeatedly using this option\.<br>Use `/dev/stdout` for standard output | <ins>default=<mark>_/dev/stdout_</mark></ins> |
+| `-o`<br>`--output` | _output\_file\_name_ |  set the name of the output file\.<br>Files are kept open, and it is possible to switch between them  by repeatedly using this option\.<br>Use `/dev/stdout` for standard output | <ins>default=<mark>_/dev/stdout_</mark></ins> |
+| `-O`<br>`--paired-end-output` | _output\_file\_name\_1_ _output\_file\_name\_2_ |  set the names of paired\-end FASTQ output files\.<br>Files are kept open, and it is possible to switch between them  by repeatedly using this option\.<br>Use `/dev/stdout` for standard output | <ins>default=<mark>_/dev/stdout_</mark></ins> |
 | `--flush`<br>`--flush-output` |  |  flush output after each record \(global option\) | <ins>default=<mark>_do not flush_</mark></ins> |
 
 **Miscellaneous**
@@ -468,8 +468,8 @@ AnnoTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is AnnoTools version 1.3.3-930 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-930 [28-Aug-2026]
+This is AnnoTools version 1.3.3-933 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -485,8 +485,8 @@ Operations on the annotation register:
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
 | `-0`<br>`--empty` |  |  load an empty annotation into the register |  |
-| `-i`<br>`--input` | _&lt;binary\_file\_prefix&gt;_ |  load into the register the annotation present in the  specified binary file \(extension `.Annotation` is  appended unless the path is under `/dev/*`\) |  |
-| `-o`<br>`--output` | _&lt;binary\_file\_prefix&gt;_ |  write the current register to the specified binary file  \(extension `.Annotation` is appended unless under `/dev/*`\) |  |
+| `-i`<br>`--input` | _binary\_file\_prefix_ |  load into the register the annotation present in the  specified binary file \(extension `.Annotation` is  appended unless the path is under `/dev/*`\) |  |
+| `-o`<br>`--output` | _binary\_file\_prefix_ |  write the current register to the specified binary file  \(extension `.Annotation` is appended unless under `/dev/*`\) |  |
 
 Hierarchy\.
 Override the active hierarchy for a given format\.  The
@@ -497,8 +497,8 @@ default is just `--dialect <fmt> standard`\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `--hierarchy` | _&lt;gff3&#124;gtf&#124;genbank&gt; &lt;S\-expression&gt;_ |  set the hierarchy to use for subsequent input operations  in the named format |  |
-| `--dialect` | _&lt;gff3&#124;gtf&#124;genbank&gt; &lt;name&gt;_ |  switch subsequent input operations in the named format  to one of its built\-in dialects\.  Currently only GFF3  ships more than one dialect \(`standard` and  `gencode`\)\. |  |
+| `--hierarchy` | `gff3`&#124;`gtf`&#124;`genbank` _S\-expression_ |  set the hierarchy to use for subsequent input operations  in the named format |  |
+| `--dialect` | `gff3`&#124;`gtf`&#124;`genbank` _name_ |  switch subsequent input operations in the named format  to one of its built\-in dialects\.  Currently only GFF3  ships more than one dialect \(`standard` and  `gencode`\)\. |  |
 
 Annotation input\.
 Long form: action mode \+ format \+ path\.
@@ -507,11 +507,11 @@ default to `replace`\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-a`<br>`--annotation` | _&lt;replace&#124;add&gt; &lt;gff3&#124;gtf&#124;genbank&#124;tsv&gt; &lt;file\_or\_prefix&gt;_ |  merge or replace the register from the named format\.<br>Every format but `tsv` takes a FILE; `tsv` takes a PREFIX, since it is a collection of files\.<br>When the format is GenBank and the input carries an ORIGIN section, or GFF3 and it carries a `##FASTA` section, the reference sequence is replaced as well\. |  |
-| `--from-gff3` | _&lt;file&gt;_ |  shorthand for `--annotation replace gff3 <file>` |  |
-| `--from-gtf` | _&lt;file&gt;_ |  shorthand for `--annotation replace gtf <file>` |  |
-| `--from-tsv`<br>`--from-tabular` | _&lt;prefix&gt;_ |  shorthand for `--annotation replace tsv <prefix>`\.<br>Reads the `.AnnotationFeatures.txt`, `.AnnotationAttributes.txt` and `.AnnotationMetadata.txt` tables written from that prefix, together with `.AnnotationReference.fasta` when one is beside them\.<br>A path under `/dev/*`, or an ordinary file that turns out to be a whole tabular document, is read as one document instead |  |
-| `--from-genbank` | _&lt;file&gt;_ |  shorthand for `--annotation replace genbank <file>` |  |
+| `-a`<br>`--annotation` | `replace`&#124;`add` `gff3`&#124;`gtf`&#124;`genbank`&#124;`tsv` _file\_or\_prefix_ |  merge or replace the register from the named format\.<br>Every format but `tsv` takes a FILE; `tsv` takes a PREFIX, since it is a collection of files\.<br>When the format is GenBank and the input carries an ORIGIN section, or GFF3 and it carries a `##FASTA` section, the reference sequence is replaced as well\. |  |
+| `--from-gff3` | _file_ |  shorthand for `--annotation replace gff3 <file>` |  |
+| `--from-gtf` | _file_ |  shorthand for `--annotation replace gtf <file>` |  |
+| `--from-tsv`<br>`--from-tabular` | _prefix_ |  shorthand for `--annotation replace tsv <prefix>`\.<br>Reads the `.AnnotationFeatures.txt`, `.AnnotationAttributes.txt` and `.AnnotationMetadata.txt` tables written from that prefix, together with `.AnnotationReference.fasta` when one is beside them\.<br>A path under `/dev/*`, or an ordinary file that turns out to be a whole tabular document, is read as one document instead |  |
+| `--from-genbank` | _file_ |  shorthand for `--annotation replace genbank <file>` |  |
 
 Reference \(multi\-FASTA\) input\.
 Long form takes the same mode keyword as \-\-annotation\.
@@ -519,8 +519,8 @@ Short form `--from-fasta` defaults to `replace`\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-r`<br>`--reference` | _&lt;replace&#124;add&gt; &lt;file&gt;_ |  merge or replace the register's reference from &lt;file&gt; |  |
-| `--from-fasta` | _&lt;file&gt;_ |  shorthand for `--reference replace <file>` |  |
+| `-r`<br>`--reference` | `replace`&#124;`add` _file_ |  merge or replace the register's reference from _file_ |  |
+| `--from-fasta` | _file_ |  shorthand for `--reference replace <file>` |  |
 
 Validation\.
 Each check stops at the first violation, exits non\-zero,
@@ -533,7 +533,7 @@ full list\.  All require a reference to be set\.
 | `--validate-feature-bounds` |  |  every feature interval must lie within the corresponding  sequence's length |  |
 | `--validate-translation` |  |  translated CDS features must agree with their  /translation= qualifier \(currently a structural  sub\-check; codon\-by\-codon comparison is a follow\-up\) |  |
 | `--validate` |  |  run every validation in turn |  |
-| `--validate-report` | _&lt;file&gt;_ |  run every validation against the current register but  do not stop at the first violation: walk the whole  register, write a tab\-separated report with one row  per violation \(columns: check, path, feature\_id,  message\) to &lt;file&gt;, and exit non\-zero if any violation  was found\. |  |
+| `--validate-report` | _file_ |  run every validation against the current register but  do not stop at the first violation: walk the whole  register, write a tab\-separated report with one row  per violation \(columns: check, path, feature\_id,  message\) to _file_, and exit non\-zero if any violation  was found\. |  |
 
 Actions involving the selection register\.
 The selection restricts `--selection-print` and the
@@ -550,8 +550,8 @@ Add `-v` to see how many features each selection matched\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-L`<br>`--labels`<br>`--selection-from-labels` | _&lt;feature\_id&gt;\[_ `,` _\.\.\._ `,` _&lt;feature\_id&gt;\]_ |  put into the selection register the features carrying the given identifiers\.  The match is EXACT, not a regexp: for patterns use `-R` with the `id` field\.<br> A feature's identifier comes from its source format:   GFF3     the `ID=` attribute   GenBank  `/locus_tag`, or `/gene` when there is none   GTF      only the gene and transcript levels, from            `gene_id` and `transcript_id`  Many features have NO identifier \-\- a GenBank mat\_peptide, and every row of a GTF file, since there only the synthesised gene and transcript parents get one\.  `-L` can never match those; select them with `-R` on `type` or `path` instead\.<br> `--selection-print` lists them, which is how to find out what to pass\.  Its first column is the identifier when the feature has one and a positional stand\-in of the form `<seq>:<type>:<location>` when it does not \-\- the latter is a label, not an identifier, and `-L` will not match it\.<br> Examples:   \-L b0011              one feature, by locus tag   \-L b0011,b0012,b0013  three of them   \-L ENSG00000141510    a GFF3 feature by its ID= |  |
-| `-R`<br>`--regexps`<br>`--selection-from-regexps` | _&lt;field&gt;_ `~` _&lt;regexp&gt;\[_ `,` _\.\.\._ `,` _&lt;field&gt;_ `~` _&lt;regexp&gt;\]_ |  put into the selection register the features whose named fields match the given regexps\.  Criteria separated by `,` must ALL match\.<br> &lt;field&gt; is one of:   type    the feature's own category, e\.g\. CDS, mat\_peptide   path    its whole category chain, e\.g\. source\-&gt;CDS   seq     the sequence it lies on   strand  `+`, `-` or `.`   id      its identifier \(`label`, and the empty field           name, are synonyms\)   source  the provenance in GFF3 column 2 Any other name is read as an ATTRIBUTE, matching when any one of that attribute's values does \-\- so `gene~dnaA` selects on the /gene qualifier\.  Those seven names are therefore reserved: an attribute sharing one of them cannot be selected on\.<br> &lt;regexp&gt; is UNANCHORED, so `type~gene` also matches `pseudogene`\.  Anchor it with `^...$` when that matters\.<br> Examples:   \-R `type~^mat_peptide$`    every mature peptide   \-R `type~^CDS$,gene~^thr`  CDSs whose /gene starts `thr`   \-R `seq~^chr1$`            everything on chr1   \-R `~b0011`                the feature whose id is b0011 |  |
+| `-L`<br>`--labels`<br>`--selection-from-labels` | _feature\_id_ _\[_ `,` _\.\.\._ `,` _feature\_id_ _\]_ |  put into the selection register the features carrying the given identifiers\.  The match is EXACT, not a regexp: for patterns use `-R` with the `id` field\.<br> A feature's identifier comes from its source format:   GFF3     the `ID=` attribute   GenBank  `/locus_tag`, or `/gene` when there is none   GTF      only the gene and transcript levels, from            `gene_id` and `transcript_id`  Many features have NO identifier \-\- a GenBank mat\_peptide, and every row of a GTF file, since there only the synthesised gene and transcript parents get one\.  `-L` can never match those; select them with `-R` on `type` or `path` instead\.<br> `--selection-print` lists them, which is how to find out what to pass\.  Its first column is the identifier when the feature has one and a positional stand\-in of the form `<seq>:<type>:<location>` when it does not \-\- the latter is a label, not an identifier, and `-L` will not match it\.<br> Examples:   \-L b0011              one feature, by locus tag   \-L b0011,b0012,b0013  three of them   \-L ENSG00000141510    a GFF3 feature by its ID= |  |
+| `-R`<br>`--regexps`<br>`--selection-from-regexps` | _field_ `~` _regexp_ _\[_ `,` _\.\.\._ `,` _field_ `~` _regexp_ _\]_ |  put into the selection register the features whose named fields match the given regexps\.  Criteria separated by `,` must ALL match\.<br> _field_ is one of:   type    the feature's own category, e\.g\. CDS, mat\_peptide   path    its whole category chain, e\.g\. source\-&gt;CDS   seq     the sequence it lies on   strand  `+`, `-` or `.`   id      its identifier \(`label`, and the empty field           name, are synonyms\)   source  the provenance in GFF3 column 2 Any other name is read as an ATTRIBUTE, matching when any one of that attribute's values does \-\- so `gene~dnaA` selects on the /gene qualifier\.  Those seven names are therefore reserved: an attribute sharing one of them cannot be selected on\.<br> _regexp_ is UNANCHORED, so `type~gene` also matches `pseudogene`\.  Anchor it with `^...$` when that matters\.<br> Examples:   \-R `type~^mat_peptide$`    every mature peptide   \-R `type~^CDS$,gene~^thr`  CDSs whose /gene starts `thr`   \-R `seq~^chr1$`            everything on chr1   \-R `~b0011`                the feature whose id is b0011 |  |
 | `--selection-negate` |  |  negate the current selection |  |
 | `--selection-print` |  |  print the features currently selected, one per line, to  standard output |  |
 | `--selection-clear` |  |  reset the selection register so that it matches everything |  |
@@ -575,28 +575,28 @@ the name and the path over again\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `--extract` | _&lt;dna&#124;protein&gt; &lt;file&gt;_ |  write the sequence of every selected feature to &lt;file&gt; |  |
-| `--extract-dna` | _&lt;file&gt;_ |  shorthand for `--extract dna <file>` |  |
-| `--extract-protein` | _&lt;file&gt;_ |  shorthand for `--extract protein <file>` |  |
+| `--extract` | `dna`&#124;`protein` _file_ |  write the sequence of every selected feature to _file_ |  |
+| `--extract-dna` | _file_ |  shorthand for `--extract dna <file>` |  |
+| `--extract-protein` | _file_ |  shorthand for `--extract protein <file>` |  |
 | `--summary` |  |  print a one\-line summary of the current register to stderr |  |
 
 Annotation output\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `--to` | _&lt;gff3&#124;gtf&#124;genbank&#124;tsv&#124;tbl&gt; &lt;file\_or\_prefix&gt;_ |  write the register in the named format\.  Every format but `tsv` takes a FILE; `tsv` takes a PREFIX, since it writes a collection of files\.<br>`tbl` is NCBI's submission feature table, which is write\-only: it encodes no hierarchy and no metadata, so nothing can be read back from it |  |
-| `--to-gff3` | _&lt;file&gt;_ |  shorthand for `--to gff3 <file>` |  |
-| `--to-gtf` | _&lt;file&gt;_ |  shorthand for `--to gtf <file>` |  |
-| `--to-tsv`<br>`--to-tabular` | _&lt;prefix&gt;_ |  shorthand for `--to tsv <prefix>`\.  Writes a COLLECTION of files: the `.AnnotationFeatures.txt`, `.AnnotationAttributes.txt` and `.AnnotationMetadata.txt` tables, plus `.AnnotationReference.fasta` when the register carries a sequence\.<br>A prefix under `/dev/*` writes all of it to that one path instead, as a single document |  |
-| `--to-tbl`<br>`--to-feature-table` | _&lt;file&gt;_ |  shorthand for `--to tbl <file>` |  |
-| `--to-genbank` | _&lt;file&gt;_ |  shorthand for `--to genbank <file>` |  |
+| `--to` | `gff3`&#124;`gtf`&#124;`genbank`&#124;`tsv`&#124;`tbl` _file\_or\_prefix_ |  write the register in the named format\.  Every format but `tsv` takes a FILE; `tsv` takes a PREFIX, since it writes a collection of files\.<br>`tbl` is NCBI's submission feature table, which is write\-only: it encodes no hierarchy and no metadata, so nothing can be read back from it |  |
+| `--to-gff3` | _file_ |  shorthand for `--to gff3 <file>` |  |
+| `--to-gtf` | _file_ |  shorthand for `--to gtf <file>` |  |
+| `--to-tsv`<br>`--to-tabular` | _prefix_ |  shorthand for `--to tsv <prefix>`\.  Writes a COLLECTION of files: the `.AnnotationFeatures.txt`, `.AnnotationAttributes.txt` and `.AnnotationMetadata.txt` tables, plus `.AnnotationReference.fasta` when the register carries a sequence\.<br>A prefix under `/dev/*` writes all of it to that one path instead, as a single document |  |
+| `--to-tbl`<br>`--to-feature-table` | _file_ |  shorthand for `--to tbl <file>` |  |
+| `--to-genbank` | _file_ |  shorthand for `--to genbank <file>` |  |
 
 **Miscellaneous options\.**
 They are set immediately\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `--fasta-width` | _&lt;non\_negative\_integer&gt;_ |  wrap sequence lines at this width wherever FASTA is emitted  \(`--to-gff3`, `--to-tsv` and the `--extract-*` actions\),  with `0` meaning one line per sequence\.  Without this option  each format keeps its own convention: GFF3 wraps its  `##FASTA` section at 60, while the tabular format and the  extraction actions emit one line per sequence, so that every  line of their output is a whole record | <ins>default=<mark>_each format's own convention_</mark></ins> |
+| `--fasta-width` | _non\_negative\_integer_ |  wrap sequence lines at this width wherever FASTA is emitted  \(`--to-gff3`, `--to-tsv` and the `--extract-*` actions\),  with `0` meaning one line per sequence\.  Without this option  each format keeps its own convention: GFF3 wraps its  `##FASTA` section at 60, while the tabular format and the  extraction actions emit one line per sequence, so that every  line of their output is a whole record | <ins>default=<mark>_each format's own convention_</mark></ins> |
 | `-v`<br>`--verbose` |  |  set verbose execution | <ins>default=<mark>_quiet execution_</mark></ins> |
 | `-V`<br>`--version` |  |  print version and exit |  |
 | `-h`<br>`--help` |  |  print syntax and exit |  |
@@ -614,8 +614,8 @@ TREx -m 50 -M 10 < genome.fasta > repeats.tsv
 ### Command line options for `TREx`
 
 ```
-This is TREx version 1.3.3-930 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-930 [28-Aug-2026]
+This is TREx version 1.3.3-933 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
  (c) 2023-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -628,15 +628,15 @@ TREx [OPTIONS]
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
 | `-l`<br>`--linter` | `none` _&#124;_ `DNA` _&#124;_ `dna` _&#124;_ `protein` |  sets linter for sequence\.<br>All non\-base \(for DNA\) or non\-AA \(for protein\) characters  are converted to unknowns | <ins>default=<mark>_dna_</mark></ins> |
-| `--linter-keep-lowercase` | _&lt;bool&gt;_ |  sets whether the linter should keep lowercase DNA/protein characters  appearing in sequences rather than capitalise them | <ins>default=<mark>_false_</mark></ins> |
-| `--linter-keep-dashes` | _&lt;bool&gt;_ |  sets whether the linter should keep dashes appearing in sequences  rather than convert them to unknowns | <ins>default=<mark>_false_</mark></ins> |
+| `--linter-keep-lowercase` | _bool_ |  sets whether the linter should keep lowercase DNA/protein characters  appearing in sequences rather than capitalise them | <ins>default=<mark>_false_</mark></ins> |
+| `--linter-keep-dashes` | _bool_ |  sets whether the linter should keep dashes appearing in sequences  rather than convert them to unknowns | <ins>default=<mark>_false_</mark></ins> |
 
 **Algorithm**
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-M`<br>`--maximum_repeat_length` | _&lt;non\_negative\_integer&gt;_ |  maximum unit length for a tandem repeat to be considered | <ins>default=<mark>_4611686018427387903_</mark></ins> |
-| `-m`<br>`--minimum_locus_length` | _&lt;non\_negative\_integer&gt;_ |  minimum locus length for a tandem repeat to be considered | <ins>default=<mark>_0_</mark></ins> |
+| `-M`<br>`--maximum_repeat_length` | _non\_negative\_integer_ |  maximum unit length for a tandem repeat to be considered | <ins>default=<mark>_4611686018427387903_</mark></ins> |
+| `-m`<br>`--minimum_locus_length` | _non\_negative\_integer_ |  minimum locus length for a tandem repeat to be considered | <ins>default=<mark>_0_</mark></ins> |
 
 **Miscellaneous**
 
@@ -657,8 +657,8 @@ Cophenetic -t 4 < tree.nwk > distances.tsv
 ### Command line options for `Cophenetic`
 
 ```
-This is Cophenetic version 1.3.3-930 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-930 [28-Aug-2026]
+This is Cophenetic version 1.3.3-933 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
  (c) 2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -676,7 +676,7 @@ Cophenetic [OPTIONS]
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-t`<br>`-T`<br>`--threads` | _&lt;computing\_threads&gt;_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_4_</mark></ins> |
+| `-t`<br>`-T`<br>`--threads` | _computing\_threads_ |  number of concurrent computing threads to be spawned  \(default automatically detected from your configuration\) | <ins>default=<mark>_4_</mark></ins> |
 | `-v`<br>`--verbose` |  |  set verbose execution \(global option\) | <ins>default=<mark>_false_</mark></ins> |
 | `-V`<br>`--version` |  |  print version and exit |  |
 | `-h`<br>`--help` |  |  print syntax and exit |  |
@@ -716,8 +716,8 @@ The output is plain Newick, which is what most other programs expect. `-r`/`--ri
 ### Command line options for `NJ`
 
 ```
-This is NJ version 1.3.3-930 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-930 [28-Aug-2026]
+This is NJ version 1.3.3-933 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -732,9 +732,9 @@ The distance matrix is the tab\-separated form the rest of this suite reads and
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-i`<br>`--input` | _&lt;distance\_matrix&gt;_ |  name of the file containing the matrix of pairwise distances | <ins>default=<mark>_/dev/stdin_</mark></ins> |
-| `-o`<br>`--output` | _&lt;newick\_file&gt;_ |  name of the file the resulting tree should be written to | <ins>default=<mark>_/dev/stdout_</mark></ins> |
-| `-S`<br>`--statistics` | _&lt;statistics\_file&gt;_ |  also write a two\-line table of what the distance matrix is: its  shape, whether it can be joined at all, how far it disagrees with  itself across the diagonal and where, how many cells are negative  \(a distance is not, so those are however the matrix writes 'not  measured'\), and, for the tree, how many branches came out negative  and what they add up to\.  Written even for a matrix that is then  refused, that being when a description is worth the most |  |
+| `-i`<br>`--input` | _distance\_matrix_ |  name of the file containing the matrix of pairwise distances | <ins>default=<mark>_/dev/stdin_</mark></ins> |
+| `-o`<br>`--output` | _newick\_file_ |  name of the file the resulting tree should be written to | <ins>default=<mark>_/dev/stdout_</mark></ins> |
+| `-S`<br>`--statistics` | _statistics\_file_ |  also write a two\-line table of what the distance matrix is: its  shape, whether it can be joined at all, how far it disagrees with  itself across the diagonal and where, how many cells are negative  \(a distance is not, so those are however the matrix writes  `not measured`\), and, for the tree, how many branches came out  negative and what they add up to\.  Written even for a matrix that  is then refused, that being when a description is worth the most |  |
 | `-r`<br>`--rich-format` |  |  emit the rich Newick dialect this suite understands, which tags the  tree as rooted or unrooted and carries dictionaries and hybrid  nodes; plain Newick is what most other programs expect | <ins>default=<mark>_false_</mark></ins> |
 
 **Algorithm**
@@ -749,7 +749,7 @@ The distance matrix is the tab\-separated form the rest of this suite reads and
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-t`<br>`-T`<br>`--threads` | _&lt;computing\_threads&gt;_ |  number of concurrent computing threads to be spawned  \(used when reading the matrix; the joining itself is sequential\)  \(default automatically detected from your configuration\) | <ins>default=<mark>_4_</mark></ins> |
+| `-t`<br>`-T`<br>`--threads` | _computing\_threads_ |  number of concurrent computing threads to be spawned  \(used when reading the matrix; the joining itself is sequential\)  \(default automatically detected from your configuration\) | <ins>default=<mark>_4_</mark></ins> |
 | `-v`<br>`--verbose` |  |  set verbose execution \(global option\) | <ins>default=<mark>_false_</mark></ins> |
 | `-V`<br>`--version` |  |  print version and exit |  |
 | `-h`<br>`--help` |  |  print syntax and exit |  |
@@ -772,8 +772,8 @@ Yggdrasill  -i splits -t tree -O dropped
 ### Command line options for `Yggdrasill`
 
 ```
-This is Yggdrasill version 1.3.3-930 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-930 [28-Aug-2026]
+This is Yggdrasill version 1.3.3-933 [28-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-933 [28-Aug-2026]
  (c) 2024-2025 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -787,19 +787,19 @@ They are executed delayed and in order of specification\.
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
 | `-c`<br>`--clear` |  |  clear the splits register \(keep names, discard existing splits\) |  |
-| `-i`<br>`--input` | _&lt;binary\_file\_prefix&gt;_ |  load into the splits register the specified binary database  \(which must have extension `.PhyloSplits` unless file is `/dev/*`\) |  |
-| `-I`<br>`--Input` | _&lt;splits\_file\_prefix&gt;_ |  load into the splits register the specified plain text database  \(which must have extension `.PhyloSplits.txt` unless file is `/dev/*`\) |  |
-| `-a`<br>`--add` | _&lt;binary\_file\_prefix&gt;_ |  add to the contents of the splits register the specified binary database  \(which must have extension `.PhyloSplits` unless file is `/dev/*`\) |  |
-| `-A`<br>`--Add` | _&lt;splits\_file\_prefix&gt;_ |  add to the contents of the splits register the specified plain text database  \(which must have extension `.PhyloSplits.txt` unless file is `/dev/*`\) |  |
-| `--input-tree`<br>`--Of-tree` | _&lt;newick\_file&gt;_ |  load into the splits register the bipartitions of the specified Newick tree  \(replaces the current register; for multi\-tree files, every tree's   bipartitions are added, each with weight 1\.0 per occurrence\) |  |
-| `--Add-tree` | _&lt;newick\_file&gt;_ |  add to the splits register the bipartitions of the specified Newick tree, each with weight 1\.0 \(so a bipartition supported by k trees accumulates to weight k\)\.  Compose with multiple \-\-Add\-tree calls for ensemble consensus, then feed to \-t |  |
-| `--Add-tree-weighted` | _&lt;newick\_file&gt; &lt;weight&gt;_ |  as \-\-Add\-tree, but each bipartition gets the explicit weight given  \(useful when different ensemble members should count differently\) |  |
-| `--drop-weak-splits` | _&lt;float&gt;_ |  drop every split in the register whose accumulated weight is strictly less than the cutoff\.  Apply between \-\-Add\-tree calls and \-t to implement majority\-rule consensus at threshold p:  set cutoff = p \* n\_input\_trees |  |
+| `-i`<br>`--input` | _binary\_file\_prefix_ |  load into the splits register the specified binary database  \(which must have extension `.PhyloSplits` unless file is `/dev/*`\) |  |
+| `-I`<br>`--Input` | _splits\_file\_prefix_ |  load into the splits register the specified plain text database  \(which must have extension `.PhyloSplits.txt` unless file is `/dev/*`\) |  |
+| `-a`<br>`--add` | _binary\_file\_prefix_ |  add to the contents of the splits register the specified binary database  \(which must have extension `.PhyloSplits` unless file is `/dev/*`\) |  |
+| `-A`<br>`--Add` | _splits\_file\_prefix_ |  add to the contents of the splits register the specified plain text database  \(which must have extension `.PhyloSplits.txt` unless file is `/dev/*`\) |  |
+| `--input-tree`<br>`--Of-tree` | _newick\_file_ |  load into the splits register the bipartitions of the specified Newick tree  \(replaces the current register; for multi\-tree files, every tree's   bipartitions are added, each with weight 1\.0 per occurrence\) |  |
+| `--Add-tree` | _newick\_file_ |  add to the splits register the bipartitions of the specified Newick tree, each with weight 1\.0 \(so a bipartition supported by k trees accumulates to weight k\)\.  Compose with multiple \-\-Add\-tree calls for ensemble consensus, then feed to \-t |  |
+| `--Add-tree-weighted` | _newick\_file_ _weight_ |  as \-\-Add\-tree, but each bipartition gets the explicit weight given  \(useful when different ensemble members should count differently\) |  |
+| `--drop-weak-splits` | _float_ |  drop every split in the register whose accumulated weight is strictly less than the cutoff\.  Apply between \-\-Add\-tree calls and \-t to implement majority\-rule consensus at threshold p:  set cutoff = p \* n\_input\_trees |  |
 | `--negative-branches-policy` | `error` _&#124;_ `ok` _&#124;_ `zero` |  policy for handling negative branch lengths when reading Newick input  \(via \-\-input\-tree, \-\-Add\-tree, \-\-Add\-tree\-weighted\)\.<br> `error` rejects \(raises a parse error\); `ok` accepts as\-is;  `zero` silently clamps to 0\.  Set before the \-\-Add\-tree call\(s\)  it should apply to | <ins>default=<mark>_ok_</mark></ins> |
-| `-t`<br>`--tree` | _&lt;tree\_file\_prefix&gt;_ |  generate a phylogenetic tree from the contents of the splits register\.<br>The results will be a Newick file  \(which will be given extension `.nwk` unless file is `/dev/*`\) and the database of compatible splits used to build the tree  \(which will be given extension `.PhyloSplits.txt` unless file is `/dev/*`\)\.<br>The residual incompatible splits will be moved back to the splits register |  |
-| `-o`<br>`--output` | _&lt;binary\_file\_prefix&gt;_ |  dump the contents of the splits register to the specified binary file  \(which will be given extension `.PhyloSplits` unless file is `/dev/*`\) |  |
-| `--precision` | _&lt;positive\_integer&gt;_ |  set the number of precision digits to be used when outputting numbers | <ins>default=<mark>_10_</mark></ins> |
-| `-O`<br>`--Output` | _&lt;splits\_file\_prefix&gt;_ |  dump the contents of the splits register to the specified plain text file  \(which will be given extension `.PhyloSplits.txt` unless file is `/dev/*`\) |  |
+| `-t`<br>`--tree` | _tree\_file\_prefix_ |  generate a phylogenetic tree from the contents of the splits register\.<br>The results will be a Newick file  \(which will be given extension `.nwk` unless file is `/dev/*`\) and the database of compatible splits used to build the tree  \(which will be given extension `.PhyloSplits.txt` unless file is `/dev/*`\)\.<br>The residual incompatible splits will be moved back to the splits register |  |
+| `-o`<br>`--output` | _binary\_file\_prefix_ |  dump the contents of the splits register to the specified binary file  \(which will be given extension `.PhyloSplits` unless file is `/dev/*`\) |  |
+| `--precision` | _positive\_integer_ |  set the number of precision digits to be used when outputting numbers | <ins>default=<mark>_10_</mark></ins> |
+| `-O`<br>`--Output` | _splits\_file\_prefix_ |  dump the contents of the splits register to the specified plain text file  \(which will be given extension `.PhyloSplits.txt` unless file is `/dev/*`\) |  |
 
 **Miscellaneous options\.**
 They are set immediately\.

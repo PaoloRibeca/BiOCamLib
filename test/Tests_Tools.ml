@@ -450,6 +450,8 @@ let test_argv_parse () =
     (* [parse] is what fills the usage and its markdown twin. *)
     TA.parse ~argv:[| "prog" |]
       [ [ "-n"; "--number" ], Some "<n>", [ "how many things" ], TA.Optional, (fun _ -> ());
+        [ "-w" ], Some "<keep|drop>", [ "pass 'keep' or see <https://example.org/x>" ],
+          TA.Optional, (fun _ -> ());
         [ "-d" ], None, [ "a default" ], TA.Default (fun () -> "42"), (fun _ -> ()) ];
     let printed = captured (fun oc -> TA.usage ~output:oc ()) in
     List.iter (fun needle ->
@@ -457,9 +459,13 @@ let test_argv_parse () =
         (contains needle printed))
       [ "-n"; "--number"; "<n>"; "how many things"; "42" ];
     (* The markdown twin is what a README is generated from, so it renders the
-       same specs as a table.  The escaping is the part worth pinning: an
-       argument written [<n>] would be eaten as an HTML tag if it reached the
-       page as it stands. *)
+       same specs as a table.  What is worth pinning is how the three things a
+       help string writes for a terminal are re-said for a page: a name in angle
+       brackets, which would be eaten as an HTML tag if it reached the page as
+       it stands, becomes italics; a quoted literal and a bracketed list of
+       values, both of which the user types verbatim, become code; and a
+       bracketed URL, which is markdown's own autolink, becomes a live link
+       rather than the inert text escaping would leave. *)
     let md = captured (fun oc -> TA.markdown ~output:oc ()) in
     List.iter (fun (what, needle) ->
       Testing.check_bool (Printf.sprintf "the markdown %s" what) ~expected:true
@@ -467,7 +473,11 @@ let test_argv_parse () =
       [ "fences the header", "```\nThis is T version 1 [01-Jan-2026]\n```";
         "fences the invocation", "prog [OPTIONS]";
         "sets both spellings as code", "`-n`<br>`--number`";
-        "escapes an argument's angle brackets", "_&lt;n&gt;_";
+        "sets an argument's name in italics, without its brackets", "| _n_ |";
+        "sets a bracketed list of values as code, one span each", "`keep`&#124;`drop`";
+        "sets a quoted literal as code", "pass `keep` or see";
+        "makes a bracketed URL a live link",
+          "[https://example.org/x](https://example.org/x)";
         "shows a default where there is one", "default=<mark>_42_</mark>" ];
     Testing.check_bool "so that no raw angle bracket reaches the page" ~expected:true
       (not (contains "<n>" md)))
