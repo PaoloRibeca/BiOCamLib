@@ -669,11 +669,17 @@ module FrequenciesVector (N: ComparableScalar_t):
       let abs_n = N.abs n
       and old_length = fv.length and old_length_N = N.of_int fv.length in
       fv.length <- fv.length + 1;
-      let quantity = N.(old_length_N * n - fv.sum |> to_float)
-      and quantity_abs = N.(old_length_N * abs_n - fv.sum_abs |> to_float) in
-      let normalisation = 1. /. (old_length * fv.length |> float_of_int) in
-      fv.unnorm_variance <- fv.unnorm_variance +. quantity *. quantity *. normalisation;
-      fv.unnorm_variance_abs <- fv.unnorm_variance_abs +. quantity_abs *. quantity_abs *. normalisation;
+      (* The first element contributes nothing to the variance, and has to be
+         skipped rather than accumulated: its normalisation is 1/(0*1), and
+         although the quantity that multiplies is zero, 0 *. infinity is nan *)
+      if old_length > 0 then begin
+        let quantity = N.(old_length_N * n - fv.sum |> to_float)
+        and quantity_abs = N.(old_length_N * abs_n - fv.sum_abs |> to_float) in
+        let normalisation = 1. /. (old_length * fv.length |> float_of_int) in
+        fv.unnorm_variance <- fv.unnorm_variance +. quantity *. quantity *. normalisation;
+        fv.unnorm_variance_abs <-
+          fv.unnorm_variance_abs +. quantity_abs *. quantity_abs *. normalisation
+      end;
       (* THESE TWO SUMS MUST NOT BE UPDATED EARLIER *)
       fv.sum <- N.(fv.sum + n);
       fv.sum_abs <- N.(fv.sum_abs + abs_n);
@@ -771,7 +777,9 @@ module FrequenciesVector (N: ComparableScalar_t):
       end
     let sum fv = fv.sum [@@inline]
     let _mean length what =
-      if length = 0 then
+      (* The sample moments divide by length - 1, which is negative on an empty
+         vector and would answer a negative zero rather than a zero *)
+      if length < 1 then
         0.
       else
         what /. float_of_int length

@@ -663,6 +663,13 @@ module Argv:
       | Mandatory (* Implies no default *)
       | Optional (* Implies no default *)
       | Default of (unit -> string) (* Implies optional - the function prints the default *)
+      (* As Default, plus the name of what was read off the machine to get it.
+         The two are needed because a detected default is true where it is
+         printed and false where it is copied: a terminal says '(default=8)',
+         which answers the question on the machine asking it, while a generated
+         page is written once and read everywhere, so it says 'nproc' instead of
+         the core count of whichever machine happened to generate it *)
+      | Detected of (unit -> string) * string
     (* Each spec from which the usage is produced is a tuple with the following elements:
         (1) Equivalent option names
         (2) Optional explanation for the argument(s)
@@ -717,6 +724,7 @@ module Argv:
       | Mandatory
       | Optional
       | Default of (unit -> string)
+      | Detected of (unit -> string) * string
     type argv_spec_t = string list * string option * string list * arg_t * (string -> unit)
     (* The header and its markdown version are different *)
     let _header = ref ""
@@ -848,7 +856,14 @@ module Argv:
         let res = ref "" in
         String.iter
           (function
+            (* '$' belongs here for a reason the rest do not: pandoc reads the
+               text between two of them as TeX math, so an option whose help
+               quotes a regexp -- '^mat_peptide$' and '^...$' in the same
+               cell -- had everything between the two anchors swallowed into a
+               formula that then failed to parse.  The PDF was still written,
+               with the text mangled and only a warning to say so *)
             | '\\' | '`' | '*' | '_' | '{' | '}' | '[' | ']' | '(' | ')' | '#' | '+' | '-' | '.' | '!' | '~'
+            | '$'
                 as c when escape ->
               "\\" ^ string_of_char c |> String.accum res
             | '<' when escape ->
@@ -862,6 +877,96 @@ module Argv:
           s;
         String.accum _md_usage !res
       and need_table_header = ref false in
+      (* A single-quoted run in a help string is a string literal -- an option
+         value, a file extension, a regexp -- and it reads as one only when it is
+         set as code.  Quotes say that in a terminal and backticks say it in
+         markdown, so a run becomes a code span here, its content left unescaped
+         since a backslash inside a code span is a backslash and not an escape.
+         An apostrophe must not open one, or "the feature's own gene's name"
+         would pair the two apostrophes and set the words between them as code:
+         a quote preceded by a letter or a digit never opens a run, and one
+         followed by either never closes it, which is what tells the two apart.
+         With ~italics the text around the runs is emphasised and the pieces are
+         spaced, which is what an argument descriptor wants -- 'a'|'b' becoming
+         `a` _|_ `b`; without it the text is left as it is, which is what prose
+         wants *)
+      let accum_md_literals ?(italics = false) s =
+        let l = String.length s and emitted = ref false and plain = ref "" in
+        let is_word i =
+          i >= 0 && i < l && (match s.[i] with 'a'..'z' | 'A'..'Z' | '0'..'9' -> true | _ -> false) in
+        let separate () = if italics && !emitted then accum_md_usage " " in
+        let flush () =
+          let t = if italics then String.trim !plain else !plain in
+          plain := "";
+          if t <> "" then begin
+            separate ();
+            if italics then accum_md_usage "_";
+            accum_md_usage ~escape:true t;
+            if italics then accum_md_usage "_";
+            emitted := true
+          end in
+        (* The first quote that can close the run does, so that 'a'|'b' pairs as
+           two runs and not as one holding the separator *)
+        let rec closing j =
+          if j >= l then None
+          else if s.[j] = '\'' && not (is_word (j + 1)) then Some j
+          else closing (j + 1) in
+        let code t =
+          accum_md_usage "`";
+          (* A pipe inside a code span still divides a table cell, and a
+             backslash before it is what GFM gives to keep it *)
+          t |> String.iter (fun c -> accum_md_usage (if c = '|' then "\\|" else string_of_char c));
+          accum_md_usage "`" in
+        (* An angle-bracketed run names something rather than quoting it, and the
+           brackets are how a terminal says so.  Markdown says it by setting the
+           name in italics, so they go: <positive_integer> is _positive\_integer_
+           wherever it appears, in a descriptor and in the prose that refers back
+           to it.  A run holding alternatives is not a name but a list of the
+           values themselves, each of which is a literal and set as code.  And a
+           bracketed URL is markdown's own autolink, which escaping the brackets
+           turns into inert text *)
+        let angle j0 =
+          let rec find j =
+            if j >= l then None
+            else match s.[j] with '>' -> Some j | '<' -> None | _ -> find (j + 1) in
+          find j0 in
+        let rec scan i =
+          if i < l then begin
+            match
+              if s.[i] = '\'' && not (is_word (i - 1)) then `Quote (closing (i + 1))
+              else if s.[i] = '<' then `Angle (angle (i + 1))
+              else `Plain
+            with
+            | `Quote (Some j)
+                when j > i + 1 && not (String.contains (String.sub s (i + 1) (j - i - 1)) '`') ->
+              flush ();
+              separate ();
+              String.sub s (i + 1) (j - i - 1) |> code;
+              emitted := true;
+              scan (j + 1)
+            | `Angle (Some j) when j > i + 1 ->
+              let t = String.sub s (i + 1) (j - i - 1) in
+              flush ();
+              separate ();
+              if String.starts_with ~prefix:"http://" t || String.starts_with ~prefix:"https://" t then
+                Printf.sprintf "[%s](%s)" t t |> accum_md_usage
+              else if String.contains t '|' then
+                String.Split.on_char_as_list '|' t
+                  |> List.iteri
+                       (fun k alt -> if k > 0 then accum_md_usage "&#124;"; code alt)
+              else begin
+                accum_md_usage "_";
+                accum_md_usage ~escape:true t;
+                accum_md_usage "_"
+              end;
+              emitted := true;
+              scan (j + 1)
+            | _ ->
+              plain := !plain ^ string_of_char s.[i];
+              scan (i + 1)
+          end in
+        scan 0;
+        flush () in
       let emit_table_header_if_needed () =
         if !need_table_header then begin
           need_table_header := false;
@@ -880,7 +985,7 @@ module Argv:
                 if line <> "" then begin
                   if i = 0 then
                     accum_md_usage "**";
-                  accum_md_usage ~escape:true line;
+                  accum_md_literals line;
                   if i = 0 then
                     accum_md_usage "**";
                   accum_md_usage "\n"
@@ -925,9 +1030,7 @@ module Argv:
             begin match vl with
             | None -> ()
             | Some vl ->
-              accum_md_usage "_";
-              accum_md_usage ~escape:true vl;
-              accum_md_usage "_"
+              accum_md_literals ~italics:true vl
             end;
             accum_md_usage " | "
           end;
@@ -964,7 +1067,7 @@ module Argv:
                     else
                       ""
                   end;
-                  accum_md_usage ~escape:true help)
+                  accum_md_literals help)
               else
                 (* Case of a separator *)
                 (fun i help ->
@@ -984,10 +1087,13 @@ module Argv:
               "   " ^ grey "*" ^ " (" ^ red "mandatory" ^ ")\n" |> accum_usage;
               accum_md_usage "*(mandatory)*"
             | Optional -> ()
-            | Default def ->
+            | Default def | Detected (def, _) ->
               "   " ^ grey "│" ^ " (default='" ^ (def () |> bold |> under) ^ "')\n" |> accum_usage;
               accum_md_usage "<ins>default=<mark>_";
-              def () |> accum_md_usage ~escape:true;
+              begin match class_ with
+              | Detected (_, name) -> accum_md_usage ~escape:true name
+              | _ -> def () |> accum_md_usage ~escape:true
+              end;
               accum_md_usage "_</mark></ins>"
             end;
             if opts <> [] && help <> [] then

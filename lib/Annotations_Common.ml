@@ -44,16 +44,41 @@ open Better
    to be private.  See lib/dune. *)
 include (Annotations_Base: module type of Annotations_Base)
 
-(* Read an entire file into memory.  All format readers below
-   are string-based (they keep the whole input around for
-   topological sorting anyway), so the file-vs-string distinction
-   is only an I/O wrapper. *)
+(* Read an entire file into memory.  All format readers below are
+   string-based (they keep the whole input around for topological
+   sorting anyway), so the file-vs-string distinction is only an I/O
+   wrapper.
+   Through [Files.Compressed], which sniffs the magic number and spawns
+   a decompressor where there is one.  The sequence readers have had
+   that for a long time and these simply were not using it, so a
+   [.gff3.gz] was read as its own bytes and the parser reported a
+   one-column row -- an error about the content, naming nothing about
+   the compression that caused it.
+   And read to the end rather than asking the channel how long it is: a
+   stream has no length, so [/dev/stdin] and any FIFO raised
+   [Sys_error "Invalid seek"], uncaught, and were reported as a bug in
+   the tool rather than as anything a caller could act on.  Reading a
+   pipe is an ordinary thing to want. *)
 let read_file path =
-  let ic = open_in path in
-  let n = in_channel_length ic in
-  let s = really_input_string ic n in
-  close_in ic;
-  s
+  let ic, close = Files.Compressed.open_input path in
+  let buf = Buffer.create 65536 and chunk = Bytes.create 65536 in
+  let rec slurp () =
+    let n = input ic chunk 0 (Bytes.length chunk) in
+    if n > 0 then begin
+      Buffer.add_subbytes buf chunk 0 n;
+      slurp ()
+    end in
+  (* Closed however this ends, so that a decompressor is reaped rather
+     than left to process exit, and so that its own failure is heard *)
+  let res =
+    try
+      slurp ();
+      Buffer.contents buf
+    with e ->
+      close ();
+      raise e in
+  close ();
+  res
 (* Build a [to_string] from a [to_buffer]: the canonical pattern
    shared across all format writers. *)
 let to_string_via_buffer to_buffer ann =
