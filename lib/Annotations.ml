@@ -96,6 +96,7 @@ include (
       module GenBank: sig
         include Format_t
         val parse_records: string -> GenBankRecord.t list
+        val default_hierarchy: Hierarchy.t
       end
     end)
     include (Annotations_Tabular: sig module Tabular: Format_t end)
