@@ -45,6 +45,11 @@ module GenBank:
   sig
     include Format_t
     val parse_records: string -> GenBankRecord.t list
+    (* The vocabulary this format admits, exported for the same reason GFF3 exports
+       [gencode_hierarchy]: a caller choosing categories can then ask whether they will
+       read back, instead of discovering it from a parse error at the far end of a round
+       trip.  The writer enforces nothing, so this is the only statement of what will. *)
+    val default_hierarchy: Hierarchy.t
   end
 = struct
   (* INSDC feature table standard categories, flat under an
