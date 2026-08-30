@@ -1123,7 +1123,11 @@ module Argv:
             begin match class_ with
             | Mandatory ->
               "   " ^ grey "*" ^ " (" ^ red "mandatory" ^ ")\n" |> accum_usage;
-              accum_md_usage "*(mandatory)*"
+              (* Marked up as the default below it is, the two being the same kind of
+                 annotation in the same column of the same table: a reader meeting one
+                 emphasised and the other inserted-and-highlighted would take the
+                 difference for a distinction. *)
+              accum_md_usage "<ins><mark>mandatory</mark></ins>"
             | Optional -> ()
             | Default def | Detected (def, _) ->
               "   " ^ grey "│" ^ " (default='" ^ (def () |> bold |> under) ^ "')\n" |> accum_usage;
