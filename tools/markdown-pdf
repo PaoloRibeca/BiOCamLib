@@ -94,6 +94,45 @@ pandoc --help 2>/dev/null | grep -q -- --embed-resources || EMBED=--self-contain
 CSS=(--css "$HERE/markdown.css")
 [[ -f markdown.css ]] && CSS+=(--css markdown.css)
 
+# TWO BUILDS OF ONE UNCHANGED SOURCE MUST PRODUCE ONE FILE, and without this
+# they do not: Chrome stamps the moment it rendered into /CreationDate and
+# /ModDate.  A repository that keeps its PDFs under version control then cannot
+# tell a document that CHANGED from one that was merely rebuilt -- every build
+# dirties every PDF, so the signal is buried in noise the build itself makes.
+# Measured on this tool's own output before the fix: two runs over the same
+# source differed in exactly six bytes, every one of them inside those two
+# dates.  In DocsYard that noise had been hiding four PDFs that were genuinely
+# stale against their sources.
+#
+# Chrome has no flag for it, so the dates are rewritten after the render.  They
+# are FIXED WIDTH -- D:YYYYMMDDHHMMSS -- so writing the same number of bytes
+# over each leaves every cross-reference offset in the file exactly where it
+# was, which is the whole reason patching a rendered PDF is safe here and would
+# not be in general.  Nothing parses the PDF: grep reports the byte offsets and
+# dd overwrites in place, adding and removing nothing.
+#
+# WHICH date is not this script's decision: source-date-epoch beside it answers
+# that for every tool of the family at once, so the rule is stated in one place
+# rather than here and again in each repository's BUILD.  It prefers the
+# caller's SOURCE_DATE_EPOCH, then the last commit that bumped
+# releases/CURRENT -- an anchor that holds still across ordinary commits and is
+# the same in every clone -- and falls back to a fixed date where a repository
+# has neither.  See that file for why the obvious anchors do not work.
+: "${SOURCE_DATE_EPOCH:=$("$HERE/source-date-epoch" --root .)}"
+# GNU date takes -d @N, BSD/macOS date takes -r N; try each.
+STAMP="$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y%m%d%H%M%S 2> /dev/null \
+         || date -u -r "$SOURCE_DATE_EPOCH" +%Y%m%d%H%M%S)"
+
+stamp_pdf() {
+  local pdf="$1" off
+  # grep -abo reports 'OFFSET:D:20260830210616'; the digits start two bytes
+  # past the offset it gives, after the 'D:'.
+  grep -abo "D:[0-9]\{14\}" "$pdf" 2> /dev/null | sed 's/:.*//' | while read -r off; do
+    printf '%s' "$STAMP" \
+      | dd of="$pdf" bs=1 seek="$((off + 2))" conv=notrunc 2> /dev/null
+  done
+}
+
 for DOC in "${DOCS[@]}"; do
   [[ -f "$DOC" ]] || { echo "$SELF: no $DOC in $ROOT" >&2; exit 1; }
   OUT="${DOC%.md}.pdf"
@@ -129,6 +168,9 @@ for DOC in "${DOCS[@]}"; do
        --user-data-dir="$UDD" --no-pdf-header-footer \
        --print-to-pdf="$PDF" "$HTML" 2>"$LOG"; then
     if [[ -s "$PDF" ]] && [[ "$(head -c4 "$PDF")" == "%PDF" ]]; then
+      # Before the rename, so that what lands at $OUT is already reproducible
+      # and no reader ever sees the un-stamped form.
+      stamp_pdf "$PDF"
       mv "$PDF" "$OUT"
       echo "$SELF: wrote $OUT"
       continue

@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+#
+# BiOCamLib/tools/source-date-epoch -- the timestamp a build should stamp into
+# what it produces, so that rebuilding something nobody edited reproduces the
+# file that is already there.
+#
+#   source-date-epoch [--root <dir>]
+#
+# Prints one integer: seconds since the Unix epoch.  It exists because two
+# tools need the same answer -- markdown-pdf, which rewrites the dates headless
+# Chrome stamps, and a repository's BUILD, which hands it to pdflatex through
+# SOURCE_DATE_EPOCH -- and a rule implemented twice is a rule that will
+# eventually be implemented two ways.
+#
+# THE STAMP MUST NOT MOVE WHEN AN ORDINARY COMMIT LANDS, and that is what rules
+# out the two anchors one reaches for first.  A source file's OWN last-commit
+# date moves the moment you commit that file: build, commit the source and its
+# PDF together, rebuild, and the stamp has changed underneath you -- the tree
+# is dirty again immediately after every commit, which is the exact thing a
+# stamp is meant to stop.  Its MTIME is reset by any clone or branch switch, so
+# two checkouts of one revision disagree and the artefact stops being
+# reproducible across machines.
+#
+# What does hold still is the RELEASE.  `releases/CURRENT` is touched only when
+# the release number is bumped, so its last-commit date is stable across every
+# ordinary commit -- 43 of them in BiOCamLib when this was written -- and is
+# identical in every clone, being a property of a commit object rather than of
+# a filesystem.  It also MEANS something, which a constant does not: the date
+# says which release the artefact belongs to.
+#
+# A bump therefore restamps every artefact in the repository at the next build,
+# once per release.  That is the intended behaviour and not a cost: the shelf
+# now belongs to the new release and says so.
+#
+# Order of preference:
+#   1. SOURCE_DATE_EPOCH already set in the environment.  The caller wins, and
+#      this is the cross-project convention, so a distribution rebuilding with
+#      its own epoch gets what it asked for.
+#   2. The last commit touching <root>/releases/CURRENT.
+#   3. A fixed default, for a repository that has no release file -- DocsYard
+#      and KPop today -- or no git at all, as in a source tarball.  1980-01-01
+#      rather than the epoch itself, because a 1970 date in a document's
+#      properties reads as an uninitialised zero rather than as a decision.
+
+set -eo pipefail
+
+SELF="$(basename "${BASH_SOURCE[0]}")"
+
+# 1980-01-01T00:00:00Z.
+DEFAULT_EPOCH=315532800
+
+ROOT="."
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --root) ROOT="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,/^$/p' "${BASH_SOURCE[0]}" >&2; exit 0 ;;
+    *) echo "$SELF: unknown argument '$1'" >&2; exit 1 ;;
+  esac
+done
+
+# The caller's own value takes precedence over everything below it.
+if [[ -n "${SOURCE_DATE_EPOCH:-}" ]]; then
+  echo "$SOURCE_DATE_EPOCH"
+  exit 0
+fi
+
+# Answers nothing rather than failing where there is no git, no repository or
+# no release file: each of those is an ordinary state, not an error, and the
+# default below is the answer for all three.
+EPOCH="$(git -C "$ROOT" log -1 --format=%ct -- releases/CURRENT 2> /dev/null || true)"
+
+# Checked rather than trusted: an empty answer and a malformed one look the
+# same to arithmetic downstream, and a stamp that is not a number would reach
+# `date` and be reported as a failure of the build rather than of this.
+[[ "$EPOCH" =~ ^[0-9]+$ ]] || EPOCH="$DEFAULT_EPOCH"
+
+echo "$EPOCH"
