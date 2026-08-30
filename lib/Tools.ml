@@ -980,17 +980,55 @@ module Argv:
           if opts = [] then begin
             (* Case of a separator *)
             accum_md_usage "\n";
+            (* A MULTILINE SEPARATOR IS PROSE AND EXAMPLES, and markdown says both
+               differently from a terminal.  A terminal has the author's own line breaks
+               and needs nothing else; markdown joins consecutive lines into one
+               paragraph, so a blank line is the ONLY thing that separates two, and an
+               INDENTED line is an example whose alignment and tabs mean something and
+               which a paragraph would collapse.  Dropping the blank lines -- which is
+               what this did -- ran every paragraph of a block together and pulled the
+               examples in with them.  So a blank line ends a paragraph, and a run of
+               indented lines becomes a fenced block, kept verbatim and unescaped: a
+               blank line INSIDE such a run stays inside it, two examples with a gap
+               between them being one example and not two. *)
+            (* A blank line is HELD rather than written, because what it separates is not
+               known until the next line arrives: between two indented lines it belongs
+               inside the fence, and after the last one it is the break that follows the
+               fence rather than a trailing empty line within it *)
+            let fenced = ref false and pending = ref 0 and multiline = List.length help > 1 in
+            let flush () = for _ = 1 to !pending do accum_md_usage "\n" done; pending := 0 in
+            let close () = if !fenced then begin accum_md_usage "```\n"; fenced := false end in
             List.iteri
               (fun i line ->
-                if line <> "" then begin
-                  if i = 0 then
-                    accum_md_usage "**";
+                if i = 0 then begin
+                  accum_md_usage "**";
                   accum_md_literals line;
-                  if i = 0 then
-                    accum_md_usage "**";
+                  accum_md_usage "**\n";
+                  (* A single-line separator is a section heading and the table that
+                     follows brings its own blank line; a block needs one here, or the
+                     heading joins the paragraph under it *)
+                  if multiline then accum_md_usage "\n"
+                end else if String.length line > 1 && line.[0] = ' ' && line.[1] = ' ' then begin
+                  (* Held blanks are the break BEFORE the block where none is open, and
+                     the block's own blank lines where one is *)
+                  if !fenced then flush ()
+                  else begin flush (); accum_md_usage "```\n"; fenced := true end;
+                  (* The two spaces are the terminal's indent and say nothing inside a
+                     fence, where every other space and tab is the example's own *)
+                  accum_md_usage (String.sub line 2 (String.length line - 2));
+                  accum_md_usage "\n"
+                end else if line = "" then
+                  incr pending
+                else begin
+                  (* Whatever was held after the last indented line is the break that
+                     follows the fence, and one is written whether it was there or not *)
+                  if !fenced then begin close (); pending := 0; accum_md_usage "\n" end;
+                  flush ();
+                  accum_md_literals line;
                   accum_md_usage "\n"
                 end)
               help;
+            close ();
             (* Section headers require a new table *)
             need_table_header := true
           end else
