@@ -457,6 +457,10 @@ let test_argv_parse () =
       [ [ "-n"; "--number" ], Some "<n>", [ "how many things" ], TA.Optional, (fun _ -> ());
         [ "-w" ], Some "<keep|drop>", [ "pass 'keep' or see <https://example.org/x>" ],
           TA.Optional, (fun _ -> ());
+        [ "-e" ], None,
+          [ "a well-known thing -- an aside, as these are written -- and a hyphenated";
+            "word, and --help named in prose" ],
+          TA.Optional, (fun _ -> ());
         [ "-d" ], None, [ "a default" ], TA.Default (fun () -> "42"), (fun _ -> ());
         [ "-j" ], None, [ "detected" ], TA.Detected ((fun () -> "8"), "nproc"), (fun _ -> ());
         TA.make_separator_multiline
@@ -497,7 +501,16 @@ let test_argv_parse () =
           "[https://example.org/x](https://example.org/x)";
         "shows a default where there is one", "default=<mark>_42_</mark>";
         "gives a detected default as what was read, not as this machine's answer",
-          "default=<mark>_nproc_</mark>" ];
+          "default=<mark>_nproc_</mark>";
+        (* A pair of hyphens set off by spaces is how these help strings write an
+           em-dash, and two escaped hyphens are two hyphens. *)
+        "renders a spaced pair of hyphens as an em-dash", "thing &mdash; an aside";
+        "and the second of the pair too", "written &mdash; and a";
+        (* A hyphen is a list marker where a line begins and ordinary text
+           everywhere else, so escaping every one cost legibility and bought
+           nothing. *)
+        "leaves a hyphen inside a word alone", "a hyphenated word";
+        "and an option named in prose alone", "and --help named in prose" ];
     Testing.check_bool "so that no machine-dependent value is written into the page"
       ~expected:false (contains "default=<mark>_8_</mark>" md);
     (* A multiline separator is prose and examples, and markdown needs telling

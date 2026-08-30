@@ -853,28 +853,41 @@ module Argv:
       _md_usage := "```\n" ^ !_md_header ^ "```\n*Usage:*\n```\n" ^ basename ^ " " ^ !_md_synopsis ^ "\n```\n";
       let accum_usage = String.accum _usage
       and accum_md_usage ?(escape = false) s =
-        let res = ref "" in
-        String.iter
-          (function
-            (* '$' belongs here for a reason the rest do not: pandoc reads the
-               text between two of them as TeX math, so an option whose help
-               quotes a regexp -- '^mat_peptide$' and '^...$' in the same
-               cell -- had everything between the two anchors swallowed into a
-               formula that then failed to parse.  The PDF was still written,
-               with the text mangled and only a warning to say so *)
-            | '\\' | '`' | '*' | '_' | '{' | '}' | '[' | ']' | '(' | ')' | '#' | '+' | '-' | '.' | '!' | '~'
-            | '$'
-                as c when escape ->
-              "\\" ^ string_of_char c |> String.accum res
-            | '<' when escape ->
-              "&lt;" |> String.accum res
-            | '>' when escape ->
-              "&gt;" |> String.accum res
-            | '|' when escape ->
-              "&#124;" |> String.accum res
-            | c ->
-              string_of_char c |> String.accum res)
-          s;
+        let res = ref "" and len = String.length s and i = ref 0 in
+        while !i < len do
+          let c = s.[!i] in
+          (* A HYPHEN IS ONLY SPECIAL WHERE A LINE BEGINS, being a list marker there and
+             ordinary text everywhere else, so escaping every one of them bought nothing and
+             cost `per\-probe` in the source of every table that mentions one.
+             A PAIR OF THEM SET OFF BY SPACES IS AN EM-DASH, which is how these help strings
+             have always written one -- as this sentence does -- and two escaped hyphens are
+             two hyphens.  The character is substituted before the escaping rather than after,
+             so that it passes through untouched; the spaces on both sides are what tell it
+             from a hyphenated word and from an option such as `--help`. *)
+          let em_dash =
+            escape && c = '-' && !i > 0 && s.[!i - 1] = ' '
+            && !i + 2 < len && s.[!i + 1] = '-' && s.[!i + 2] = ' '
+          and line_start = !i = 0 || s.[!i - 1] = '\n' in
+          begin match c with
+          | '-' when em_dash -> String.accum res "&mdash;"; i := !i + 1
+          | '-' when escape && line_start -> String.accum res "\\-"
+          (* '$' belongs here for a reason the rest do not: pandoc reads the
+             text between two of them as TeX math, so an option whose help
+             quotes a regexp -- '^mat_peptide$' and '^...$' in the same
+             cell -- had everything between the two anchors swallowed into a
+             formula that then failed to parse.  The PDF was still written,
+             with the text mangled and only a warning to say so *)
+          | '\\' | '`' | '*' | '_' | '{' | '}' | '[' | ']' | '(' | ')' | '#' | '+' | '.' | '!' | '~'
+          | '$'
+            when escape ->
+            "\\" ^ string_of_char c |> String.accum res
+          | '<' when escape -> "&lt;" |> String.accum res
+          | '>' when escape -> "&gt;" |> String.accum res
+          | '|' when escape -> "&#124;" |> String.accum res
+          | c -> string_of_char c |> String.accum res
+          end;
+          incr i
+        done;
         String.accum _md_usage !res
       and need_table_header = ref false in
       (* A single-quoted run in a help string is a string literal -- an option

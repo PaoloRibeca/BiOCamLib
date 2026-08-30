@@ -85,7 +85,7 @@ RC [OPTIONS]
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-C`<br>`--no-complement` |  |  do not base\-complement the sequence | <ins>default=<mark>_base\-complement_</mark></ins> |
+| `-C`<br>`--no-complement` |  |  do not base-complement the sequence | <ins>default=<mark>_base-complement_</mark></ins> |
 
 **Miscellaneous**
 
@@ -289,12 +289,12 @@ Executed delayed in order of specification, default=`compact`\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `compact`<br>`-c`<br>`--compact` |  |  put each FASTA/FASTQ record on one tab\-separated line  \(default mode\) |  |
-| `expand`<br>`-e`<br>`--expand` |  |  split each tab\-separated line into one or more FASTA/FASTQ records |  |
-| `revcom`<br>`-r`<br>`--revcom` |  |  reverse\-complement sequences \(and reverse qualities if present\) in FASTA/FASTQ records or tab\-separated lines |  |
-| `dropq`<br>`-d`<br>`--dropq` |  |  drop qualities in FASTA/FASTQ records or tab\-separated lines |  |
-| `match`<br>`-m`<br>`--match` | _regexp_ |  select sequence names matching the specified regexp in FASTA/FASTQ records or tab\-separated lines\.<br>The regexp must be defined according to [https://ocaml.org/api/Str.html](https://ocaml.org/api/Str.html)\.<br>For paired\-end files, the pair matches when at least one name matches\. |  |
-| `rename`<br>`-R`<br>`--rename` | _regexp_ _replacement_ |  replace with the provided pattern all the instances of the specified regexp occurring in the sequence names of FASTA/FASTQ records or tab\-separated lines\.<br>The regexp must be defined according to [https://ocaml.org/api/Str.html](https://ocaml.org/api/Str.html)\.<br>Replacement expressions can contain identifiers `\1` \.\.\. `\9` for the groups matched by the regular expression; `\0` represents the full match |  |
+| `compact`<br>`-c`<br>`--compact` |  |  put each FASTA/FASTQ record on one tab-separated line  \(default mode\) |  |
+| `expand`<br>`-e`<br>`--expand` |  |  split each tab-separated line into one or more FASTA/FASTQ records |  |
+| `revcom`<br>`-r`<br>`--revcom` |  |  reverse-complement sequences \(and reverse qualities if present\) in FASTA/FASTQ records or tab-separated lines |  |
+| `dropq`<br>`-d`<br>`--dropq` |  |  drop qualities in FASTA/FASTQ records or tab-separated lines |  |
+| `match`<br>`-m`<br>`--match` | _regexp_ |  select sequence names matching the specified regexp in FASTA/FASTQ records or tab-separated lines\.<br>The regexp must be defined according to [https://ocaml.org/api/Str.html](https://ocaml.org/api/Str.html)\.<br>For paired-end files, the pair matches when at least one name matches\. |  |
+| `rename`<br>`-R`<br>`--rename` | _regexp_ _replacement_ |  replace with the provided pattern all the instances of the specified regexp occurring in the sequence names of FASTA/FASTQ records or tab-separated lines\.<br>The regexp must be defined according to [https://ocaml.org/api/Str.html](https://ocaml.org/api/Str.html)\.<br>Replacement expressions can contain identifiers `\1` \.\.\. `\9` for the groups matched by the regular expression; `\0` represents the full match |  |
 
 **Input/Output\.**
 
@@ -304,17 +304,17 @@ Executed delayed in order of specification, default=`-F`\.
 |-|-|-|-|
 | `-f`<br>`--fasta` | _fasta\_file\_name_ |  process FASTA input file containing sequences |  |
 | `-F` |  |  process FASTA sequences from standard input |  |
-| `-s`<br>`--single-end` | _fastq\_file\_name_ |  process FASTQ input file containing single\-end sequencing reads |  |
-| `-S` |  |  process single\-end FASTQ sequencing reads from standard input |  |
-| `-p`<br>`--paired-end` | _fastq\_file\_name1_ _fastq\_file\_name2_ |  process FASTQ input files containing paired\-end sequencing reads |  |
+| `-s`<br>`--single-end` | _fastq\_file\_name_ |  process FASTQ input file containing single-end sequencing reads |  |
+| `-S` |  |  process single-end FASTQ sequencing reads from standard input |  |
+| `-p`<br>`--paired-end` | _fastq\_file\_name1_ _fastq\_file\_name2_ |  process FASTQ input files containing paired-end sequencing reads |  |
 | `-P` |  |  process interleaved FASTQ sequencing reads from standard input |  |
-| `-t`<br>`--tabular` | _tabular\_file\_name_ |  process input file containing FAST\[A&#124;Q\] records as tab\-separated lines |  |
+| `-t`<br>`--tabular` | _tabular\_file\_name_ |  process input file containing FAST\[A&#124;Q\] records as tab-separated lines |  |
 | `-T` |  |  process FAST\[A&#124;Q\] records in tabular form from standard input |  |
-| `-l`<br>`--linter` | `none` _&#124;_ `DNA` _&#124;_ `dna` _&#124;_ `protein` |  sets linter for sequence\.<br>All non\-base \(for DNA\) or non\-AA \(for protein\) characters  are converted to unknowns | <ins>default=<mark>_none_</mark></ins> |
+| `-l`<br>`--linter` | `none` _&#124;_ `DNA` _&#124;_ `dna` _&#124;_ `protein` |  sets linter for sequence\.<br>All non-base \(for DNA\) or non-AA \(for protein\) characters  are converted to unknowns | <ins>default=<mark>_none_</mark></ins> |
 | `--linter-keep-lowercase` | `true` _&#124;_ `false` |  sets whether the linter should keep lowercase DNA/protein characters  appearing in sequences rather than capitalise them | <ins>default=<mark>_false_</mark></ins> |
 | `--linter-keep-dashes` | `true` _&#124;_ `false` |  sets whether the linter should keep dashes appearing in sequences  rather than convert them to unknowns | <ins>default=<mark>_false_</mark></ins> |
 | `-o`<br>`--output` | _output\_file\_name_ |  set the name of the output file\.<br>Files are kept open, and it is possible to switch between them  by repeatedly using this option\.<br>Use `/dev/stdout` for standard output | <ins>default=<mark>_/dev/stdout_</mark></ins> |
-| `-O`<br>`--paired-end-output` | _output\_file\_name\_1_ _output\_file\_name\_2_ |  set the names of paired\-end FASTQ output files\.<br>Files are kept open, and it is possible to switch between them  by repeatedly using this option\.<br>Use `/dev/stdout` for standard output | <ins>default=<mark>_/dev/stdout_</mark></ins> |
+| `-O`<br>`--paired-end-output` | _output\_file\_name\_1_ _output\_file\_name\_2_ |  set the names of paired-end FASTQ output files\.<br>Files are kept open, and it is possible to switch between them  by repeatedly using this option\.<br>Use `/dev/stdout` for standard output | <ins>default=<mark>_/dev/stdout_</mark></ins> |
 | `--flush`<br>`--flush-output` |  |  flush output after each record \(global option\) | <ins>default=<mark>_do not flush_</mark></ins> |
 
 **Miscellaneous**
@@ -502,8 +502,8 @@ default is just `--dialect <fmt> standard`\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `--hierarchy` | `gff3`&#124;`gtf`&#124;`genbank` _S\-expression_ |  set the hierarchy to use for subsequent input operations  in the named format |  |
-| `--dialect` | `gff3`&#124;`gtf`&#124;`genbank` _name_ |  switch subsequent input operations in the named format  to one of its built\-in dialects\.  Currently only GFF3  ships more than one dialect \(`standard` and  `gencode`\)\. |  |
+| `--hierarchy` | `gff3`&#124;`gtf`&#124;`genbank` _S-expression_ |  set the hierarchy to use for subsequent input operations  in the named format |  |
+| `--dialect` | `gff3`&#124;`gtf`&#124;`genbank` _name_ |  switch subsequent input operations in the named format  to one of its built-in dialects\.  Currently only GFF3  ships more than one dialect \(`standard` and  `gencode`\)\. |  |
 
 
 Annotation input\.
@@ -539,9 +539,9 @@ full list\.  All require a reference to be set\.
 |-|-|-|-|
 | `--validate-sequences-present` |  |  every sequence referenced by an annotation feature must  also exist in the reference |  |
 | `--validate-feature-bounds` |  |  every feature interval must lie within the corresponding  sequence's length |  |
-| `--validate-translation` |  |  translated CDS features must agree with their  /translation= qualifier \(currently a structural  sub\-check; codon\-by\-codon comparison is a follow\-up\) |  |
+| `--validate-translation` |  |  translated CDS features must agree with their  /translation= qualifier \(currently a structural  sub-check; codon-by-codon comparison is a follow-up\) |  |
 | `--validate` |  |  run every validation in turn |  |
-| `--validate-report` | _file_ |  run every validation against the current register but  do not stop at the first violation: walk the whole  register, write a tab\-separated report with one row  per violation \(columns: check, path, feature\_id,  message\) to _file_, and exit non\-zero if any violation  was found\. |  |
+| `--validate-report` | _file_ |  run every validation against the current register but  do not stop at the first violation: walk the whole  register, write a tab-separated report with one row  per violation \(columns: check, path, feature\_id,  message\) to _file_, and exit non-zero if any violation  was found\. |  |
 
 
 Actions involving the selection register\.
@@ -563,8 +563,8 @@ Add `-v` to see how many features each selection matched\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-L`<br>`--labels`<br>`--selection-from-labels` | _feature\_id_ _\[_ `,` _\.\.\._ `,` _feature\_id_ _\]_ |  put into the selection register the features carrying the given identifiers\.  The match is EXACT, not a regexp: for patterns use `-R` with the `id` field\.<br> A feature's identifier comes from its source format:   GFF3     the `ID=` attribute   GenBank  `/locus_tag`, or `/gene` when there is none   GTF      only the gene and transcript levels, from            `gene_id` and `transcript_id`  Many features have NO identifier \-\- a GenBank mat\_peptide, and every row of a GTF file, since there only the synthesised gene and transcript parents get one\.  `-L` can never match those; select them with `-R` on `type` or `path` instead\.<br> `--selection-print` lists them, which is how to find out what to pass\.  Its first column is the identifier when the feature has one and a positional stand\-in of the form `<seq>:<type>:<location>` when it does not \-\- the latter is a label, not an identifier, and `-L` will not match it\.<br> Examples:   \-L b0011              one feature, by locus tag   \-L b0011,b0012,b0013  three of them   \-L ENSG00000141510    a GFF3 feature by its ID= |  |
-| `-R`<br>`--regexps`<br>`--selection-from-regexps` | _field_ `~` _regexp_ _\[_ `,` _\.\.\._ `,` _field_ `~` _regexp_ _\]_ |  put into the selection register the features whose named fields match the given regexps\.  Criteria separated by `,` must ALL match\.<br> _field_ is one of:   type    the feature's own category, e\.g\. CDS, mat\_peptide   path    its whole category chain, e\.g\. source\-&gt;CDS   seq     the sequence it lies on   strand  `+`, `-` or `.`   id      its identifier \(`label`, and the empty field           name, are synonyms\)   source  the provenance in GFF3 column 2 Any other name is read as an ATTRIBUTE, matching when any one of that attribute's values does \-\- so `gene~dnaA` selects on the /gene qualifier\.  Those seven names are therefore reserved: an attribute sharing one of them cannot be selected on\.<br> _regexp_ is UNANCHORED, so `type~gene` also matches `pseudogene`\.  Anchor it with `^...$` when that matters\.<br> Examples:   \-R `type~^mat_peptide$`    every mature peptide   \-R `type~^CDS$,gene~^thr`  CDSs whose /gene starts `thr`   \-R `seq~^chr1$`            everything on chr1   \-R `~b0011`                the feature whose id is b0011 |  |
+| `-L`<br>`--labels`<br>`--selection-from-labels` | _feature\_id_ _\[_ `,` _\.\.\._ `,` _feature\_id_ _\]_ |  put into the selection register the features carrying the given identifiers\.  The match is EXACT, not a regexp: for patterns use `-R` with the `id` field\.<br> A feature's identifier comes from its source format:   GFF3     the `ID=` attribute   GenBank  `/locus_tag`, or `/gene` when there is none   GTF      only the gene and transcript levels, from            `gene_id` and `transcript_id`  Many features have NO identifier &mdash; a GenBank mat\_peptide, and every row of a GTF file, since there only the synthesised gene and transcript parents get one\.  `-L` can never match those; select them with `-R` on `type` or `path` instead\.<br> `--selection-print` lists them, which is how to find out what to pass\.  Its first column is the identifier when the feature has one and a positional stand-in of the form `<seq>:<type>:<location>` when it does not &mdash; the latter is a label, not an identifier, and `-L` will not match it\.<br> Examples:   -L b0011              one feature, by locus tag   -L b0011,b0012,b0013  three of them   -L ENSG00000141510    a GFF3 feature by its ID= |  |
+| `-R`<br>`--regexps`<br>`--selection-from-regexps` | _field_ `~` _regexp_ _\[_ `,` _\.\.\._ `,` _field_ `~` _regexp_ _\]_ |  put into the selection register the features whose named fields match the given regexps\.  Criteria separated by `,` must ALL match\.<br> _field_ is one of:   type    the feature's own category, e\.g\. CDS, mat\_peptide   path    its whole category chain, e\.g\. source-&gt;CDS   seq     the sequence it lies on   strand  `+`, `-` or `.`   id      its identifier \(`label`, and the empty field           name, are synonyms\)   source  the provenance in GFF3 column 2 Any other name is read as an ATTRIBUTE, matching when any one of that attribute's values does &mdash; so `gene~dnaA` selects on the /gene qualifier\.  Those seven names are therefore reserved: an attribute sharing one of them cannot be selected on\.<br> _regexp_ is UNANCHORED, so `type~gene` also matches `pseudogene`\.  Anchor it with `^...$` when that matters\.<br> Examples:   -R `type~^mat_peptide$`    every mature peptide   -R `type~^CDS$,gene~^thr`  CDSs whose /gene starts `thr`   -R `seq~^chr1$`            everything on chr1   -R `~b0011`                the feature whose id is b0011 |  |
 | `--selection-negate` |  |  negate the current selection |  |
 | `--selection-print` |  |  print the features currently selected, one per line, to  standard output |  |
 | `--selection-clear` |  |  reset the selection register so that it matches everything |  |
@@ -592,14 +592,14 @@ the name and the path over again\.
 | `--extract` | `dna`&#124;`protein` _file_ |  write the sequence of every selected feature to _file_ |  |
 | `--extract-dna` | _file_ |  shorthand for `--extract dna <file>` |  |
 | `--extract-protein` | _file_ |  shorthand for `--extract protein <file>` |  |
-| `--summary` |  |  print a one\-line summary of the current register to stderr |  |
+| `--summary` |  |  print a one-line summary of the current register to stderr |  |
 
 
 Annotation output\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `--to` | `gff3`&#124;`gtf`&#124;`genbank`&#124;`tsv`&#124;`tbl` _file\_or\_prefix_ |  write the register in the named format\.  Every format but `tsv` takes a FILE; `tsv` takes a PREFIX, since it writes a collection of files\.<br>`tbl` is NCBI's submission feature table, which is write\-only: it encodes no hierarchy and no metadata, so nothing can be read back from it |  |
+| `--to` | `gff3`&#124;`gtf`&#124;`genbank`&#124;`tsv`&#124;`tbl` _file\_or\_prefix_ |  write the register in the named format\.  Every format but `tsv` takes a FILE; `tsv` takes a PREFIX, since it writes a collection of files\.<br>`tbl` is NCBI's submission feature table, which is write-only: it encodes no hierarchy and no metadata, so nothing can be read back from it |  |
 | `--to-gff3` | _file_ |  shorthand for `--to gff3 <file>` |  |
 | `--to-gtf` | _file_ |  shorthand for `--to gtf <file>` |  |
 | `--to-tsv`<br>`--to-tabular` | _prefix_ |  shorthand for `--to tsv <prefix>`\.  Writes a COLLECTION of files: the `.AnnotationFeatures.txt`, `.AnnotationAttributes.txt` and `.AnnotationMetadata.txt` tables, plus `.AnnotationReference.fasta` when the register carries a sequence\.<br>A prefix under `/dev/*` writes all of it to that one path instead, as a single document |  |
@@ -643,7 +643,7 @@ TREx [OPTIONS]
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-l`<br>`--linter` | `none` _&#124;_ `DNA` _&#124;_ `dna` _&#124;_ `protein` |  sets linter for sequence\.<br>All non\-base \(for DNA\) or non\-AA \(for protein\) characters  are converted to unknowns | <ins>default=<mark>_dna_</mark></ins> |
+| `-l`<br>`--linter` | `none` _&#124;_ `DNA` _&#124;_ `dna` _&#124;_ `protein` |  sets linter for sequence\.<br>All non-base \(for DNA\) or non-AA \(for protein\) characters  are converted to unknowns | <ins>default=<mark>_dna_</mark></ins> |
 | `--linter-keep-lowercase` | _bool_ |  sets whether the linter should keep lowercase DNA/protein characters  appearing in sequences rather than capitalise them | <ins>default=<mark>_false_</mark></ins> |
 | `--linter-keep-dashes` | _bool_ |  sets whether the linter should keep dashes appearing in sequences  rather than convert them to unknowns | <ins>default=<mark>_false_</mark></ins> |
 
@@ -686,7 +686,7 @@ Cophenetic [OPTIONS]
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-M`<br>`--max-distances`<br>`--maximum-distances`<br>`--longest-path-distances` |  |  compute longest\- rather than shortest\-path distances | <ins>default=<mark>_compute shortest\-path distances_</mark></ins> |
+| `-M`<br>`--max-distances`<br>`--maximum-distances`<br>`--longest-path-distances` |  |  compute longest- rather than shortest-path distances | <ins>default=<mark>_compute shortest-path distances_</mark></ins> |
 
 **Miscellaneous**
 
@@ -751,14 +751,14 @@ The distance matrix is the tab\-separated form the rest of this suite reads and
 |-|-|-|-|
 | `-i`<br>`--input` | _distance\_matrix_ |  name of the file containing the matrix of pairwise distances | <ins>default=<mark>_/dev/stdin_</mark></ins> |
 | `-o`<br>`--output` | _newick\_file_ |  name of the file the resulting tree should be written to | <ins>default=<mark>_/dev/stdout_</mark></ins> |
-| `-S`<br>`--statistics` | _statistics\_file_ |  also write a two\-line table of what the distance matrix is: its  shape, whether it can be joined at all, how far it disagrees with  itself across the diagonal and where, how many cells are negative  \(a distance is not, so those are however the matrix writes  `not measured`\), and, for the tree, how many branches came out  negative and what they add up to\.  Written even for a matrix that  is then refused, that being when a description is worth the most |  |
+| `-S`<br>`--statistics` | _statistics\_file_ |  also write a two-line table of what the distance matrix is: its  shape, whether it can be joined at all, how far it disagrees with  itself across the diagonal and where, how many cells are negative  \(a distance is not, so those are however the matrix writes  `not measured`\), and, for the tree, how many branches came out  negative and what they add up to\.  Written even for a matrix that  is then refused, that being when a description is worth the most |  |
 | `-r`<br>`--rich-format` |  |  emit the rich Newick dialect this suite understands, which tags the  tree as rooted or unrooted and carries dictionaries and hybrid  nodes; plain Newick is what most other programs expect | <ins>default=<mark>_false_</mark></ins> |
 
 **Algorithm**
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-m`<br>`--midpoint`<br>`--midpoint-root` |  |  re\-root the tree at the midpoint of its longest tip\-to\-tip path,  rather than leaving it unrooted as neighbour joining produces it | <ins>default=<mark>_false_</mark></ins> |
+| `-m`<br>`--midpoint`<br>`--midpoint-root` |  |  re-root the tree at the midpoint of its longest tip-to-tip path,  rather than leaving it unrooted as neighbour joining produces it | <ins>default=<mark>_false_</mark></ins> |
 | `-a`<br>`--asymmetry` | `average` _&#124;_ `error` |  what to do when the matrix disagrees with itself across the  diagonal: replace both cells with their mean, or refuse the matrix | <ins>default=<mark>_average_</mark></ins> |
 | `-n`<br>`--negative-branches` | `ok` _&#124;_ `zero` _&#124;_ `error` |  what to do about the branches of negative length a matrix that is  not additive yields: keep them, flatten them to zero, or refuse  the matrix | <ins>default=<mark>_ok_</mark></ins> |
 
@@ -809,11 +809,11 @@ They are executed delayed and in order of specification\.
 | `-I`<br>`--Input` | _splits\_file\_prefix_ |  load into the splits register the specified plain text database  \(which must have extension `.PhyloSplits.txt` unless file is `/dev/*`\) |  |
 | `-a`<br>`--add` | _binary\_file\_prefix_ |  add to the contents of the splits register the specified binary database  \(which must have extension `.PhyloSplits` unless file is `/dev/*`\) |  |
 | `-A`<br>`--Add` | _splits\_file\_prefix_ |  add to the contents of the splits register the specified plain text database  \(which must have extension `.PhyloSplits.txt` unless file is `/dev/*`\) |  |
-| `--input-tree`<br>`--Of-tree` | _newick\_file_ |  load into the splits register the bipartitions of the specified Newick tree  \(replaces the current register; for multi\-tree files, every tree's   bipartitions are added, each with weight 1\.0 per occurrence\) |  |
-| `--Add-tree` | _newick\_file_ |  add to the splits register the bipartitions of the specified Newick tree, each with weight 1\.0 \(so a bipartition supported by k trees accumulates to weight k\)\.  Compose with multiple \-\-Add\-tree calls for ensemble consensus, then feed to \-t |  |
-| `--Add-tree-weighted` | _newick\_file_ _weight_ |  as \-\-Add\-tree, but each bipartition gets the explicit weight given  \(useful when different ensemble members should count differently\) |  |
-| `--drop-weak-splits` | _float_ |  drop every split in the register whose accumulated weight is strictly less than the cutoff\.  Apply between \-\-Add\-tree calls and \-t to implement majority\-rule consensus at threshold p:  set cutoff = p \* n\_input\_trees |  |
-| `--negative-branches-policy` | `error` _&#124;_ `ok` _&#124;_ `zero` |  policy for handling negative branch lengths when reading Newick input  \(via \-\-input\-tree, \-\-Add\-tree, \-\-Add\-tree\-weighted\)\.<br> `error` rejects \(raises a parse error\); `ok` accepts as\-is;  `zero` silently clamps to 0\.  Set before the \-\-Add\-tree call\(s\)  it should apply to | <ins>default=<mark>_ok_</mark></ins> |
+| `--input-tree`<br>`--Of-tree` | _newick\_file_ |  load into the splits register the bipartitions of the specified Newick tree  \(replaces the current register; for multi-tree files, every tree's   bipartitions are added, each with weight 1\.0 per occurrence\) |  |
+| `--Add-tree` | _newick\_file_ |  add to the splits register the bipartitions of the specified Newick tree, each with weight 1\.0 \(so a bipartition supported by k trees accumulates to weight k\)\.  Compose with multiple --Add-tree calls for ensemble consensus, then feed to -t |  |
+| `--Add-tree-weighted` | _newick\_file_ _weight_ |  as --Add-tree, but each bipartition gets the explicit weight given  \(useful when different ensemble members should count differently\) |  |
+| `--drop-weak-splits` | _float_ |  drop every split in the register whose accumulated weight is strictly less than the cutoff\.  Apply between --Add-tree calls and \-t to implement majority-rule consensus at threshold p:  set cutoff = p \* n\_input\_trees |  |
+| `--negative-branches-policy` | `error` _&#124;_ `ok` _&#124;_ `zero` |  policy for handling negative branch lengths when reading Newick input  \(via --input-tree, --Add-tree, --Add-tree-weighted\)\.<br> `error` rejects \(raises a parse error\); `ok` accepts as-is;  `zero` silently clamps to 0\.  Set before the --Add-tree call\(s\)  it should apply to | <ins>default=<mark>_ok_</mark></ins> |
 | `-t`<br>`--tree` | _tree\_file\_prefix_ |  generate a phylogenetic tree from the contents of the splits register\.<br>The results will be a Newick file  \(which will be given extension `.nwk` unless file is `/dev/*`\) and the database of compatible splits used to build the tree  \(which will be given extension `.PhyloSplits.txt` unless file is `/dev/*`\)\.<br>The residual incompatible splits will be moved back to the splits register |  |
 | `-o`<br>`--output` | _binary\_file\_prefix_ |  dump the contents of the splits register to the specified binary file  \(which will be given extension `.PhyloSplits` unless file is `/dev/*`\) |  |
 | `--precision` | _positive\_integer_ |  set the number of precision digits to be used when outputting numbers | <ins>default=<mark>_10_</mark></ins> |
