@@ -108,6 +108,15 @@ for DOC in "${DOCS[@]}"; do
   fi
   pandoc "$DOC" -f gfm -t html5 --standalone "$EMBED" $TOC \
          --resource-path "$DIR:." "${CSS[@]}" --metadata title="$T" -o "$HTML"
+  # EVERY FIGURE BECOMES A BREAKABLE BOX.  A raster <img> is replaced content and
+  # cannot be split: one that does not fit in what is left of a page moves whole
+  # to the next, leaving the remainder of the page blank, and one taller than a
+  # page cannot be shown at all.  figbox.awk rewrites each into a span of the
+  # same size carrying the image as a background, which Chrome paints on every
+  # page-fragment the span covers -- so the PDF mirrors what a browser shows.
+  # The size is read off the image, so no document states it and none can be
+  # missing it; see the file for the whole of the reasoning.
+  gawk -f "$HERE/figbox.awk" "$HTML" > "$HTML.figs" && mv "$HTML.figs" "$HTML"
   # --disable-background-networking is essential: the GCM/SSL phone-home Chrome
   # otherwise attempts stalls -- and on some builds crashes (dangling raw_ptr) --
   # the headless render of a large image-heavy page.  The rest is headless

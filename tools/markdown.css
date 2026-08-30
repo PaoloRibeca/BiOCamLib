@@ -62,20 +62,27 @@ nav#TOC > ul > li > a { font-weight: 600; }
 /* Symmetric margins: horizontal == vertical (14mm page + 1em body on every side). */
 @page { size: A4; margin: 14mm; }
 
-/* Tall figures that split across print pages.  A raster <img> is monolithic:
-   if it does not fit in the space left on a page it jumps whole to the next
-   one, leaving a large gap.  So a too-tall figure is rendered a *second* time
-   as the background of a breakable box shown ONLY in print -- Chrome paints an
-   element's background on every page-fragment it spans, so the image flows
-   across pages.  On screen and on GitHub (both of which ignore this stylesheet)
-   the box is invisible and the ordinary .screen-only-fig <img> is shown.
-   The pattern is here because it is the same everywhere; what is NOT here is
-   the per-figure rule giving a box its own size and image, which belongs to the
-   repository that has the figure:
-     .print-splitfig.NAME { width: Wpx; height: Hpx;
-       background-image: url("docs/FIG.png"); }
-   with height = width * imageHeight / imageWidth, or the figure is letterboxed
-   inside a box of the wrong shape. */
+/* Figures.  `markdown-pdf` rewrites every embedded <img> into a span of this
+   class, sized from the image itself and carrying it as a background, so that a
+   figure flows across page boundaries instead of moving whole to the next page
+   and leaving the rest of the one it was on blank.  It is a STACK OF BANDS,
+   each showing one slice of the image, because a break falls between siblings
+   and not inside a box that has nothing in it -- see figbox.awk, which explains
+   why the obvious single box does not work.  Nothing here states a size: each
+   figure carries its own, read off the image, which is why no document and no
+   repository has to. */
+.pdf-fig { display: block; margin: 1em auto; }
+.pdf-fig span { display: block; background-repeat: no-repeat; }
+
+/* SUPERSEDED, and kept only so that a document still carrying the older markup
+   renders.  Tall figures used to split across print pages by being written
+   TWICE --- once as an <img> for the screen and once as the background of a box
+   for print --- with a per-figure rule in the repository's own stylesheet
+   giving that box its size and its image.  The size had to be computed by hand
+   and kept in step with the figure, the rule could be deleted as residual with
+   nothing noticing, and only figures someone had judged tall got the treatment.
+   `.pdf-fig` above needs none of that.  A document using this pattern should
+   drop the box and keep the <img>. */
 .print-splitfig { display: none; }
 @media print {
   .screen-only-fig { display: none; }
@@ -93,7 +100,15 @@ nav#TOC > ul > li > a { font-weight: 600; }
      do the work instead, and stop a split leaving a single line behind. */
   tr, td, th { break-inside: auto; }
   p, li { orphans: 2; widows: 2; }
+  /* A code block is kept whole, which is right for the usage examples that make
+     up nearly all of them: a short block split across a page boundary is harder
+     to read than one moved down.  It is WRONG for a block too tall to fit on a
+     page at all -- there `avoid` cannot be honoured, so the renderer moves the
+     whole thing to the next page, overflows it anyway, and wastes most of the
+     page it left behind.  CSS cannot say "avoid unless too long", so a document
+     that has such a block marks it: wrap it in a div of class `long-listing`. */
   pre { break-inside: avoid; }
+  .long-listing pre { break-inside: auto; }
   /* A heading at the foot of a page belongs to what follows it, not to what
      it was left behind by. */
   h1, h2, h3, h4 { break-after: avoid; break-inside: avoid; }
