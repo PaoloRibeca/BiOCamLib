@@ -1000,7 +1000,11 @@ module Argv:
             let close () = if !fenced then begin accum_md_usage "```\n"; fenced := false end in
             List.iteri
               (fun i line ->
-                if i = 0 then begin
+                (* An empty first line is a block that opens with a blank rather than
+                   with a heading, which several of these do to set a paragraph off
+                   from the table above it.  Emphasising it wrote '****', an empty
+                   bold, where the author had asked for nothing at all *)
+                if i = 0 && line <> "" then begin
                   accum_md_usage "**";
                   accum_md_literals line;
                   accum_md_usage "**\n";

@@ -458,7 +458,10 @@ let test_argv_parse () =
         [ "-w" ], Some "<keep|drop>", [ "pass 'keep' or see <https://example.org/x>" ],
           TA.Optional, (fun _ -> ());
         [ "-d" ], None, [ "a default" ], TA.Default (fun () -> "42"), (fun _ -> ());
-        [ "-j" ], None, [ "detected" ], TA.Detected ((fun () -> "8"), "nproc"), (fun _ -> ()) ];
+        [ "-j" ], None, [ "detected" ], TA.Detected ((fun () -> "8"), "nproc"), (fun _ -> ());
+        TA.make_separator_multiline
+          [ "Heading."; "First paragraph."; ""; "Second paragraph."; "  an example" ];
+        TA.make_separator_multiline [ ""; "Opens with a blank rather than a heading." ] ];
     let printed = captured (fun oc -> TA.usage ~output:oc ()) in
     List.iter (fun needle ->
       Testing.check_bool (Printf.sprintf "the usage mentions %S" needle) ~expected:true
@@ -497,6 +500,24 @@ let test_argv_parse () =
           "default=<mark>_nproc_</mark>" ];
     Testing.check_bool "so that no machine-dependent value is written into the page"
       ~expected:false (contains "default=<mark>_8_</mark>" md);
+    (* A multiline separator is prose and examples, and markdown needs telling
+       what a terminal shows by itself: a blank line is the only thing that
+       separates two paragraphs, and an indented run is an example whose
+       alignment a paragraph would collapse. *)
+    (* The periods come back escaped, prose being escaped outside a code span. *)
+    Testing.check_bool "a separator's first line is its heading" ~expected:true
+      (contains "**Heading\\.**" md);
+    Testing.check_bool "a blank line between two paragraphs is kept as one"
+      ~expected:true (contains "First paragraph\\.\n\nSecond paragraph\\." md);
+    Testing.check_bool "and an indented line becomes a fenced block, undented"
+      ~expected:true (contains "```\nan example\n```" md);
+    (* A block may open with a blank instead of a heading, which is how several
+       of these set a paragraph off from the table above.  Emphasising nothing
+       wrote an empty bold where the author had asked for nothing at all. *)
+    Testing.check_bool "a separator opening with a blank emits no empty bold"
+      ~expected:false (contains "****" md);
+    Testing.check_bool "and its text is still there, as prose" ~expected:true
+      (contains "\nOpens with a blank rather than a heading\\." md);
     Testing.check_bool "so that no raw angle bracket reaches the page" ~expected:true
       (not (contains "<n>" md)))
 

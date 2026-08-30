@@ -1,9 +1,10 @@
 /* BiOCamLib/tools/markdown.css -- the house look for a markdown document
    rendered to PDF by tools/markdown-pdf, shared by every repository of the
    family.  A GitHub-like base, A4 geometry, and the print machinery a long
-   document needs to survive being broken into pages.  What is NOT here is
-   anything specific to one repository: a per-figure .print-splitfig rule
-   belongs to the markdown.css of the repository that has the figure. */
+   document needs to survive being broken into pages.  Nothing here is specific
+   to one document: a figure is sized from itself by markdown-pdf, so no
+   repository has to carry a rule for one, and what a repository's own
+   markdown.css is left for is whatever else it alone wants. */
 html { font-size: 12px; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   line-height: 1.55; color: #1f2328; margin: 0; padding: 0; }

@@ -72,8 +72,8 @@ RC -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is RC version 1.3.3-948 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
+This is RC version 1.3.3-958 [30-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-958 [30-Aug-2026]
  (c) 2023-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -123,8 +123,8 @@ Octopus -h
 in your terminal. You will see a header containing information about the version:
 
 ```
-This is Octopus version 1.3.3-948 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
+This is Octopus version 1.3.3-958 [30-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-958 [30-Aug-2026]
  (c) 2016-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -159,8 +159,8 @@ Parallel -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is Parallel version 1.3.3-948 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
+This is Parallel version 1.3.3-958 [30-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-958 [30-Aug-2026]
  (c) 2019-2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -172,7 +172,7 @@ Parallel [OPTIONS] -- [COMMAND TO PARALLELIZE AND ITS OPTIONS]
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `--` |  |  consider all the subsequent parameters as the command to be executed in parallel\.<br>At least one command must be specified | *(mandatory)* |
+| `--` |  |  consider all the subsequent parameters as the command to be executed in parallel\.<br>At least one command must be specified | <ins><mark>mandatory</mark></ins> |
 
 **Input/Output**
 
@@ -274,8 +274,8 @@ FASTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is FASTools version 1.3.3-948 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
+This is FASTools version 1.3.3-958 [30-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-958 [30-Aug-2026]
  (c) 2022-2025 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -284,6 +284,7 @@ FASTools [OPTIONS]
 ```
 
 **Working mode\.**
+
 Executed delayed in order of specification, default=`compact`\.
 
 | Option | Argument(s) | Effect | Note(s) |
@@ -296,6 +297,7 @@ Executed delayed in order of specification, default=`compact`\.
 | `rename`<br>`-R`<br>`--rename` | _regexp_ _replacement_ |  replace with the provided pattern all the instances of the specified regexp occurring in the sequence names of FASTA/FASTQ records or tab\-separated lines\.<br>The regexp must be defined according to [https://ocaml.org/api/Str.html](https://ocaml.org/api/Str.html)\.<br>Replacement expressions can contain identifiers `\1` \.\.\. `\9` for the groups matched by the regular expression; `\0` represents the full match |  |
 
 **Input/Output\.**
+
 Executed delayed in order of specification, default=`-F`\.
 
 | Option | Argument(s) | Effect | Note(s) |
@@ -468,8 +470,8 @@ AnnoTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is AnnoTools version 1.3.3-948 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
+This is AnnoTools version 1.3.3-958 [30-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-958 [30-Aug-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -478,7 +480,9 @@ AnnoTools [ACTIONS]
 ```
 
 **Actions\.**
+
 They are executed delayed and in order of specification\.
+
 
 Operations on the annotation register:
 
@@ -487,6 +491,7 @@ Operations on the annotation register:
 | `-0`<br>`--empty` |  |  load an empty annotation into the register |  |
 | `-i`<br>`--input` | _binary\_file\_prefix_ |  load into the register the annotation present in the  specified binary file \(extension `.Annotation` is  appended unless the path is under `/dev/*`\) |  |
 | `-o`<br>`--output` | _binary\_file\_prefix_ |  write the current register to the specified binary file  \(extension `.Annotation` is appended unless under `/dev/*`\) |  |
+
 
 Hierarchy\.
 Override the active hierarchy for a given format\.  The
@@ -499,6 +504,7 @@ default is just `--dialect <fmt> standard`\.
 |-|-|-|-|
 | `--hierarchy` | `gff3`&#124;`gtf`&#124;`genbank` _S\-expression_ |  set the hierarchy to use for subsequent input operations  in the named format |  |
 | `--dialect` | `gff3`&#124;`gtf`&#124;`genbank` _name_ |  switch subsequent input operations in the named format  to one of its built\-in dialects\.  Currently only GFF3  ships more than one dialect \(`standard` and  `gencode`\)\. |  |
+
 
 Annotation input\.
 Long form: action mode \+ format \+ path\.
@@ -513,6 +519,7 @@ default to `replace`\.
 | `--from-tsv`<br>`--from-tabular` | _prefix_ |  shorthand for `--annotation replace tsv <prefix>`\.<br>Reads the `.AnnotationFeatures.txt`, `.AnnotationAttributes.txt` and `.AnnotationMetadata.txt` tables written from that prefix, together with `.AnnotationReference.fasta` when one is beside them\.<br>A path under `/dev/*`, or an ordinary file that turns out to be a whole tabular document, is read as one document instead |  |
 | `--from-genbank` | _file_ |  shorthand for `--annotation replace genbank <file>` |  |
 
+
 Reference \(multi\-FASTA\) input\.
 Long form takes the same mode keyword as \-\-annotation\.
 Short form `--from-fasta` defaults to `replace`\.
@@ -521,6 +528,7 @@ Short form `--from-fasta` defaults to `replace`\.
 |-|-|-|-|
 | `-r`<br>`--reference` | `replace`&#124;`add` _file_ |  merge or replace the register's reference from _file_ |  |
 | `--from-fasta` | _file_ |  shorthand for `--reference replace <file>` |  |
+
 
 Validation\.
 Each check stops at the first violation, exits non\-zero,
@@ -535,6 +543,7 @@ full list\.  All require a reference to be set\.
 | `--validate` |  |  run every validation in turn |  |
 | `--validate-report` | _file_ |  run every validation against the current register but  do not stop at the first violation: walk the whole  register, write a tab\-separated report with one row  per violation \(columns: check, path, feature\_id,  message\) to _file_, and exit non\-zero if any violation  was found\. |  |
 
+
 Actions involving the selection register\.
 The selection restricts `--selection-print` and the
 `--extract-*` actions to the features it matches\.  The
@@ -542,10 +551,14 @@ The selection restricts `--selection-print` and the
 because a feature whose parent is not selected would be
 emitted without it\.  The selection is sticky, and starts
 out matching everything\.
+
 To pull every mature peptide out of a GenBank record:
-  AnnoTools \-\-from\-genbank in\.gb \\
-            \-R `type~^mat_peptide$` \\
-            \-\-extract\-protein peptides\.faa
+```
+AnnoTools --from-genbank in.gb \
+          -R 'type~^mat_peptide$' \
+          --extract-protein peptides.faa
+```
+
 Add `-v` to see how many features each selection matched\.
 
 | Option | Argument(s) | Effect | Note(s) |
@@ -555,6 +568,7 @@ Add `-v` to see how many features each selection matched\.
 | `--selection-negate` |  |  negate the current selection |  |
 | `--selection-print` |  |  print the features currently selected, one per line, to  standard output |  |
 | `--selection-clear` |  |  reset the selection register so that it matches everything |  |
+
 
 Sequence extraction\.
 Emit the sequence denoted by each selected feature as
@@ -580,6 +594,7 @@ the name and the path over again\.
 | `--extract-protein` | _file_ |  shorthand for `--extract protein <file>` |  |
 | `--summary` |  |  print a one\-line summary of the current register to stderr |  |
 
+
 Annotation output\.
 
 | Option | Argument(s) | Effect | Note(s) |
@@ -592,6 +607,7 @@ Annotation output\.
 | `--to-genbank` | _file_ |  shorthand for `--to genbank <file>` |  |
 
 **Miscellaneous options\.**
+
 They are set immediately\.
 
 | Option | Argument(s) | Effect | Note(s) |
@@ -614,8 +630,8 @@ TREx -m 50 -M 10 < genome.fasta > repeats.tsv
 ### Command line options for `TREx`
 
 ```
-This is TREx version 1.3.3-948 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
+This is TREx version 1.3.3-958 [30-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-958 [30-Aug-2026]
  (c) 2023-2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -657,8 +673,8 @@ Cophenetic -t 4 < tree.nwk > distances.tsv
 ### Command line options for `Cophenetic`
 
 ```
-This is Cophenetic version 1.3.3-948 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
+This is Cophenetic version 1.3.3-958 [30-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-958 [30-Aug-2026]
  (c) 2024 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -716,8 +732,8 @@ The output is plain Newick, which is what most other programs expect. `-r`/`--ri
 ### Command line options for `NJ`
 
 ```
-This is NJ version 1.3.3-948 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
+This is NJ version 1.3.3-958 [30-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-958 [30-Aug-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -726,6 +742,7 @@ NJ [OPTIONS]
 ```
 
 **Input/Output\.**
+
 The distance matrix is the tab\-separated form the rest of this suite reads and
  writes: a header line of column names preceded by an empty field, and one row
  per name\.  Both axes must carry the same names in the same order
@@ -772,8 +789,8 @@ Yggdrasill  -i splits -t tree -O dropped
 ### Command line options for `Yggdrasill`
 
 ```
-This is Yggdrasill version 1.3.3-948 [28-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-948 [28-Aug-2026]
+This is Yggdrasill version 1.3.3-958 [30-Aug-2026]
+ compiled against: BiOCamLib version 1.3.3-958 [30-Aug-2026]
  (c) 2024-2025 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 *Usage:*
@@ -782,6 +799,7 @@ Yggdrasill [OPTIONS]
 ```
 
 **Actions\.**
+
 They are executed delayed and in order of specification\.
 
 | Option | Argument(s) | Effect | Note(s) |
@@ -802,6 +820,7 @@ They are executed delayed and in order of specification\.
 | `-O`<br>`--Output` | _splits\_file\_prefix_ |  dump the contents of the splits register to the specified plain text file  \(which will be given extension `.PhyloSplits.txt` unless file is `/dev/*`\) |  |
 
 **Miscellaneous options\.**
+
 They are set immediately\.
 
 | Option | Argument(s) | Effect | Note(s) |

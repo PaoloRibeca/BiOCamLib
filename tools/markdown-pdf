@@ -25,9 +25,10 @@
 #
 # Two stylesheets are passed, in order: this directory's markdown.css, which is
 # the house look and the print machinery every repository shares, and then the
-# repository's own markdown.css if it has one -- which is where a per-figure
-# rule belongs, since only that repository has the figure.  A repository with no
-# figures to split needs no stylesheet of its own at all.
+# repository's own markdown.css if it has one, for whatever that repository
+# alone wants.  A figure needs nothing there any more -- figbox.awk below sizes
+# each one from the image itself -- so most repositories need no stylesheet of
+# their own at all.
 #
 # Note what is deliberately NOT here: measuring the width a figure should be
 # included at.  That is tools/figscale, run by hand when a figure is added or
