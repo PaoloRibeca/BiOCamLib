@@ -233,6 +233,7 @@ module Parallel:
         (* I am the input process *)
         let i_2_w_pipes = Array.init threads (fun _ -> Unix.pipe ())
         and w_2_i_pipes = Array.init threads (fun _ -> Unix.pipe ()) in
+        let workers = ref [] in
         for i = 0 to red_threads do
           match Unix.fork () with
           | 0 -> (* Child *)
@@ -317,7 +318,8 @@ module Parallel:
                 flush w_2_o
               | _ -> assert false
             done
-          | _ -> () (* Parent *)
+          | worker_pid -> (* Parent *)
+            workers := worker_pid :: !workers
         done;
         (* I am the input process.
            I do not care about output process pipes *)
@@ -359,8 +361,13 @@ module Parallel:
         ignore (Unix.select [fst w_2_i_pipes.(0)] [] [] (-1.));
         close_pipes_out i_2_w_pipes;
         close_pipes_in w_2_i_pipes;
+        (* THE WORKERS ARE COLLECTED BEFORE THIS PROCESS GOES, each by its own pid rather than by
+           waiting for whatever turns up: a caller of this function may have children of its own
+           that it means to reap itself, and an indiscriminate wait would take one of those *)
+        List.iter (fun pid -> try ignore (Unix.waitpid [] pid) with Unix.Unix_error _ -> ())
+          !workers;
         Unix._exit 0 (* Do not flush buffers or do anything else *)
-      | _ -> (* I am the output process *)
+      | input_pid -> (* I am the output process *)
         close_pipes_in o_2_w_pipes;
         close_pipes_out w_2_o_pipes;
         let w_2_o_pipes_for_select, w_2_o_dict = get_stuff_for_select w_2_o_pipes
@@ -430,7 +437,15 @@ module Parallel:
           flush o_2_w.(ii)
         done;
         close_pipes_out o_2_w_pipes;
-        close_pipes_in w_2_o_pipes
+        close_pipes_in w_2_o_pipes;
+        (* AND THE INPUT PROCESS IS COLLECTED HERE, which is what keeps a long run from filling
+           the process table.  Every call forks one child from this side and, until now, left it
+           to become a zombie when it exited; a caller that opens a parallel section per unit of
+           work rather than once per run -- the Monte-Carlo clusterer opens one per epoch --
+           accumulates one for each, and was measured to hold eleven hundred of them.  They cost
+           nothing but a slot each, so nothing failed and nothing said anything, which is why it
+           went unnoticed for as long as it did *)
+        (try ignore (Unix.waitpid [] input_pid) with Unix.Unix_error _ -> ())
     let process_stream_linewise ?(buffered_chunks_per_thread = 10)
         ?(max_memory = 1_000_000_000) ?(string_buffer_memory = 16_777_216)
         ?(input_line = input_line) ?(verbose = true)
