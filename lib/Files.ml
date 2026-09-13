@@ -788,6 +788,30 @@ module Reads:
     (* OCaml-style iterators *)
     val iter: t Base.Iterator.t
     val iter_se_pe: t Base.Iterator.se_pe_t
+    (* A set of reads held in memory, which the iterators above do not provide: they hand each
+       read to a function and forget it, whereas a store can be filtered and written back out.
+       It is what a tool separating reads into singletons, selected and leftovers works on *)
+    module Store:
+      sig
+        type reads_t := t
+        type t
+        (* A filter is something that separates reads into (singletons, selected, leftovers) *)
+        val singleton: int
+        val selected: int
+        val unmarked: int
+        type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+        val empty: t
+        val length: t -> int
+        val add_from_file: ?linter:Base.linter_t -> ?compression:bool -> ?verbose:bool ->
+                           t -> reads_t -> unit
+        (* Arguments to the function are store, optional filter (can be empty), name of output prefix
+            (output reads can be FASTA and/or FASTQ SE and/or FASTQ PE) *)
+        val to_fast: ?verbose:bool -> t -> filter_t -> string -> unit
+        val to_tabular: ?verbose:bool -> t -> filter_t -> string -> unit
+        val seq_length: t -> int
+        (* Arguments to the function are read id, segment id, payload *)
+        val iter: (Iterator.ret_t -> unit) -> t -> unit
+      end
   end
 = struct
     type t =
@@ -916,7 +940,7 @@ module Reads:
     let iter ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
              ?(compression = true) ?(verbose = false) f =
       iter_se_pe ~linter ~compression ~verbose f (fun one two -> f one; f two) [@@inline]
-    module [@warning "-32"] Store:
+    module Store:
       sig
         type reads_t := t
         type t
