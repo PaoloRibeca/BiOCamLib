@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+#
+# BiOCamLib/tools/html-pdf -- render a repository's HTML documents to PDF.
+#
+#   html-pdf --root <dir> [<file.html> ...]
+#
+# With no file named it renders index.html.  Each <file>.html becomes
+# <file>.pdf beside it, so a repository with several pages renders them all in
+# one call.
+#
+# HTML -> PDF (headless Chrome/Chromium, the same engine a browser's "print to
+# PDF" uses).  Needs google-chrome or chromium and nothing else: no pandoc,
+# because an HTML document is already the form markdown-pdf renders markdown
+# INTO, and the two tools meet at exactly that point.
+#
+# WHAT THIS TOOL DELIBERATELY DOES NOT DO, and what markdown-pdf does:
+#
+#   - It injects no stylesheet.  A markdown document is content without a look,
+#     so the renderer supplies one -- the house sheet, then the repository's
+#     own.  An HTML document is content WITH a look: bringing its own CSS is
+#     the reason for writing one rather than a markdown file, and a house sheet
+#     layered over it would fight the design it was chosen for.  What such a
+#     document owes the family is print geometry, which is CSS it can write:
+#     @page { size: A4; margin: 14mm } and the pagination rules in
+#     tools/markdown.css's @media print block are the ones to copy.
+#   - It rewrites no figures.  figbox.awk exists because pandoc emits an <img>
+#     for every figure and a raster <img> cannot be split across a page.  A
+#     hand-written document can say how its own figures should paginate, and a
+#     tool that rewrote them would be overruling it.
+#
+# WHAT IT ASKS OF A DOCUMENT: that it be self-contained.  Chrome renders
+# whatever a page asks for, including a webfont or an image from the network,
+# and a build that reaches the network is a build whose output depends on where
+# and when it ran -- the PDF is version-controlled, so that difference lands in
+# git as a change nobody made.  The check below is a warning and not a refusal,
+# because a page can legitimately name a remote resource it does not need
+# (a canonical URL, a link to follow), and only the author knows which.
+#
+# The dates are rewritten exactly as markdown-pdf rewrites them, and for the
+# same reason: Chrome stamps the moment it rendered, so without this two builds
+# of one unchanged document produce two different files and `git status` stops
+# distinguishing a document that CHANGED from one that was merely rebuilt.  See
+# markdown-pdf for the whole of that reasoning, and source-date-epoch beside it
+# for which date and why.
+
+set -e
+
+SELF="$(basename "${BASH_SOURCE[0]}")"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  echo "Usage: $SELF --root <dir> [<file.html> ...]" >&2
+  exit 1
+}
+
+ROOT=""
+DOCS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --root) ROOT="${2:-}"; shift 2 ;;
+    -*) echo "$SELF: unknown option '$1'" >&2; usage ;;
+    *)  DOCS+=("$1"); shift ;;
+  esac
+done
+[[ -n "$ROOT" ]] || usage
+[[ ${#DOCS[@]} -gt 0 ]] || DOCS=(index.html)
+
+cd "$ROOT"
+CHROME=""
+for c in google-chrome google-chrome-stable chromium chromium-browser; do
+  if command -v "$c" > /dev/null 2>&1; then CHROME="$c"; break; fi
+done
+[[ -n "$CHROME" ]] || { echo "$SELF: no google-chrome/chromium found" >&2; exit 1; }
+
+# Private profile dir so this Chrome never blocks on the default-profile
+# singleton lock held by an unrelated Chrome already running on the host.
+UDD="$(mktemp -d)"
+# Render to a temp PDF; only move it into place once it IS a valid PDF, so that
+# a Chrome crash never leaves a stale PDF looking like success.
+PDF="$(mktemp --suffix=.pdf)"
+LOG="$(mktemp)"
+trap 'rm -rf "$UDD" "$PDF" "$LOG"' EXIT
+
+: "${SOURCE_DATE_EPOCH:=$("$HERE/source-date-epoch" --root .)}"
+# GNU date takes -d @N, BSD/macOS date takes -r N; try each.
+STAMP="$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y%m%d%H%M%S 2> /dev/null \
+         || date -u -r "$SOURCE_DATE_EPOCH" +%Y%m%d%H%M%S)"
+
+stamp_pdf() {
+  local pdf="$1" off
+  # grep -abo reports 'OFFSET:D:20260830210616'; the digits start two bytes
+  # past the offset it gives, after the 'D:'.
+  grep -abo "D:[0-9]\{14\}" "$pdf" 2> /dev/null | sed 's/:.*//' | while read -r off; do
+    printf '%s' "$STAMP" \
+      | dd of="$pdf" bs=1 seek="$((off + 2))" conv=notrunc 2> /dev/null
+  done
+}
+
+for DOC in "${DOCS[@]}"; do
+  [[ -f "$DOC" ]] || { echo "$SELF: no $DOC in $ROOT" >&2; exit 1; }
+  OUT="${DOC%.html}.pdf"
+
+  # Said once per document rather than per resource: a page naming several is
+  # making one decision, not five.
+  if grep -qE '(src|href)="https?://' "$DOC"; then
+    echo "$SELF: NOTE: $DOC names remote resources; anything it actually needs" >&2
+    echo "      from the network makes this render depend on where and when it" >&2
+    echo "      ran, and the PDF is version-controlled.  Embed what is needed." >&2
+  fi
+
+  # Chrome resolves a bare relative path against the working directory, but a
+  # document below the root reaches its own images by names relative to
+  # ITSELF, so it is handed a file:// URL of its absolute path instead.
+  ABS="$(cd "$(dirname "$DOC")" && pwd)/$(basename "$DOC")"
+
+  # --disable-background-networking is essential: the GCM/SSL phone-home Chrome
+  # otherwise attempts stalls -- and on some builds crashes (dangling raw_ptr) --
+  # the headless render.  The rest is headless hygiene so the render is fully
+  # self-contained.
+  if "$CHROME" --headless=new --no-sandbox --disable-gpu \
+       --disable-dev-shm-usage --disable-background-networking \
+       --disable-default-apps --disable-extensions --disable-sync \
+       --disable-component-update --no-first-run --metrics-recording-only \
+       --user-data-dir="$UDD" --no-pdf-header-footer \
+       --print-to-pdf="$PDF" "file://$ABS" 2> "$LOG"; then
+    if [[ -s "$PDF" ]] && [[ "$(head -c4 "$PDF")" == "%PDF" ]]; then
+      # Before the rename, so that what lands at $OUT is already reproducible
+      # and no reader ever sees the un-stamped form.
+      stamp_pdf "$PDF"
+      mv "$PDF" "$OUT"
+      echo "$SELF: wrote $OUT"
+      continue
+    fi
+  fi
+  echo "$SELF: $OUT FAILED — headless Chrome error:" >&2
+  sed 's/^/    /' "$LOG" >&2
+  exit 1
+done
