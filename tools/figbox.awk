@@ -76,6 +76,11 @@ BEGIN {
     if (wh[0] <= 0 || wh[1] <= 0) { out = out tag; continue }
     w = attr(tag, "width") + 0
     if (w <= 0) w = wh[0]
+    # No wider than the text column.  A figure that states no width of its own
+    # would otherwise come out at the width of the image in pixels, and a plot
+    # rasterised at 1500 runs off an A4 page, where an <img> was held to the
+    # column by max-width.  MAXW comes from markdown-pdf, which knows the page.
+    if (MAXW > 0 && w > MAXW) w = MAXW
     h = w * wh[1] / wh[0]
     label = attr(tag, "aria-label")
     if (label == "") label = attr(tag, "alt")

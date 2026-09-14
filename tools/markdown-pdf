@@ -146,7 +146,11 @@ for DOC in "${DOCS[@]}"; do
     T="$(sed -n 's/^# *//p' "$DOC" | head -1)"
     [[ -n "$T" ]] || T="$(basename "${DOC%.md}")"
   fi
-  pandoc "$DOC" -f gfm -t html5 --standalone "$EMBED" $TOC \
+  # --mathml because pandoc's gfm reader parses $...$ and $$...$$ as TeX math
+  # whether or not it is asked to render it, and without a method to render it
+  # with it approximates a formula in plain text, spacing and layout lost.
+  # MathML is typeset by Chrome itself and needs nothing from the network.
+  pandoc "$DOC" -f gfm -t html5 --standalone "$EMBED" $TOC --mathml \
          --resource-path "$DIR:." "${CSS[@]}" --metadata title="$T" -o "$HTML"
   # EVERY FIGURE BECOMES A BREAKABLE BOX.  A raster <img> is replaced content and
   # cannot be split: one that does not fit in what is left of a page moves whole
@@ -156,7 +160,10 @@ for DOC in "${DOCS[@]}"; do
   # page-fragment the span covers -- so the PDF mirrors what a browser shows.
   # The size is read off the image, so no document states it and none can be
   # missing it; see the file for the whole of the reasoning.
-  gawk -f "$HERE/figbox.awk" "$HTML" > "$HTML.figs" && mv "$HTML.figs" "$HTML"
+  # A figure is never wider than the text column, which markdown.css makes A4
+  # less two 14mm margins: 182mm, or 688 pixels at the 96 per inch Chrome lays a
+  # page out at.  Change the one and the other has to follow.
+  gawk -v MAXW=688 -f "$HERE/figbox.awk" "$HTML" > "$HTML.figs" && mv "$HTML.figs" "$HTML"
   # --disable-background-networking is essential: the GCM/SSL phone-home Chrome
   # otherwise attempts stalls -- and on some builds crashes (dangling raw_ptr) --
   # the headless render of a large image-heavy page.  The rest is headless
