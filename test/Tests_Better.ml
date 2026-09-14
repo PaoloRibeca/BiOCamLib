@@ -6,8 +6,9 @@
 
     Tests_Better.ml exercises the ambient vocabulary every other module
     is written in: the string splitters, the pluralisation helpers that
-    every diagnostic message goes through, the accumulators, and the
-    rounding.  None of it is deep, and that is the point -- a change
+    every diagnostic message goes through, the accumulators, the
+    rounding, and the helpers every exception is raised through.  None
+    of it is deep, and that is the point -- a change
     here moves under everything at once, so the behaviour is worth
     stating rather than assuming.
 
@@ -198,9 +199,44 @@ let test_float_check () =
     Testing.check "and a tighter one admits less"
       (fun () -> not (Float.check ~tolerance:1e-15 1. (1. +. 1e-12))))
 
+(* Exception helpers.  Each raise_* helper takes its caller's __FUNCTION__ as its
+   first argument, and what it raises must name that caller rather than the helper
+   itself, the name being how a message says where it came from.  A parameter
+   spelt anything but __FUNCTION__ does not shadow the compiler's own, and the
+   helper then quietly reports itself instead -- which raise_no_such_input did,
+   its parameter having been spelt __FUNCTION. *)
+
+let test_exception_helpers () =
+  Testing.section "Exception helpers" (fun () ->
+    let caller = "Caller.function" in
+    let names_caller helper raise_it =
+      Testing.check (helper ^ " names its caller") (fun () ->
+        try ignore (raise_it ()); false with Exception.E (_, f_n, _) -> f_n = caller) in
+    names_caller "raise"
+      (fun () -> Exception.raise caller Exception.Kind.Algorithm "message");
+    names_caller "raise_index_out_of_range"
+      (fun () -> Exception.raise_index_out_of_range caller 3 "array" 2);
+    names_caller "raise_object_is_empty" (fun () -> Exception.raise_object_is_empty caller "list");
+    names_caller "raise_incompatible_lengths"
+      (fun () -> Exception.raise_incompatible_lengths caller "vectors" 1 2);
+    names_caller "raise_unrecognized_initializer"
+      (fun () -> Exception.raise_unrecognized_initializer caller "mode" "nonsense");
+    names_caller "raise_incompatible_arrays"
+      (fun () ->
+        Exception.raise_incompatible_arrays caller "tables" "headers" Array.iter Fun.id
+          [| "a" |] [| "b" |]);
+    names_caller "raise_incompatible_archive_version"
+      (fun () -> Exception.raise_incompatible_archive_version caller "1" "2");
+    names_caller "raise_no_such_input" (fun () -> Exception.raise_no_such_input caller "nope.txt");
+    names_caller "raise_unexpected_end_of_output"
+      (fun () -> Exception.raise_unexpected_end_of_output caller);
+    names_caller "catch_unexpected_end_of_output"
+      (fun () -> Exception.catch_unexpected_end_of_output caller (fun () -> raise End_of_file)))
+
 let run () =
   test_float_check ();
   test_split ();
   test_pluralize ();
   test_accum ();
-  test_misc ()
+  test_misc ();
+  test_exception_helpers ()

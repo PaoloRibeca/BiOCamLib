@@ -413,7 +413,7 @@ module Exception =
     let raise_incompatible_archive_version __FUNCTION__ found expected =
       raise __FUNCTION__ IO_Format
         (Printf.sprintf "Incompatible archive version (found '%s', expected '%s')" found expected)
-    let raise_no_such_input __FUNCTION s =
+    let raise_no_such_input __FUNCTION__ s =
       raise __FUNCTION__ No_such_input (Printf.sprintf "Input file not found (expected '%s')" s)
     let raise_unexpected_end_of_output __FUNCTION__ =
       raise __FUNCTION__ End_of_output (Printf.sprintf "Unexpected end of output file")
