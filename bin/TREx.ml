@@ -21,115 +21,6 @@
 open BiOCamLib
 open Better
 
-module TandemRepeatExplorer =
-  struct
-    module PrefixMultimap = Tools.Multimap (ComparableString) (ComparableInt)
-    module IntervalMultimap =
-      Tools.Multimap (MakeComparable (struct type t = int * int end)) (ComparableString)
-    let iter ?(maximum_repeat_length = max_int) ?(minimum_locus_length = 0) ?(verbose = false) f s =
-      let maximum_repeat_length = (String.length s + 1) / 2 |> min maximum_repeat_length
-      and k = ref 0 and old = ref PrefixMultimap.empty in
-      if verbose then
-        Printf.eprintf "%s\r(%s): Initializing...%!" String.TermIO.clear __FUNCTION__;
-      let l = String.length s in
-      for i = 0 to l - 1 do
-        old := PrefixMultimap.add "" i !old
-      done;
-      let res = ref IntervalMultimap.empty in
-      while !k < maximum_repeat_length && PrefixMultimap.cardinal !old > 0 do
-        incr k;
-        if verbose then
-          Printf.eprintf "%s\r(%s): Processing k=%d%!" String.TermIO.clear __FUNCTION__ !k;
-        let red_k = !k - 1 and max_i = l - !k and current = ref PrefixMultimap.empty and count = ref 0 in
-        PrefixMultimap.iter_set
-          (fun k_mer set ->
-            let card = IntSet.cardinal set in
-            count := !count + card;
-            if card > 1 then
-              IntSet.iter
-                (fun i ->
-                  if i <= max_i then begin
-                    let k_mer = k_mer ^ string_of_char s.[i + red_k] in
-                    current := PrefixMultimap.add k_mer i !current
-                  end)
-                set)
-          !old;
-        old := !current;
-        if verbose then
-          Printf.eprintf " (%d left)...%!" !count;
-        let k = !k and k_res = ref IntMap.empty in
-        PrefixMultimap.iter_set
-          (fun k_mer set ->
-            (*Printf.eprintf "lo_set=%d k-mer='%s'\n%!" (Tools.IntSet.min_elt set) k_mer;*)
-            let set = ref set in
-            (* We extract all the series from the set,
-                always starting from the smallest element left *)
-            while IntSet.cardinal !set > 0 do
-              let lo = IntSet.min_elt !set in
-              let hi = ref lo in
-              while IntSet.mem !hi !set do
-                set := IntSet.remove !hi !set;
-                hi := !hi + k
-              done;
-              let hi = !hi - k in
-              if hi > lo then begin
-                (* Here hi is the highest position at which a repeat
-                  with length k and sequence k_mer starts *)
-                k_res := IntMap.add lo (k_mer, hi + k - 1) !k_res
-              end
-            done)
-          !old;
-        (* We merge together overlapping consecutive series of k-mers *)
-        let k_mer = ref "" and lo = ref (-1) and prev_lo = ref (-2) and hi = ref (-1) in
-        let process_it () =
-          (*if verbose && !k_mer <> "" then
-            Printf.eprintf "%s(%s): Processing [%d,%d]='%s'... %s\n%!"
-              Tools.String.TermIO.clear __FUNCTION__ !lo !hi !k_mer begin
-                if !hi - !lo + 1 >= minimum_locus_length then
-                  "added"
-                else
-                  "discarded"
-              end;*)
-          if !k_mer <> "" && !hi - !lo + 1 >= minimum_locus_length then
-            res := IntervalMultimap.add (!lo, !hi) !k_mer !res in
-        IntMap.iter
-          (fun _lo (_k_mer, _hi) ->
-            if _lo <> !prev_lo + 1 then begin
-              process_it ();
-              k_mer := _k_mer;
-              lo := _lo;
-              prev_lo := _lo;
-              hi := _hi
-            end else begin
-              prev_lo := _lo;
-              hi := max !hi _hi
-            end)
-          !k_res;
-        process_it ()
-      done;
-      if verbose then
-        Printf.eprintf "%s\r%!" String.TermIO.clear;
-      let curr_lo = ref (-1) and curr_hi = ref (-1) and curr_k_mer = ref "" in
-      let process_it () =
-        if !curr_hi <> -1 then
-          f !curr_k_mer (!curr_lo + 1) (!curr_hi + 1) in
-      IntervalMultimap.iter_set
-        (fun (lo, hi) set ->
-          (* The interval must not be entirely contained into an already open one *)
-          if hi > !curr_hi then begin
-            process_it ();
-            curr_lo := lo;
-            curr_hi := hi;
-            curr_k_mer := StringSet.min_elt set
-          end else
-            if verbose then
-              Printf.eprintf "%s(%s): Discarding [%d,%d]='%s' (contained in [%d,%d]='%s')\n%!"
-                String.TermIO.clear __FUNCTION__ (lo + 1) (hi + 1) (StringSet.min_elt set)
-                (!curr_lo + 1) (!curr_hi + 1) !curr_k_mer)
-        !res;
-      process_it ()
-  end
-
 module Defaults =
   struct
     let maximum_repeat_length = max_int
@@ -220,7 +111,7 @@ let () =
         ~keep_dashes:!Parameters.linter_keep_dashes in
     Files.FASTA.iter ~linter:linter_f ~verbose:!Parameters.verbose
       (fun (_, _, { tag; seq; _ }) ->
-        TandemRepeatExplorer.iter
+        Repeats.TandemRepeatExplorer.iter
           ~maximum_repeat_length:!Parameters.maximum_repeat_length
           ~minimum_locus_length:!Parameters.minimum_locus_length ~verbose:!Parameters.verbose
           (fun k_mer lo hi ->
