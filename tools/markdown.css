@@ -101,15 +101,16 @@ nav#TOC > ul > li > a { font-weight: 600; }
      do the work instead, and stop a split leaving a single line behind. */
   tr, td, th { break-inside: auto; }
   p, li { orphans: 2; widows: 2; }
-  /* A code block is kept whole, which is right for the usage examples that make
-     up nearly all of them: a short block split across a page boundary is harder
-     to read than one moved down.  It is WRONG for a block too tall to fit on a
-     page at all -- there `avoid` cannot be honoured, so the renderer moves the
-     whole thing to the next page, overflows it anyway, and wastes most of the
-     page it left behind.  CSS cannot say "avoid unless too long", so a document
-     that has such a block marks it: wrap it in a div of class `long-listing`. */
-  pre { break-inside: avoid; }
-  .long-listing pre { break-inside: auto; }
+  /* A code block breaks across a page like any other text.  Keeping it whole
+     looked right for the short usage examples, but a block that did not fit in
+     what was left of a page moved to the next one and left the rest of this
+     one blank -- measured at up to a third of a page in BioTattoo's README --
+     and a block taller than a page overflowed anyway, which a `long-listing`
+     class then had to be written around one block at a time.  The orphan and
+     widow rules keep a split from stranding a line or two on either side, and
+     each fragment keeps its own padding and rounded corners. */
+  pre { break-inside: auto; orphans: 3; widows: 3;
+    -webkit-box-decoration-break: clone; box-decoration-break: clone; }
   /* A heading at the foot of a page belongs to what follows it, not to what
      it was left behind by. */
   h1, h2, h3, h4 { break-after: avoid; break-inside: avoid; }

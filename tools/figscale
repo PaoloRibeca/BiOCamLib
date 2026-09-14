@@ -6,9 +6,11 @@
 # Measures a raster figure's text size -- the median height of character-sized
 # connected components, which is about its x-height -- and computes the display
 # width that makes that text the same size as the README's body text.  Then
-# prints a Markdown snippet ready to drop into README.md and, for a figure
-# taller than about half a page, the split-across-pages dual element plus the
-# .print-splitfig rule to add to that repository's markdown.css.
+# prints the <img> snippet ready to drop into README.md.  A figure of any height
+# needs nothing more: markdown-pdf's figbox.awk splits every embedded PNG across
+# pages where the text reaches it and holds it to the text column, which is what
+# the dual element and per-figure .print-splitfig rule this once printed for a
+# tall figure were for.
 #
 #   figscale docs/fig.png                      measure and emit the snippet
 #   figscale docs/fig.png --target 6 --alt "Two-pass calibration workflow."
@@ -108,35 +110,20 @@ printf '%s\n' "$CC" | gawk -v w="$W" -v h="$H" -v target="$TARGET" -v alt="$ALT"
     box_h = int(width * h / w + 0.5)
     # A4 content height at 96dpi: 297mm less two 14mm margins
     frac = box_h / 1016.0
-    tall = (frac > 0.55)
     # A figure named docs/x.png keeps its path; one measured elsewhere is
     # assumed to be going there, which is where these repositories keep them
     if (src !~ /^docs\//) {
       nm = src; sub(/.*\//, "", nm); src = "docs/" nm
     }
-    cls = src; sub(/.*\//, "", cls); sub(/\.[^.]*$/, "", cls)
-    cls = tolower(cls); gsub(/[^a-z0-9-]+/, "-", cls)
-    sub(/^-+/, "", cls); sub(/-+$/, "", cls)
-    if (cls == "") cls = "fig"
     bn = src; sub(/.*\//, "", bn)
     printf "# %s: %dx%dpx, median glyph %.1fpx -> width=%d (text ~%dpx), box %dx%dpx (~%.0f%% of a page)\n",
       bn, w, h, median, width, target, width, box_h, frac * 100
-    printf "# %s\n\n", tall ? "TALL -> use the split-across-pages pattern" \
-                             : "short -> a plain <img> is fine"
+    # 688px is the text column markdown-pdf holds a figure to, so a wider one is
+    # capped in the PDF while GitHub still shows it at the width given
+    if (width > 688)
+      print "# wider than the 688px text column: the PDF caps it there, GitHub does not"
+    print ""
     print "# ---- paste into README.md ----"
-    if (!tall) {
-      printf "<p align=\"center\">\n  <img src=\"%s\" width=\"%d\"\n       alt=\"%s\">\n</p>\n",
-        src, width, alt
-    } else {
-      printf "<p align=\"center\" class=\"screen-only-fig\">\n  <img src=\"%s\" width=\"%d\"\n       alt=\"%s\">\n</p>\n",
-        src, width, alt
-      print "<!-- Print-only copy so this tall figure flows across PDF pages instead of"
-      print "     jumping whole to the next one (a raster <img> cannot be page-split);"
-      print "     invisible on screen/GitHub. -->"
-      printf "<div class=\"print-splitfig %s\" role=\"img\" aria-label=\"%s\"></div>\n", cls, alt
-      print ""
-      print "# ---- add inside the @media print block of this repository markdown.css ----"
-      printf "  .print-splitfig.%s { width: %dpx; height: %dpx;\n    background-image: url(\"%s\"); }\n",
-        cls, width, box_h, src
-    }
+    printf "<p align=\"center\">\n  <img src=\"%s\" width=\"%d\"\n       alt=\"%s\">\n</p>\n",
+      src, width, alt
   }'
