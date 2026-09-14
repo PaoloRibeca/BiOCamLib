@@ -10,7 +10,9 @@
     incrementally -- adding one for the pair coming in and taking one
     away for the pair going out -- so the case that matters is a
     difference rolling off the far end, where an incremental counter
-    that forgets to decrement drifts and never recovers.
+    that forgets to decrement drifts and never recovers.  The Levenshtein
+    balls are also checked against the implementation on strings they
+    replaced, which is kept here for that purpose alone.
 
     This program was designed and developed by the author(s),
     with the assistance of the following AI tool(s):
@@ -269,8 +271,286 @@ let test_levenshtein_balls () =
        B3.iterk ~radius:1 (fun s -> if s = centre then seen := true) centre;
        !seen))
 
+(* The ball against the implementation it replaced.  The ball was walked on strings, copying and
+   linting the k-mer and its contexts for every string it met, and is now walked on integers; the
+   two must agree on the same strings, in the same order and as many times over, for centres and
+   contexts of every shape -- contexts shorter than the radius and longer, lowercase bases, and
+   characters that are not bases, which substitutions replace and hashes skip.  [Reference] is
+   the string implementation, kept verbatim *)
+module Reference (K: IntParameter_t) =
+  struct
+    module H =
+      struct
+        type t = int
+        (* The check that k fits a machine integer is dropped in this copy, so that the strings
+           of longer balls can be compared *)
+        let k = K.n
+        (* There are 4 symbols in the alphabet, each one encoded as a 2-bit number *)
+        let alphabet = "ACGT"
+        let encode_char = function
+          | 'A' | 'a' -> 0
+          | 'C' | 'c' -> 1
+          | 'G' | 'g' -> 2
+          | 'T' | 't' -> 3
+          | _ -> -1
+        let encode s =
+          if String.length s <> k then
+            Exception.raise __FUNCTION__ Initialize
+              (Printf.sprintf "Invalid argument (string length must be k=%d, found %d)" k (String.length s));
+          let res = ref 0 in
+          for i = 0 to k - 1 do
+            res :=
+              !res lsl 2 +
+                match s.[i] with
+                | 'A' | 'a' -> 0
+                | 'C' | 'c' -> 1
+                | 'G' | 'g' -> 2
+                | 'T' | 't' -> 3
+                | c ->
+                  Exception.raise __FUNCTION__ Initialize
+                    (Printf.sprintf "Invalid argument (expected character in [ACGTacgt], found '%c')" c);
+          done;
+          !res
+      end
+    let lint s =
+      (* This is not entirely general, but OK for the time being *)
+      let s = String.uppercase_ascii s |> Bytes.of_string
+      and encode = H.encode_char in
+      Bytes.iteri
+        (fun i c ->
+          Bytes.(
+            s.@(i) <-
+              if encode c = -1 then
+                ' '
+              else
+                c
+          ))
+        s;
+      Bytes.to_string s
+    let iter ?(radius = 1) f l_ctxt s r_ctxt =
+      if radius < 0 then
+        Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Invalid radius %d" radius);
+      let l_ctxt, s, r_ctxt = lint l_ctxt, lint s, lint r_ctxt in
+      (* We trim/pad contexts whenever needed *)
+      let padding = String.make radius ' ' in
+      let l_ctxt = String.sub (padding ^ l_ctxt) (String.length l_ctxt) radius
+      and r_ctxt = String.sub (r_ctxt ^ padding) 0 radius in
+      (* The string also includes left and right contexts *)
+      let len = String.length s in
+      let hi = radius + len - 1 in
+      let last = hi + radius in
+      let rec expand level orig_s =
+        let open Bytes in
+        (* Emit at every level and not only at the innermost one.  A ball is
+           everything WITHIN its radius, which includes the centre -- zero edits
+           -- and each intermediate string; emitting only at [level = 0] made it
+           the set of k-mers at exactly [radius] edits instead, and since one
+           edit cannot leave a k-mer where it was, a radius-one ball excluded the
+           very k-mer it had been built around.  An index querying at radius one
+           therefore failed to match the k-mer it was handed.  The call at the
+           end of this function has always said the k-mer itself gets inserted
+           here; now it does. *)
+        (* We eliminate contexts *)
+        String.sub orig_s radius len |> f;
+        if level > 0 then begin
+          let s = of_string orig_s in
+          (* Mismatches *)
+          for i = radius to hi do
+            let c = s.@(i) in
+            String.iter
+              (fun cc ->
+                if cc <> c then begin
+                  s.@(i) <- cc;
+                  to_string s |> expand (level - 1)
+                end)
+              H.alphabet;
+            (* We restore the previous state *)
+            s.@(i) <- c
+          done;
+          (* Deletions *)
+          for i = radius to hi do
+            let c = s.@(i) in
+            (* Right-to-left deletion *)
+            let l = last - i in
+            blit s (i + 1) s i l;
+            s.@(last) <- ' '; (* Padding *)
+            if s.@(hi) <> ' ' then
+              to_string s |> expand (level - 1);
+            (* We restore the previous state *)
+            blit s i s (i + 1) l;
+            s.@(i) <- c;
+            (* Left-to-right deletion *)
+            blit s 0 s 1 i;
+            s.@(0) <- ' '; (* Padding *)
+            if s.@(radius) <> ' ' then
+              to_string s |> expand (level - 1);
+            (* We restore the previous state *)
+            blit s 1 s 0 i;
+            s.@(i) <- c
+          done;
+          (* Insertions *)
+          for i = radius to hi - 1 do
+            (* Left-to-right insertion *)
+            let c = s.@(hi) in
+            let l = hi - i in
+            blit s i s (i + 1) l;
+            String.iter
+              (fun cc ->
+                s.@(i) <- cc;
+                to_string s |> expand (level - 1))
+              H.alphabet;
+            (* We restore the previous state *)
+            blit s (i + 1) s i l;
+            s.@(hi) <- c;
+            (* Right-to-left insertion *)
+            let c = s.@(0) in
+            let l = i + 1 in
+            blit s 1 s 0 l;
+            String.iter
+              (fun cc ->
+                s.@(l) <- cc;
+                to_string s |> expand (level - 1))
+              H.alphabet;
+            (* We restore the previous state *)
+            blit s 0 s 1 l;
+            s.@(0) <- c
+          done;
+          assert (to_string s = orig_s)
+        end in
+      (* The k-mer itself gets inserted here *)
+      l_ctxt ^ s ^ r_ctxt |> expand radius
+    let iterh ?(radius = 1) f =
+      iter ~radius
+        (fun s ->
+          try
+            H.encode s |> f
+          with _ ->
+            ())
+    let iterk ?(radius = 1) f s =
+      (* We begin by replacing non-alphabet characters with spaces,
+          to be compatible with the conventions used by make() above *)
+      let l = String.length s in
+      for lo = 0 to l - H.k do
+        iter ~radius f begin
+          let ctxt_lo = (lo - radius) |> max 0 in
+          String.sub s ctxt_lo (lo - ctxt_lo)
+        end begin
+          String.sub s lo H.k
+        end begin
+          let hi = lo + H.k in
+          let ctxt_hi = (hi + radius) |> min l in
+          String.sub s hi (ctxt_hi - hi)
+        end
+      done
+    let iterkh ?(radius = 1) f =
+      iterk ~radius
+        (fun s ->
+          try
+            H.encode s |> f
+          with _ ->
+            ())
+  end
+
+let test_levenshtein_balls_against_reference () =
+  Testing.section "Levenshtein balls against the implementation on strings" (fun () ->
+    let state = Random.State.make [| 14092026 |] in
+    (* Mostly bases, some of them lowercase, and now and then a character that is not one *)
+    let random_string n =
+      let chars = "ACGTACGTACGTacgtN" in
+      String.init n (fun _ -> chars.[Random.State.int state (String.length chars)]) in
+    let collect iterate =
+      let res = ref [] in
+      iterate (fun x -> res := x :: !res);
+      List.rev !res in
+    (* The hashes [IntZDNALevenshteinBall] must give, from the strings the implementation on strings
+       emits: a string holding a character that is not a base has none *)
+    let hashes_of strings =
+      List.filter_map
+        (fun s ->
+          if String.contains s ' ' then
+            None
+          else
+            Some
+              (String.fold_left
+                (fun h c -> IntZ.((h lsl 2) lor of_int (String.index "ACGT" c))) IntZ.zero s))
+        strings in
+    let cases = ref 0 and disagreements = ref 0 in
+    let agree a b =
+      incr cases;
+      if a <> b then
+        incr disagreements
+    and agree_z a b =
+      incr cases;
+      if not (List.equal IntZ.equal a b) then
+        incr disagreements in
+    (* Machine-integer balls, at the k NINJA's read librarian seeds with and around it, with
+       centres both of length k and of any length up to fifteen past it, beyond 30 included *)
+    List.iter
+      (fun (k, max_radius) ->
+        let module New = KMers.DNALevenshteinBall (struct let n = k end) in
+        let module Old = Reference (struct let n = k end) in
+        for radius = 0 to max_radius do
+          (* Wide balls are expensive on strings, so fewer and shorter cases there *)
+          let centres = if radius >= 2 then 5 else 20
+          and sequences = if radius >= 2 then 1 else 3
+          and extra = if radius >= 2 then 4 else 20 in
+          for _ = 1 to centres do
+            let l_ctxt = random_string (Random.State.int state (radius + 3))
+            and s = random_string k
+            and r_ctxt = random_string (Random.State.int state (radius + 3))
+            and t = random_string (Random.State.int state (k + 16)) in
+            agree (collect (fun f -> Old.iter ~radius f l_ctxt s r_ctxt))
+              (collect (fun f -> New.iter ~radius f l_ctxt s r_ctxt));
+            agree (collect (fun f -> Old.iter ~radius f l_ctxt t r_ctxt))
+              (collect (fun f -> New.iter ~radius f l_ctxt t r_ctxt));
+            agree (collect (fun f -> Old.iterh ~radius f l_ctxt s r_ctxt))
+              (collect (fun f -> New.iterh ~radius f l_ctxt s r_ctxt))
+          done;
+          for _ = 1 to sequences do
+            let s = random_string (k + Random.State.int state extra) in
+            agree (collect (fun f -> Old.iterk ~radius f s))
+              (collect (fun f -> New.iterk ~radius f s));
+            agree (collect (fun f -> Old.iterkh ~radius f s))
+              (collect (fun f -> New.iterkh ~radius f s))
+          done
+        done)
+      [ 3, 3; 11, 2; 15, 2; 30, 1 ];
+    (* Balls of any k, with [IntZ.t] hashes: within 30 bases they are walked on integers and beyond
+       on the buffer, and either way they must spell what the strings spell *)
+    List.iter
+      (fun (k, max_radius) ->
+        let module New = KMers.IntZDNALevenshteinBall (struct let n = k end) in
+        let module Old = Reference (struct let n = k end) in
+        for radius = 0 to max_radius do
+          for _ = 1 to 10 do
+            let l_ctxt = random_string (Random.State.int state (radius + 3))
+            and s = random_string k
+            and r_ctxt = random_string (Random.State.int state (radius + 3)) in
+            let strings = collect (fun f -> Old.iter ~radius f l_ctxt s r_ctxt) in
+            agree strings (collect (fun f -> New.iter ~radius f l_ctxt s r_ctxt));
+            agree_z (hashes_of strings) (collect (fun f -> New.iterh ~radius f l_ctxt s r_ctxt))
+          done;
+          for _ = 1 to 2 do
+            let s = random_string (k + Random.State.int state 10) in
+            let strings = collect (fun f -> Old.iterk ~radius f s) in
+            agree strings (collect (fun f -> New.iterk ~radius f s));
+            agree_z (hashes_of strings) (collect (fun f -> New.iterkh ~radius f s))
+          done
+        done)
+      [ 3, 2; 30, 1; 31, 1; 40, 1 ];
+    (* A radius too wide for an integer is walked on the buffer too *)
+    let module Old = Reference (struct let n = 3 end) in
+    agree (collect (fun f -> Old.iter ~radius:31 f "" "" ""))
+      (collect (fun f -> B3.iter ~radius:31 f "" "" ""));
+    Testing.check_bool "the comparison ran" ~expected:true (!cases > 0);
+    Testing.check_int "and the rewrite agrees with the strings case by case" ~expected:0
+      !disagreements;
+    Testing.check_raises ~re:"k must be <= 30" "a machine-integer ball still refuses k beyond 30"
+      (fun () -> let module B = KMers.DNALevenshteinBall (struct let n = 31 end) in B.H.k))
+
 let run () =
   test_sliding_window ();
   test_double_sliding_window ();
   test_kmer_hashes ();
-  test_levenshtein_balls ()
+  test_levenshtein_balls ();
+  test_levenshtein_balls_against_reference ()

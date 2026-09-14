@@ -1,10 +1,16 @@
 (*
-    KMers.ml -- (c) 2020-2025 Paolo Ribeca, <paolo.ribeca@gmail.com>
+    KMers.ml -- (c) 2020-2026 Paolo Ribeca, <paolo.ribeca@gmail.com>
 
     This file is part of BiOCamLib, the OCaml foundations upon which
     a number of the bioinformatics tools I developed are built.
 
     KMers.ml implements tools to iterate over, and hash, k-mers.
+
+    This program was designed and developed by the author(s),
+    with the assistance of the following AI tool(s):
+      2026 Claude (Anthropic).
+    The final logic and implementation were reviewed and verified in
+    their entirety by the author(s).
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -811,16 +817,27 @@ module Iterator:
       finalizer
   end
 
-(* TODO: THIS ONE SHOULD PROBABLY BE REWRITTEN *)
-module DNALevenshteinBall (K: IntParameter_t):
+(* Levenshtein balls: every k-mer within a given number of edits of a centre, which is how a k-mer
+   index tolerates errors.  The ball is walked outwards one edit at a time -- a substitution, a
+   deletion pulling a base in from the context on either side, an insertion pushing one out at
+   either end -- and every string met is emitted, the centre included, a ball being everything
+   WITHIN its radius; which is why the iterators repeat themselves.
+   As for [Hash_t], there is one interface and an implementation per kind of hash:
+   [IntDNALevenshteinBall] gives machine integers, and hence holds k-mers of at most 30 bases, and
+   [IntZDNALevenshteinBall] gives [IntZ.t], for any k.  Both walk a centre and a radius of up to 30
+   characters on integers -- the bases at 2 bits each, the first most significant as in
+   [H.encode], and a mask with a bit set for every character that is a base -- where an edit is a
+   few shifts; longer centres and wider radii are walked on a buffer of one byte per character,
+   step by step as the implementation on strings did *)
+module type DNALevenshteinBall_t =
   sig
     module H:
       sig
-        type t = int
+        type t
         val k: int
         val alphabet: string
         val encode: string -> t
-        val encode_char: char -> t
+        val encode_char: char -> int
       end
     (* Iterators all have repetitions *)
     val iter: ?radius:int -> (string -> unit) -> string -> string -> string -> unit
@@ -833,14 +850,26 @@ module DNALevenshteinBall (K: IntParameter_t):
     val make: ?radius:int -> string -> string -> string -> t
     val makek: ?radius:int -> string -> t
   end
-= struct
+(* What a ball needs of its hashes: the largest k they hold, and how to extend one by a base, the
+   bases already there becoming 2 bits more significant *)
+module type DNALevenshteinHash_t =
+  sig
+    type t
+    val max_k: int
+    val zero: t
+    val of_int: int -> t
+    val add_base: t -> int -> t
+  end
+module MakeDNALevenshteinBall (Hash: DNALevenshteinHash_t) (K: IntParameter_t):
+    DNALevenshteinBall_t with type H.t = Hash.t =
+  struct
     module H =
       struct
-        type t = int
+        type t = Hash.t
         let k =
-          if K.n > 30 then
+          if K.n > Hash.max_k then
             Exception.raise __FUNCTION__ Initialize
-              (Printf.sprintf "Invalid argument (k must be <= 30, found %d)" K.n);
+              (Printf.sprintf "Invalid argument (k must be <= %d, found %d)" Hash.max_k K.n);
           K.n
         (* There are 4 symbols in the alphabet, each one encoded as a 2-bit number *)
         let alphabet = "ACGT"
@@ -853,159 +882,245 @@ module DNALevenshteinBall (K: IntParameter_t):
         let encode s =
           if String.length s <> k then
             Exception.raise __FUNCTION__ Initialize
-              (Printf.sprintf "Invalid argument (string length must be k=%d, found %d)" k (String.length s));
-          let res = ref 0 in
-          for i = 0 to k - 1 do
-            res :=
-              !res lsl 2 +
-                match s.[i] with
-                | 'A' | 'a' -> 0
-                | 'C' | 'c' -> 1
-                | 'G' | 'g' -> 2
-                | 'T' | 't' -> 3
-                | c ->
-                  Exception.raise __FUNCTION__ Initialize
-                    (Printf.sprintf "Invalid argument (expected character in [ACGTacgt], found '%c')" c);
-          done;
+              (Printf.sprintf "Invalid argument (string length must be k=%d, found %d)" k
+                (String.length s));
+          let res = ref Hash.zero in
+          String.iter
+            (fun c ->
+              let code = encode_char c in
+              if code < 0 then
+                Exception.raise __FUNCTION__ Initialize
+                  (Printf.sprintf "Invalid argument (expected character in [ACGTacgt], found '%c')"
+                    c);
+              res := Hash.add_base !res code)
+            s;
           !res
       end
-    let lint s =
-      (* This is not entirely general, but OK for the time being *)
-      let s = String.uppercase_ascii s |> Bytes.of_string
-      and encode = H.encode_char in
-      Bytes.iteri
-        (fun i c ->
-          Bytes.(
-            s.@(i) <-
-              if encode c = -1 then
-                ' '
-              else
-                c
-          ))
-        s;
-      Bytes.to_string s
-    let iter ?(radius = 1) f l_ctxt s r_ctxt =
+    (* [n] fields of [b] bits each packed into an integer, the first the most significant.
+       [low b n] masks the last [n] of them *)
+    let low b n = (1 lsl (b * n)) - 1
+    let get b n x j = (x lsr (b * (n - 1 - j))) land low b 1
+    let set b n x j y =
+      let shift = b * (n - 1 - j) in
+      x land lnot (low b 1 lsl shift) lor (y lsl shift)
+    (* Field [j] taken out, and [y] added at the end *)
+    let delete_append b n x j y =
+      (x lsr (b * (n - j))) lsl (b * (n - j)) lor ((x land low b (n - 1 - j)) lsl b) lor y
+    (* Field [j] taken out, and [y] added at the start *)
+    let delete_prepend b n x j y =
+      y lsl (b * (n - 1)) lor ((x lsr (b * (n - j))) lsl (b * (n - 1 - j)))
+      lor (x land low b (n - 1 - j))
+    (* [y] put in at [j], the last field falling off the end *)
+    let insert_drop_last b n x j y =
+      (x lsr (b * (n - j))) lsl (b * (n - j)) lor (y lsl (b * (n - 1 - j)))
+      lor ((x land low b (n - j)) lsr b)
+    (* The first field falling off the start, and [y] put in after what was field [j + 1] *)
+    let drop_first_insert b n x j y =
+      ((x lsr (b * (n - 2 - j))) land low b (j + 1)) lsl (b * (n - 1 - j))
+      lor (y lsl (b * (n - 2 - j))) lor (x land low b (n - 2 - j))
+    (* The bases and the mask of the [n] characters of [s] starting at [lo], those lying outside
+       [s] counting as characters that are not bases *)
+    let pack s lo n =
+      let l = String.length s and bases = ref 0 and mask = ref 0 in
+      for i = lo to lo + n - 1 do
+        let code = if i >= 0 && i < l then H.encode_char s.[i] else -1 in
+        bases := !bases lsl 2 lor (if code < 0 then 0 else code);
+        mask := !mask lsl 1 lor (if code < 0 then 0 else 1)
+      done;
+      !bases, !mask
+    let decode n bases mask =
+      String.init n (fun j -> if get 1 n mask j = 1 then H.alphabet.[get 2 n bases j] else ' ')
+    (* The walk over the ball of [radius] around a centre of [n] characters, [emit] being called
+       with the bases and the mask of every string met.  The contexts are the [radius] characters
+       on either side of the centre, which deletions pull in and insertions push out into *)
+    let walk ~radius n emit l_bases l_mask bases mask r_bases r_mask =
+      let rec expand level l_bases l_mask bases mask r_bases r_mask =
+        emit bases mask;
+        if level > 0 then begin
+          let level = level - 1 in
+          (* Mismatches.  A character that is not a base is replaced by all four *)
+          for j = 0 to n - 1 do
+            let base = get 2 n bases j and is_base = get 1 n mask j = 1 in
+            for b = 0 to 3 do
+              if not is_base || b <> base then
+                expand level l_bases l_mask (set 2 n bases j b) (set 1 n mask j 1) r_bases r_mask
+            done
+          done;
+          (* Deletions, the right context moving in and then the left one *)
+          for j = 0 to n - 1 do
+            if get 1 radius r_mask 0 = 1 then
+              expand level l_bases l_mask (delete_append 2 n bases j (get 2 radius r_bases 0))
+                (delete_append 1 n mask j 1) (delete_append 2 radius r_bases 0 0)
+                (delete_append 1 radius r_mask 0 0);
+            if get 1 radius l_mask (radius - 1) = 1 then
+              expand level (delete_prepend 2 radius l_bases (radius - 1) 0)
+                (delete_prepend 1 radius l_mask (radius - 1) 0)
+                (delete_prepend 2 n bases j (get 2 radius l_bases (radius - 1)))
+                (delete_prepend 1 n mask j 1) r_bases r_mask
+          done;
+          (* Insertions, the last base falling off the end and then the first one moving into the
+             left context *)
+          for j = 0 to n - 2 do
+            for b = 0 to 3 do
+              expand level l_bases l_mask (insert_drop_last 2 n bases j b)
+                (insert_drop_last 1 n mask j 1) r_bases r_mask
+            done;
+            let l_bases = delete_append 2 radius l_bases 0 (get 2 n bases 0)
+            and l_mask = delete_append 1 radius l_mask 0 (get 1 n mask 0) in
+            for b = 0 to 3 do
+              expand level l_bases l_mask (drop_first_insert 2 n bases j b)
+                (drop_first_insert 1 n mask j 1) r_bases r_mask
+            done
+          done
+        end in
+      expand radius l_bases l_mask bases mask r_bases r_mask
+    (* A centre too long, or a radius too wide, for an integer is walked on a buffer of one byte
+       per character, 0 to 3 for a base and 4 for a character that is not one, holding the left
+       context, the centre and the right context; the walk follows the implementation on strings
+       step by step, copying the buffer before editing it *)
+    let not_base = '\004'
+    let buffer s lo n =
+      let l = String.length s in
+      Bytes.init n
+        (fun j ->
+          let i = lo + j in
+          let code = if i >= 0 && i < l then H.encode_char s.[i] else -1 in
+          if code < 0 then not_base else Char.unsafe_chr code)
+    let walk_buffer ~radius n emit centre_and_contexts =
+      let hi = radius + n - 1 in
+      let last = hi + radius in
+      let rec expand level s =
+        emit s;
+        if level > 0 then begin
+          let level = level - 1 and s = Bytes.copy s in
+          (* Mismatches.  A character that is not a base is replaced by all four *)
+          for i = radius to hi do
+            let c = Bytes.get s i in
+            for b = 0 to 3 do
+              let base = Char.unsafe_chr b in
+              if base <> c then begin
+                Bytes.set s i base;
+                expand level s
+              end
+            done;
+            Bytes.set s i c
+          done;
+          (* Deletions, the right context moving in and then the left one *)
+          for i = radius to hi do
+            let c = Bytes.get s i in
+            let l = last - i in
+            Bytes.blit s (i + 1) s i l;
+            Bytes.set s last not_base;
+            if Bytes.get s hi <> not_base then
+              expand level s;
+            Bytes.blit s i s (i + 1) l;
+            Bytes.set s i c;
+            Bytes.blit s 0 s 1 i;
+            Bytes.set s 0 not_base;
+            if Bytes.get s radius <> not_base then
+              expand level s;
+            Bytes.blit s 1 s 0 i;
+            Bytes.set s i c
+          done;
+          (* Insertions, the last base falling off the end and then the first one moving into the
+             left context *)
+          for i = radius to hi - 1 do
+            let c = Bytes.get s hi and l = hi - i in
+            Bytes.blit s i s (i + 1) l;
+            for b = 0 to 3 do
+              Bytes.set s i (Char.unsafe_chr b);
+              expand level s
+            done;
+            Bytes.blit s (i + 1) s i l;
+            Bytes.set s hi c;
+            let c = Bytes.get s 0 and l = i + 1 in
+            Bytes.blit s 1 s 0 l;
+            for b = 0 to 3 do
+              Bytes.set s l (Char.unsafe_chr b);
+              expand level s
+            done;
+            Bytes.blit s 0 s 1 l;
+            Bytes.set s 0 c
+          done
+        end in
+      expand radius centre_and_contexts
+    let string_of_buffer ~radius n s =
+      String.init n
+        (fun j ->
+          let c = Bytes.get s (radius + j) in
+          if c = not_base then ' ' else H.alphabet.[Char.code c])
+    let hash_of_buffer ~radius f s =
+      let res = ref Hash.zero and is_kmer = ref true and j = ref 0 in
+      while !is_kmer && !j < H.k do
+        let c = Bytes.get s (radius + !j) in
+        if c = not_base then
+          is_kmer := false
+        else
+          res := Hash.add_base !res (Char.code c);
+        incr j
+      done;
+      if !is_kmer then
+        f !res
+    (* The walk around a centre given as a string with its contexts, a context shorter than the
+       radius being padded with characters that are not bases and a longer one trimmed *)
+    let walk_strings ~radius emit_packed emit_buffer l_ctxt s r_ctxt =
       if radius < 0 then
         Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Invalid radius %d" radius);
-      let l_ctxt, s, r_ctxt = lint l_ctxt, lint s, lint r_ctxt in
-      (* We trim/pad contexts whenever needed *)
-      let padding = String.make radius ' ' in
-      let l_ctxt = String.sub (padding ^ l_ctxt) (String.length l_ctxt) radius
-      and r_ctxt = String.sub (r_ctxt ^ padding) 0 radius in
-      (* The string also includes left and right contexts *)
-      let len = String.length s in
-      let hi = radius + len - 1 in
-      let last = hi + radius in
-      let rec expand level orig_s =
-        let open Bytes in
-        (* Emit at every level and not only at the innermost one.  A ball is
-           everything WITHIN its radius, which includes the centre -- zero edits
-           -- and each intermediate string; emitting only at [level = 0] made it
-           the set of k-mers at exactly [radius] edits instead, and since one
-           edit cannot leave a k-mer where it was, a radius-one ball excluded the
-           very k-mer it had been built around.  An index querying at radius one
-           therefore failed to match the k-mer it was handed.  The call at the
-           end of this function has always said the k-mer itself gets inserted
-           here; now it does. *)
-        (* We eliminate contexts *)
-        String.sub orig_s radius len |> f;
-        if level > 0 then begin
-          let s = of_string orig_s in
-          (* Mismatches *)
-          for i = radius to hi do
-            let c = s.@(i) in
-            String.iter
-              (fun cc ->
-                if cc <> c then begin
-                  s.@(i) <- cc;
-                  to_string s |> expand (level - 1)
-                end)
-              H.alphabet;
-            (* We restore the previous state *)
-            s.@(i) <- c
-          done;
-          (* Deletions *)
-          for i = radius to hi do
-            let c = s.@(i) in
-            (* Right-to-left deletion *)
-            let l = last - i in
-            blit s (i + 1) s i l;
-            s.@(last) <- ' '; (* Padding *)
-            if s.@(hi) <> ' ' then
-              to_string s |> expand (level - 1);
-            (* We restore the previous state *)
-            blit s i s (i + 1) l;
-            s.@(i) <- c;
-            (* Left-to-right deletion *)
-            blit s 0 s 1 i;
-            s.@(0) <- ' '; (* Padding *)
-            if s.@(radius) <> ' ' then
-              to_string s |> expand (level - 1);
-            (* We restore the previous state *)
-            blit s 1 s 0 i;
-            s.@(i) <- c
-          done;
-          (* Insertions *)
-          for i = radius to hi - 1 do
-            (* Left-to-right insertion *)
-            let c = s.@(hi) in
-            let l = hi - i in
-            blit s i s (i + 1) l;
-            String.iter
-              (fun cc ->
-                s.@(i) <- cc;
-                to_string s |> expand (level - 1))
-              H.alphabet;
-            (* We restore the previous state *)
-            blit s (i + 1) s i l;
-            s.@(hi) <- c;
-            (* Right-to-left insertion *)
-            let c = s.@(0) in
-            let l = i + 1 in
-            blit s 1 s 0 l;
-            String.iter
-              (fun cc ->
-                s.@(l) <- cc;
-                to_string s |> expand (level - 1))
-              H.alphabet;
-            (* We restore the previous state *)
-            blit s 0 s 1 l;
-            s.@(0) <- c
-          done;
-          assert (to_string s = orig_s)
-        end in
-      (* The k-mer itself gets inserted here *)
-      l_ctxt ^ s ^ r_ctxt |> expand radius
-    let iterh ?(radius = 1) f =
-      iter ~radius
-        (fun s ->
-          try
-            H.encode s |> f
-          with _ ->
-            ())
+      let n = String.length s and l_from = String.length l_ctxt - radius in
+      if n <= 30 && radius <= 30 then begin
+        let l_bases, l_mask = pack l_ctxt l_from radius
+        and bases, mask = pack s 0 n and r_bases, r_mask = pack r_ctxt 0 radius in
+        walk ~radius n emit_packed l_bases l_mask bases mask r_bases r_mask
+      end else begin
+        let l_buffer = buffer l_ctxt l_from radius and r_buffer = buffer r_ctxt 0 radius in
+        Bytes.concat Bytes.empty [ l_buffer; buffer s 0 n; r_buffer ]
+          |> walk_buffer ~radius n emit_buffer
+      end
+    let iter ?(radius = 1) f l_ctxt s r_ctxt =
+      let n = String.length s in
+      walk_strings ~radius (fun bases mask -> decode n bases mask |> f)
+        (fun b -> string_of_buffer ~radius n b |> f) l_ctxt s r_ctxt
+    let iterh ?(radius = 1) f l_ctxt s r_ctxt =
+      (* Only a centre of length k has a hash *)
+      if String.length s = H.k then begin
+        let full = if H.k <= 30 then low 1 H.k else 0 in
+        walk_strings ~radius (fun bases mask -> if mask = full then f (Hash.of_int bases))
+          (hash_of_buffer ~radius f) l_ctxt s r_ctxt
+      end else if radius < 0 then
+        Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Invalid radius %d" radius)
+    (* The walk around every k-mer of [s] in turn: within 30 bases its bases and mask are rolled
+       along [s], and its contexts are what lies around it there *)
+    let walk_kmers ~radius emit_packed emit_buffer s =
+      if radius < 0 then
+        Exception.raise __FUNCTION__ Algorithm (Printf.sprintf "Invalid radius %d" radius);
+      let k = H.k and l = String.length s in
+      if k <= 30 && radius <= 30 then begin
+        let all_bases = low 2 k and full = low 1 k and bases = ref 0 and mask = ref 0 in
+        String.iteri
+          (fun i c ->
+            let code = H.encode_char c in
+            bases := (!bases lsl 2 lor (if code < 0 then 0 else code)) land all_bases;
+            mask := (!mask lsl 1 lor (if code < 0 then 0 else 1)) land full;
+            if i >= k - 1 then
+              if radius = 0 then
+                emit_packed !bases !mask
+              else begin
+                let l_bases, l_mask = pack s (i - k + 1 - radius) radius
+                and r_bases, r_mask = pack s (i + 1) radius in
+                walk ~radius k emit_packed l_bases l_mask !bases !mask r_bases r_mask
+              end)
+          s
+      end else
+        for lo = 0 to l - k do
+          buffer s (lo - radius) (k + 2 * radius) |> walk_buffer ~radius k emit_buffer
+        done
     let iterk ?(radius = 1) f s =
-      (* We begin by replacing non-alphabet characters with spaces,
-          to be compatible with the conventions used by make() above *)
-      let l = String.length s in
-      for lo = 0 to l - H.k do
-        iter ~radius f begin
-          let ctxt_lo = (lo - radius) |> max 0 in
-          String.sub s ctxt_lo (lo - ctxt_lo)
-        end begin
-          String.sub s lo H.k
-        end begin
-          let hi = lo + H.k in
-          let ctxt_hi = (hi + radius) |> min l in
-          String.sub s hi (ctxt_hi - hi)
-        end
-      done
-    let iterkh ?(radius = 1) f =
-      iterk ~radius
-        (fun s ->
-          try
-            H.encode s |> f
-          with _ ->
-            ())
+      walk_kmers ~radius (fun bases mask -> decode H.k bases mask |> f)
+        (fun b -> string_of_buffer ~radius H.k b |> f) s
+    let iterkh ?(radius = 1) f s =
+      let full = if H.k <= 30 then low 1 H.k else 0 in
+      walk_kmers ~radius (fun bases mask -> if mask = full then f (Hash.of_int bases))
+        (hash_of_buffer ~radius f) s
     module Base = StringSet
     type t = Base.t
     let make ?(radius = 1) l_ctxt s r_ctxt =
@@ -1023,4 +1138,28 @@ module DNALevenshteinBall (K: IntParameter_t):
         s;
       !res
   end
+(* Balls whose hashes are machine integers, and hence hold k-mers of at most 30 bases *)
+module IntDNALevenshteinBall (K: IntParameter_t): DNALevenshteinBall_t with type H.t = int =
+  MakeDNALevenshteinBall
+    (struct
+      type t = int
+      let max_k = 30
+      let zero = 0
+      let of_int h = h
+      let add_base h base = h lsl 2 lor base
+    end)
+    (K)
+(* Balls whose hashes are [IntZ.t], and hence hold k-mers of any length *)
+module IntZDNALevenshteinBall (K: IntParameter_t): DNALevenshteinBall_t with type H.t = IntZ.t =
+  MakeDNALevenshteinBall
+    (struct
+      type t = IntZ.t
+      let max_k = max_int
+      let zero = IntZ.zero
+      let of_int = IntZ.of_int
+      let add_base h base = IntZ.((h lsl 2) lor of_int base)
+    end)
+    (K)
+(* The name existing code knows the machine-integer balls by *)
+module DNALevenshteinBall = IntDNALevenshteinBall
 
