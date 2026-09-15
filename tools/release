@@ -13,13 +13,16 @@
 #       assemble releases/<Project>-<ver>-<os>-<arch>.tar.xz from
 #       releases/MANIFEST.  <ver> is N.N.N; omitted it is read from
 #       releases/CURRENT, given it replaces CURRENT (the old one kept as
-#       CURRENT~).  Builds the binaries first if none are present, and rebuilds
-#       them when the version moved -- they carry it in their version string, so
-#       a tree built under the old one would stamp the old number inside an
-#       archive named for the new one.  Set PACKAGE_PLATFORM + PACKAGE_BINDIR to
-#       package binaries downloaded for another platform (see mac-end).
+#       CURRENT~).  Always builds the binaries afresh first -- release-static on
+#       Linux, release on macOS -- so that what is packaged is this tree,
+#       compiled with the release profile and stamped with the version the
+#       archive is named for.  Set PACKAGE_PLATFORM + PACKAGE_BINDIR to package
+#       binaries downloaded for another platform instead (see mac-end), which
+#       builds nothing.
 #   release mac-begin --root <dir>
-#       tag v<CURRENT> on HEAD (if absent) and push it, triggering the macOS CI.
+#       tag v<CURRENT> on HEAD and push it, triggering the macOS CI.  Refuses
+#       unless the CURRENT in the working tree is the one HEAD commits, and
+#       unless a tag of that name, if one exists already, points at HEAD.
 #   release mac-end --root <dir> --name <Project>
 #       wait for that run, download the macOS binaries and package each.  Needs
 #       an authenticated gh.
@@ -57,6 +60,9 @@ done
 [[ -n "$ROOT" ]] || usage
 ROOT="$(cd "$ROOT" && pwd)"
 [[ "$ACTION" == "mac-begin" || -n "$NAME" ]] || usage
+# Only package takes a version: given to mac-begin or mac-end it would rewrite
+# releases/CURRENT behind their back, uncommitted
+[[ "$ACTION" == "package" || -z "$VERSION_ARG" ]] || usage
 
 MANIFEST="$ROOT/releases/MANIFEST"
 CURRENT="$ROOT/releases/CURRENT"
@@ -125,17 +131,16 @@ do_package() {
       Darwin) profile="release" ;;
       *)      profile="release-static" ;;
     esac
-    # A tree built before the version moved carries the old version string
-    # inside the binaries, so packaging it would put the old number in an
-    # archive named for the new one.  Rebuilding is the only way to restamp.
-    if [[ -n "$VERSION_ARG" && -x "$bindir/$sentinel" ]]; then
-      echo "($SELF package): version set to $VERSION — rebuilding so the binaries carry it ..."
-      rm -rf "$bindir"
-    fi
-    if [[ ! -x "$bindir/$sentinel" ]]; then
-      echo "($SELF package): .build/$sentinel missing — building with '$profile' first ..."
-      ( cd "$ROOT" && bash BUILD "$profile" )
-    fi
+    # ALWAYS REBUILT.  Whatever .build holds may come from another profile (dev
+    # is dynamic and unstripped), from sources older than the tree, from before
+    # a build that failed, or from before the version moved -- and the version
+    # is stamped inside the binaries, so a stale one would put the old number in
+    # an archive named for the new one.  Only a build made here is known to be
+    # what the archive claims to hold.
+    echo "($SELF package): building with '$profile' so that the archive holds this tree ..."
+    rm -rf "$bindir"
+    ( cd "$ROOT" && bash BUILD "$profile" )
+    [[ -x "$bindir/$sentinel" ]] || die "BUILD $profile did not produce .build/$sentinel"
   fi
 
   echo "($SELF package): assembling $pkg ..."
@@ -172,9 +177,23 @@ do_package() {
 
 do_mac_begin() {
   resolve_version
-  local tag="v$VERSION"
+  local tag="v$VERSION" head committed
+  head="$(git -C "$ROOT" rev-parse HEAD)"
+  # The CI builds the tagged commit, so its binaries are stamped with the
+  # CURRENT that commit holds, while mac-end names their archives from the one
+  # in the working tree.  A number written into CURRENT and not committed --
+  # which 'package <ver>' does -- would put binaries reporting the old version
+  # into archives named for the new one, so the two must agree before anything
+  # is tagged.
+  committed="$(git -C "$ROOT" show HEAD:releases/CURRENT 2>/dev/null | head -n 1)"
+  [[ "$committed" == "$VERSION" ]] \
+    || die "releases/CURRENT holds $VERSION but HEAD commits '${committed:-no releases/CURRENT}' — commit it first"
   if git -C "$ROOT" rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-    echo "($SELF mac-begin): tag $tag already exists — not recreating."
+    # Pushing a tag that already names another commit would start nothing for
+    # HEAD, and moving it would rewrite a release somebody may already have
+    [[ "$(git -C "$ROOT" rev-parse "$tag^{commit}")" == "$head" ]] \
+      || die "tag $tag already exists on another commit ($(git -C "$ROOT" rev-parse --short "$tag^{commit}")) — not moving it"
+    echo "($SELF mac-begin): tag $tag already exists on HEAD — not recreating."
   else
     echo "($SELF mac-begin): creating tag $tag on HEAD ..."
     git -C "$ROOT" tag "$tag"

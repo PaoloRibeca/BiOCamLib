@@ -1,18 +1,22 @@
 name: Build macOS binaries
 
-# Cross-build the macOS BiOCamLib binaries that cannot be produced on the Linux
-# development machine, and upload them as artifacts.  On the dev machine,
-# 'bash BUILD mac-end' downloads them and hands each directory to the BUILD
-# script's 'package' target to assemble the release archive locally:
+# Build on GitHub's macOS runners the BiOCamLib binaries that cannot be produced
+# on the Linux development machine, and upload them as artifacts.  On the dev
+# machine, 'bash BUILD mac-end' downloads them and packages each directory the
+# way the BUILD script's 'package' target would:
 #
 #   PACKAGE_PLATFORM=Darwin-arm64 PACKAGE_BINDIR=./BiOCamLib-Darwin-arm64 \
-#     bash BUILD package 1.2.2
+#     bash BUILD package
+#
+# (no version argument: one given would replace releases/CURRENT, whereas these
+# archives share the version the tagged commit already carries, and mac-begin
+# refuses to tag a commit whose CURRENT differs from the working tree's).
 #
 # BiOCamLib is pure OCaml, so the macOS binaries are built exactly like the
 # Linux ones (no C/C++ path, no dune patching) — the only system dependency is
-# GMP, for zarith.  Everything else in a release (LICENSE, README.pdf,
-# versioning, archive naming) is platform-independent and stays in the local
-# BUILD script.
+# GMP, for zarith.  BUILD's 'package', 'mac-begin' and 'mac-end' targets all
+# forward to tools/release; what ships (LICENSE, README.pdf, ...) is listed in
+# releases/MANIFEST, and versioning and archive naming belong to tools/release.
 
 on:
   # Manual runs and version tags only — never on every push, so the metered
