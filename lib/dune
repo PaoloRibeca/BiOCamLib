@@ -27,7 +27,7 @@
 ; it is that the result is an interface rather than a re-export.
 
 (library
- (libraries zarith)
+ (libraries zarith gg vg vg.pdf)
  (public_name BiOCamLib)
  (name BiOCamLib)
  (private_modules
