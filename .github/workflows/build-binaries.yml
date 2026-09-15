@@ -68,7 +68,10 @@ jobs:
 
       - name: Install OCaml dependencies
         # gg and vg (whose vg.pdf backend is pure OCaml) back the Plot module.
-        run: opam install --yes dune menhir zarith gg vg
+        # otfm has to be named too: vg lists it only as an optional dependency,
+        # and builds vg.pdf only when otfm is installed, so without it Plot does
+        # not compile although no dune file mentions otfm.
+        run: opam install --yes dune menhir zarith gg vg otfm
 
       - name: Build binaries
         # Plain 'release', not 'release-static': macOS has no static libSystem,
