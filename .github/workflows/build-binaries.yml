@@ -67,7 +67,8 @@ jobs:
           ocaml-compiler: "4.14"
 
       - name: Install OCaml dependencies
-        run: opam install --yes dune menhir zarith
+        # gg and vg (whose vg.pdf backend is pure OCaml) back the Plot module.
+        run: opam install --yes dune menhir zarith gg vg
 
       - name: Build binaries
         # Plain 'release', not 'release-static': macOS has no static libSystem,
