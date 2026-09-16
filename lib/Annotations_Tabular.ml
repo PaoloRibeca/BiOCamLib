@@ -184,7 +184,7 @@ module Tabular: Format_t = struct
      table's identity and nothing else has to be agreed on.  A [>] line opens
      the reference, which is plain FASTA. *)
   let features_header =
-    "#id\t#parent\t#seq\t#path\t#feature_id\t#source\t#score\t#strand\t#phase\t#intervals"
+    "#id\t#parent\t#sequence\t#path\t#feature_id\t#source\t#score\t#strand\t#phase\t#intervals"
   let attributes_header = "#id\t#key\t#value"
   let metadata_header = "#key\t#value"
   let features_suffix = ".AnnotationFeatures.txt"

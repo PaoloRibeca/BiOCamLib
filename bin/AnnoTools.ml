@@ -335,8 +335,9 @@ let () =
           "'--selection-print' lists them, which is how to find out";
           "what to pass.  Its first column is the identifier when the";
           "feature has one and a positional stand-in of the form";
-          "'<seq>:<type>:<location>' when it does not -- the latter is";
-          "a label, not an identifier, and '-L' will not match it.";
+          "'<sequence>:<type>:<location>' when it does not -- the";
+          "latter is a label, not an identifier, and '-L' will not";
+          "match it.";
           "";
           "Examples:";
           "  -L b0011              one feature, by locus tag";
@@ -354,13 +355,13 @@ let () =
           "must ALL match.";
           "";
           "<field> is one of:";
-          "  type    the feature's own category, e.g. CDS, mat_peptide";
-          "  path    its whole category chain, e.g. source->CDS";
-          "  seq     the sequence it lies on";
-          "  strand  '+', '-' or '.'";
-          "  id      its identifier ('label', and the empty field";
-          "          name, are synonyms)";
-          "  source  the provenance in GFF3 column 2";
+          "  type      the feature's own category, e.g. CDS, mat_peptide";
+          "  path      its whole category chain, e.g. source->CDS";
+          "  sequence  the sequence it lies on";
+          "  strand    '+', '-' or '.'";
+          "  id        its identifier ('label', and the empty field";
+          "            name, are synonyms)";
+          "  source    the provenance in GFF3 column 2";
           "Any other name is read as an ATTRIBUTE, matching when any";
           "one of that attribute's values does -- so 'gene~dnaA'";
           "selects on the /gene qualifier.  Those seven names are";
@@ -373,7 +374,7 @@ let () =
           "Examples:";
           "  -R 'type~^mat_peptide$'    every mature peptide";
           "  -R 'type~^CDS$,gene~^thr'  CDSs whose /gene starts 'thr'";
-          "  -R 'seq~^chr1$'            everything on chr1";
+          "  -R 'sequence~^chr1$'       everything on chr1";
           "  -R '~b0011'                the feature whose id is b0011" ],
         TA.Optional,
         (fun _ ->
@@ -407,12 +408,12 @@ let () =
           "carries one.  Requires a reference to have been loaded.";
           "Each defline names the feature and then carries, as a";
           "bracketed '[key=value]' apiece, where it came from --";
-          "'path', 'seq', 'location' -- and every qualifier it holds.";
-          "The brackets are in the manner of NCBI's own extracts, and";
-          "they are what keeps the line splittable: both a qualifier";
-          "such as 'product=hypothetical protein' and a sequence name";
-          "may carry spaces.  'ID' and 'Parent' are left out, being";
-          "the name and the path over again." ];
+          "'path', 'sequence', 'location' -- and every qualifier it";
+          "holds.  The brackets are in the manner of NCBI's own";
+          "extracts, and they are what keeps the line splittable: both";
+          "a qualifier such as 'product=hypothetical protein' and a";
+          "sequence name may carry spaces.  'ID' and 'Parent' are left";
+          "out, being the name and the path over again." ];
       [ "--extract" ],
         Some "<dna|protein> <file>",
         [ "write the sequence of every selected feature to <file>" ],
@@ -789,7 +790,7 @@ let () =
                               (A.Annotation.seq_name !current feature)) with
                    | "" -> ""
                    | d -> Printf.sprintf " [description=%s]" d) in
-              Printf.fprintf oc ">%s [path=%s] [seq=%s]%s [location=%s]%s\n%s\n"
+              Printf.fprintf oc ">%s [path=%s] [sequence=%s]%s [location=%s]%s\n%s\n"
                 (name_of !current ~path:p feature) (A.Annotation.path_to_string p)
                 (A.Annotation.seq_name !current feature) description
                 (location_of feature) attributes

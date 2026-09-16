@@ -67,7 +67,8 @@ module GFF3:
   ]
   let parse_attributes s =
     let lexbuf = Lexing.from_string ~with_positions:true s in
-    Annotations_Parse.gff_attribute_list Annotations_Lex.gff_attributes lexbuf
+    parse_with ~what:(Printf.sprintf "GFF3 attributes %S" s)
+      Annotations_Parse.gff_attribute_list Annotations_Lex.gff_attributes lexbuf
   (* Single GFF3 row -> (id, parent_id option, type, feature).
      The [seq] and [attributes] of [row_feature] are
      pre-interned against the supplied [seqs] / [attr_keys]
@@ -368,22 +369,7 @@ module GFF3:
         Printf.bprintf buf "##%s %s\n" k v
       ) vs
     ) (all_metadata ann);
-    (* Identifiers already in the register, so that a synthesised one cannot
-       collide with a real one. *)
-    let used = Hashtbl.create 64 in
-    iter_paths (fun ~path:_ feature ->
-      match feature.id with
-      | Some i when i <> "" -> Hashtbl.replace used i ()
-      | _ -> ()) ann;
-    let counter = ref 0 in
-    let rec fresh () =
-      incr counter;
-      let candidate = Printf.sprintf "feature%d" !counter in
-      if Hashtbl.mem used candidate then fresh ()
-      else begin
-        Hashtbl.replace used candidate ();
-        candidate
-      end in
+    let identifier = identifiers ann in
     (* [id_of_path] remembers the identifier of the most recent feature seen at
        each path prefix which, the walk being in DFS pre-order, is exactly the
        parent of whatever comes next one level below -- the same device the
@@ -400,11 +386,10 @@ module GFF3:
       (* Its own identifier where it has one, so that what a file said about
          itself survives; a synthesised one otherwise, since without it a
          feature spanning several intervals could not be rejoined and its
-         children would have nothing to point at. *)
+         children would have nothing to point at.  No two features get the same
+         one, see [identifiers]. *)
       let id =
-        match feature.id with
-        | Some i when i <> "" -> i
-        | _ -> fresh () in
+        identifier ~category:(match List.rev path with c :: _ -> c | [] -> "") feature.id in
       Hashtbl.replace id_of_path path id;
       let rows = row_of_feature ann ~id:(Some id) ~parent path feature in
       List.iter (fun r ->

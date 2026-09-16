@@ -47,8 +47,8 @@ module GTF: Format_t = struct
   let dialects = [ "standard", default_hierarchy ]
   let parse_attributes s =
     let lexbuf = Lexing.from_string ~with_positions:true s in
-    Annotations_Parse.gtf_attribute_list
-      Annotations_Lex.gtf_attributes lexbuf
+    parse_with ~what:(Printf.sprintf "GTF attributes %S" s)
+      Annotations_Parse.gtf_attribute_list Annotations_Lex.gtf_attributes lexbuf
   type row_t = {
     gtf_seq: string;
     gtf_source: string;
@@ -195,7 +195,12 @@ module GTF: Format_t = struct
          Hashtbl.replace tx_explicit key_t r
        | _ ->
          match r.gtf_tx_id with
-         | None -> ()
+         | None ->
+           (* GTF wants a transcript_id on every row but a gene's.  A row without
+              one used to be dropped here without a word, and its feature with it. *)
+           Exception.raise __FUNCTION__ IO_Format
+             (Printf.sprintf "On line %d: GTF %s row missing transcript_id"
+                r.gtf_lnum r.gtf_type)
          | Some tid ->
            let key_t = r.gtf_seq, gid, tid in
            if not (Hashtbl.mem by_tx key_t) then begin
@@ -325,51 +330,92 @@ module GTF: Format_t = struct
     read (create hierarchy) s
   let of_file ?(hierarchy = default_hierarchy) path =
     read_from_file (create hierarchy) path
-  let attribute_string ann feature =
-    attribute_pairs ann feature
-    |> List.concat_map (fun (k, vs) ->
-      List.map (fun v -> Printf.sprintf "%s %S" k v) vs)
-    |> String.concat "; "
-  let row_of_feature ann path feature =
-    let leaf = match List.rev path with [] -> "" | x :: _ -> x in
+  (* [gene_id] and [transcript_id] lead, as GTF wants them on every row, and what
+     else the feature carries follows -- less those two, which they restate, and
+     less GFF3's [ID] and [Parent], which say nothing a GTF reader can use. *)
+  let attribute_string ann ~gene_id ?transcript_id feature =
+    let own =
+      attribute_pairs ann feature
+      |> List.filter (fun (k, _) ->
+           k <> "ID" && k <> "Parent" && k <> "gene_id" && k <> "transcript_id")
+      |> List.concat_map (fun (k, vs) ->
+           List.map (fun v -> Printf.sprintf "%s %S" k v) vs) in
+    (Printf.sprintf "gene_id %S" gene_id
+     :: (match transcript_id with
+         | Some t -> [ Printf.sprintf "transcript_id %S" t ]
+         | None -> [])
+     @ own)
+    |> List.map (fun pair -> pair ^ ";")
+    |> String.concat " "
+  let columns ann feature =
     let strand =
       match feature.strand with
       | Some Sequences.Types.Forward _ -> "+"
       | Some Sequences.Types.Reverse _ -> "-"
-      | None -> "." in
-    (* Per ROW, not per feature -- see the GFF3 writer above. *)
+      | None -> "."
+    and src =
+      match feature_source ann feature with
+      | Some s -> s | None -> "BiOCamLib" in
+    seq_name ann feature, src, strand
+  (* One row for each interval of a feature beneath a transcript. *)
+  let leaf_rows ann ~category ~attrs feature =
+    let seq, src, strand = columns ann feature in
+    (* Per ROW, not per feature -- see the GFF3 writer. *)
     let phase_of consumed =
       match feature.phase with
       | None -> "."
       | Some p -> string_of_int (((p - consumed) mod 3 + 3) mod 3) in
-    let seq = seq_name ann feature in
-    let src =
-      match feature_source ann feature with
-      | Some s -> s | None -> "BiOCamLib" in
-    let attrs =
-      let s = attribute_string ann feature in
-      (* GTF separates each [key "value"] pair with a trailing
-         [;], including after the final pair.  When the feature
-         has no attributes we emit an empty column 9 rather than
-         a lonely [;], which no consumer would parse as a valid
-         attribute list. *)
-      if s = "" then "" else s ^ ";" in
     let _, rows =
       List.fold_left (fun (consumed, acc) (s: Segment.t) ->
         let lo, hi = OneBased.bounds s.span in
         consumed + s.span.length,
         Printf.sprintf
           "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s"
-          seq src leaf lo hi (field_of_score feature.score) strand (phase_of consumed) attrs
+          seq src category lo hi (field_of_score feature.score) strand (phase_of consumed) attrs
           :: acc)
         (0, []) feature.intervals in
     List.rev rows
+  (* The single row of a gene or a transcript, spanning all the feature does. *)
+  let span_row ann ~category ~attrs feature =
+    let seq, src, strand = columns ann feature in
+    let lo, hi =
+      List.fold_left (fun (lo, hi) (s: Segment.t) ->
+        let l, h = OneBased.bounds s.span in
+        min lo l, max hi h)
+        (max_int, min_int) feature.intervals in
+    Printf.sprintf "%s\t%s\t%s\t%d\t%d\t%s\t%s\t.\t%s"
+      seq src category lo hi (field_of_score feature.score) strand attrs
+  (* GTF has three levels and no links: a gene row, a transcript row, and the rows
+     beneath a transcript, tied together by [gene_id] and [transcript_id].  The
+     reader rebuilds exactly [gene -> transcript -> leaf] from them, so this writes
+     its inverse by depth: what stands at the first level is a gene, at the second a
+     transcript, and anything deeper a row beneath one.  It invents and translates
+     nothing.  A register shaped otherwise gets a file shaped like its hierarchy, and
+     giving the levels suitable names is the business of whoever chose the
+     hierarchy. *)
   let to_buffer buf ann =
+    let identifier = identifiers ann in
+    let gene = ref "" and transcript = ref "" in
     iter_paths (fun ~path feature ->
-      List.iter (fun r ->
-        Buffer.add_string buf r;
-        Buffer.add_char buf '\n'
-      ) (row_of_feature ann path feature)
+      let category = match List.rev path with c :: _ -> c | [] -> "" in
+      let rows =
+        match List.length path - 1 with
+        | 1 ->
+          gene := identifier ~category feature.id;
+          [ span_row ann ~category
+              ~attrs:(attribute_string ann ~gene_id:!gene feature) feature ]
+        | 2 ->
+          transcript := identifier ~category feature.id;
+          [ span_row ann ~category
+              ~attrs:(attribute_string ann ~gene_id:!gene ~transcript_id:!transcript feature)
+              feature ]
+        | _ ->
+          leaf_rows ann ~category
+            ~attrs:(attribute_string ann ~gene_id:!gene ~transcript_id:!transcript feature)
+            feature in
+      List.iter (fun row ->
+        Buffer.add_string buf row;
+        Buffer.add_char buf '\n') rows
     ) ann
   let to_string = to_string_via_buffer to_buffer
   let to_file = to_file_via_buffer to_buffer

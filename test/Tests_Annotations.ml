@@ -764,7 +764,7 @@ let test_attribute_order () =
 (* The three table headers.  Each opens its table and, being distinct, names it:
    that single rule is the format's whole framing. *)
 let features_header =
-  "#id\t#parent\t#seq\t#path\t#feature_id\t#source\t#score\t#strand\t#phase\t#intervals"
+  "#id\t#parent\t#sequence\t#path\t#feature_id\t#source\t#score\t#strand\t#phase\t#intervals"
 let attributes_header = "#id\t#key\t#value"
 let metadata_header = "#key\t#value"
 
@@ -790,6 +790,94 @@ let reverse_section wanted doc =
     end) (String.Split.on_char_as_list '\n' doc);
   release ();
   List.rev !out |> String.concat "\n"
+
+let test_writer_compliance () =
+  Testing.section "Writers produce what readers take back" (fun () ->
+    (* A GenBank gene and its CDS take their identifiers from the same /gene
+       qualifier, and GFF3 gave both the same ID: a file no reader would take back,
+       this library's included. *)
+    let record =
+      genbank [ "     gene            1..9";
+                "                     /gene=\"thrL\"";
+                "     CDS             1..9";
+                "                     /gene=\"thrL\"" ]
+      |> A.GenBank.of_string in
+    let gff3_text = A.GFF3.to_string record in
+    Testing.check "a gene and its CDS sharing /gene get distinct GFF3 IDs"
+      (fun () ->
+        count_substring "ID=thrL;" gff3_text = 1
+        && count_substring "ID=cds-thrL;" gff3_text = 1);
+    Testing.check_does_not_raise "and that GFF3 reads back under the GenBank hierarchy"
+      (fun () -> ignore (A.GFF3.of_string ~hierarchy:A.GenBank.default_hierarchy gff3_text));
+    (* INSDC has no unstranded location: one without complement() is forward. *)
+    Testing.check "a GenBank location without complement() is on the forward strand"
+      (fun () ->
+        match feature_at record "CDS" with
+        | Some (_, f) ->
+          (match f.A.Annotation.strand with Some (T.Forward _) -> true | _ -> false)
+        | None -> false);
+    (* GTF wants gene_id on every row, and transcript_id on every row below a gene's. *)
+    let gtf_rows ann =
+      A.GTF.to_string ann
+      |> String.split_on_char '\n'
+      |> List.filter ((<>) "")
+      |> List.map (String.split_on_char '\t') in
+    let transcript_rows =
+      gff3 [ "chr1\tdemo\tgene\t1\t30\t.\t+\t.\tID=g1";
+             "chr1\tdemo\ttranscript\t1\t30\t.\t+\t.\tID=t1;Parent=g1";
+             "chr1\tdemo\texon\t1\t9\t.\t+\t.\tID=e1;Parent=t1";
+             "chr1\tdemo\texon\t19\t30\t.\t+\t.\tID=e2;Parent=t1";
+             "chr1\tdemo\tCDS\t1\t9\t.\t+\t0\tID=c1;Parent=t1";
+             "chr1\tdemo\tCDS\t19\t27\t.\t+\t0\tID=c1;Parent=t1" ]
+      |> A.GFF3.of_string in
+    Testing.check "every GTF row carries gene_id, and transcript_id below the gene"
+      (fun () ->
+        List.for_all (function
+          | [ _; _; kind; _; _; _; _; _; attrs ] ->
+            count_substring "gene_id \"g1\"" attrs = 1
+            && (kind = "gene" || count_substring "transcript_id \"t1\"" attrs = 1)
+          | _ -> false) (gtf_rows transcript_rows));
+    Testing.check "and GTF written from a register shaped like GTF is written again unchanged"
+      (fun () ->
+        let once = A.GTF.to_string transcript_rows in
+        A.GTF.of_string once |> A.GTF.to_string = once);
+    (* The writer translates nothing: a level named otherwise keeps its name, the
+       hierarchy being the caller's to choose. *)
+    Testing.check "a second level called mRNA is written as mRNA, with its transcript_id"
+      (fun () ->
+        gff3 [ "chr1\tdemo\tgene\t1\t30\t.\t+\t.\tID=g1";
+               "chr1\tdemo\tmRNA\t1\t30\t.\t+\t.\tID=m1;Parent=g1";
+               "chr1\tdemo\texon\t1\t9\t.\t+\t.\tID=e1;Parent=m1" ]
+        |> A.GFF3.of_string |> gtf_rows
+        |> List.exists (function
+             | [ _; _; "mRNA"; _; _; _; _; _; attrs ] ->
+               count_substring "transcript_id \"m1\"" attrs = 1
+             | _ -> false));
+    Testing.check_raises ~re:"missing transcript_id"
+      "a GTF row that is not a gene and has no transcript_id is refused"
+      (fun () -> ignore (A.GTF.of_string "chr1\tdemo\texon\t1\t9\t.\t+\t.\tgene_id \"g1\";\n"));
+    Testing.check_raises ~re:"Syntax error in hierarchy"
+      "a malformed hierarchy is reported as a syntax error"
+      (fun () -> ignore (A.Hierarchy.of_string "(source (CDS"));
+    (* A binary register is read through the same door as every text format, so a
+       compressed one is read as one, and a file holding no archive is refused with
+       a reason rather than reported as a bug. *)
+    let prefix = Filename.temp_file "Tests_Annotations_" "" in
+    let gzipped = prefix ^ ".gz" and garbage = prefix ^ ".garbage" in
+    A.Annotation.to_binary transcript_rows prefix;
+    ignore (Sys.command (Printf.sprintf "gzip -c %s.Annotation > %s.Annotation"
+                           (Filename.quote prefix) (Filename.quote gzipped)));
+    Testing.check "a gzipped binary register reads back"
+      (fun () ->
+        A.Annotation.of_binary gzipped |> A.GFF3.to_string = A.GFF3.to_string transcript_rows);
+    let oc = open_out (garbage ^ ".Annotation") in
+    output_string oc "not an archive\n";
+    close_out oc;
+    Testing.check_raises ~re:"does not hold an annotation archive"
+      "a file that holds no archive is refused with a reason"
+      (fun () -> ignore (A.Annotation.of_binary garbage));
+    List.iter (fun p -> try Sys.remove p with Sys_error _ -> ())
+      [ prefix; prefix ^ ".Annotation"; gzipped ^ ".Annotation"; garbage ^ ".Annotation" ])
 
 let test_tabular () =
   Testing.section "Tabular format" (fun () ->
@@ -1974,5 +2062,6 @@ let run () =
   test_format_dispatch ();
   test_hierarchy ();
   test_gtf ();
+  test_writer_compliance ();
   test_mutation ()
 

@@ -144,6 +144,23 @@ let to_file_via_buffer to_buffer ann path =
   Buffer.output_buffer oc buf;
   close_out oc
 
+(* Menhir reports a syntax error as a bare [Annotations_Parse.Error], with no
+   position and no message, and nothing caught it: a malformed '--hierarchy', or an
+   attribute column the grammar refuses, surfaced as an uncaught exception and was
+   reported as a bug in the program rather than as a fault in its input.  Where the
+   lexer stood when the parser gave up is what there is to say where. *)
+let parse_with ~what parser lexer lexbuf =
+  try
+    parser lexer lexbuf
+  with Annotations_Parse.Error ->
+    let p = lexbuf.Lexing.lex_curr_p in
+    let column = p.Lexing.pos_cnum - p.Lexing.pos_bol + 1 in
+    Exception.raise __FUNCTION__ IO_Format
+      (if p.Lexing.pos_lnum > 1 then
+        Printf.sprintf "Syntax error in %s at line %d, character %d" what p.Lexing.pos_lnum column
+      else
+        Printf.sprintf "Syntax error in %s at character %d" what column)
+
 (* Hierarchy: the [Annotations_Base] base module plus the
    S-expression parser. *)
 module Hierarchy:
@@ -156,7 +173,8 @@ module Hierarchy:
     include Annotations_Base.Hierarchy
     let of_string s =
       let lexbuf = Lexing.from_string ~with_positions:true s in
-      Annotations_Parse.hierarchy Annotations_Lex.hierarchy lexbuf
+      parse_with ~what:(Printf.sprintf "hierarchy %S" s)
+        Annotations_Parse.hierarchy Annotations_Lex.hierarchy lexbuf
     let of_file path = of_string (read_file path)
   end
 
@@ -356,8 +374,8 @@ module GenBankLocation:
     include Annotations_Base.GenBankLocation
     let of_string s =
       let lexbuf = Lexing.from_string ~with_positions:true s in
-      Annotations_Parse.genbank_location
-        Annotations_Lex.genbank_location lexbuf
+      parse_with ~what:(Printf.sprintf "GenBank location %S" s)
+        Annotations_Parse.genbank_location Annotations_Lex.genbank_location lexbuf
     let intervals loc =
       let mk_simple low length : Sequences.Types.simple_interval_t =
         { low; length } in
@@ -435,7 +453,10 @@ module GenBankLocation:
             !acc, !st
         | Remote (acc_name, _, inner) ->
           walk strand (Some acc_name) inner in
-      let pieces, overall = walk None None loc in
+      (* A location with no complement() is on the forward strand: INSDC has no
+         way to say "unstranded", and starting the walk from [None] gave every plain
+         range no strand at all -- which GTF refuses and GFF3 reads as unknown. *)
+      let pieces, overall = walk (Some Sequences.Types.forward) None loc in
       (* A piece's strand is [None] when it agrees with the feature's, which is
          what [None] is documented to mean and what keeps the ordinary case
          uncluttered.  The walk cannot know that as it goes -- it sees only the
@@ -515,6 +536,38 @@ let attribute_pairs ann feature =
   Annotation.attr_iter ann (fun k vs ->
     List.accum pairs (k, vs)) feature;
   List.rev !pairs
+
+(* The identifiers a writer gives features, one each.  A feature keeps its own when
+   no other has been written with it.  Two features can share one in a register --
+   a GenBank gene and its CDS both take theirs from /gene -- and a format in which an
+   identifier names ONE feature (GFF3's ID, GTF's gene_id and transcript_id) then got
+   a file that no reader, this library's included, would take back.  The second is
+   told apart by its category, as NCBI's own GFF3 does.  A feature without one is
+   given a synthesised name, which cannot collide with any identifier in the
+   register since all of those are reserved before the first is handed out. *)
+let identifiers ann =
+  let reserved = Hashtbl.create 64 and claimed = Hashtbl.create 64
+  and counter = ref 0 in
+  Annotation.iter_paths (fun ~path:_ feature ->
+    match feature.Annotation.id with
+    | Some i when i <> "" -> Hashtbl.replace reserved i ()
+    | _ -> ()) ann;
+  let free c = not (Hashtbl.mem reserved c || Hashtbl.mem claimed c) in
+  let rec synthesised () =
+    incr counter;
+    let c = Printf.sprintf "feature%d" !counter in
+    if free c then c else synthesised () in
+  let rec distinct base n =
+    let c = if n = 1 then base else Printf.sprintf "%s-%d" base n in
+    if free c then c else distinct base (n + 1) in
+  fun ~category id ->
+    let id =
+      match id with
+      | Some i when i <> "" && not (Hashtbl.mem claimed i) -> i
+      | Some i when i <> "" -> distinct (String.lowercase_ascii category ^ "-" ^ i) 1
+      | _ -> synthesised () in
+    Hashtbl.replace claimed id ();
+    id
 
 (* Common interface implemented by every per-format module
    (GFF3, GTF, GenBank).  [dialects] is a non-empty association

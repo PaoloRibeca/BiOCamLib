@@ -376,7 +376,7 @@ Writing takes a *prefix* and produces three tables:
 AnnoTools --from-genbank NC_000913.gb --to-tsv NC_000913
 ```
 ```
-NC_000913.AnnotationFeatures.txt     #id #parent #seq #path #feature_id #source #score #strand #phase #intervals
+NC_000913.AnnotationFeatures.txt     #id #parent #sequence #path #feature_id #source #score #strand #phase #intervals
 NC_000913.AnnotationAttributes.txt   #id #key #value
 NC_000913.AnnotationMetadata.txt     #key #value
 NC_000913.AnnotationReference.fasta  the sequence, as FASTA
@@ -421,7 +421,7 @@ A field is one of:
 |-|-|
 | `type` | the feature's own category, e.g. `CDS` or `mat_peptide` |
 | `path` | its whole category chain, e.g. `source->CDS` |
-| `seq` | the sequence it lies on |
+| `sequence` | the sequence it lies on |
 | `strand` | `+`, `-` or `.` |
 | `id` | its identifier (`label`, and the empty field name, are synonyms) |
 | `source` | the provenance in GFF3 column 2 |
@@ -437,7 +437,7 @@ AnnoTools --from-genbank NC_045512.gb -R 'type~^mat_peptide$' --extract-protein 
 and some further shapes:
 ```bash
 AnnoTools ... -R 'type~^CDS$,gene~^thr'   # CDSs whose /gene starts with "thr" (criteria are ANDed)
-AnnoTools ... -R 'seq~^chr1$'             # everything on one sequence
+AnnoTools ... -R 'sequence~^chr1$'        # everything on one sequence
 AnnoTools ... -R '~b0011'                 # the feature whose id is b0011
 AnnoTools ... -R 'type~^CDS$' --selection-negate   # everything that is not a CDS
 ```
@@ -448,7 +448,7 @@ AnnoTools --from-genbank NC_000913.gb -L b0011,b0012 --extract-dna genes.fasta
 ```
 Where that identifier comes from depends on the source format &mdash; GFF3 takes it from `ID=`, GenBank from `/locus_tag` or else `/gene`, and GTF only gives one to the gene and transcript levels, from `gene_id` and `transcript_id`. The consequence is worth knowing: **many features have no identifier at all**, including every row of a GTF file and a GenBank `mat_peptide`, and `-L` can never match those. Select them with `-R` on `type` or `path`.
 
-`--selection-print` is how you find out what to pass. Its first column is the identifier when the feature has one, and a positional stand-in of the form `<seq>:<type>:<location>` when it does not &mdash; that stand-in is a label, not an identifier, and feeding it back to `-L` matches nothing.
+`--selection-print` is how you find out what to pass. Its first column is the identifier when the feature has one, and a positional stand-in of the form `<sequence>:<type>:<location>` when it does not &mdash; that stand-in is a label, not an identifier, and feeding it back to `-L` matches nothing.
 
 Under `-v`, every change to the selection reports what it now matches:
 ```
@@ -563,8 +563,8 @@ Add `-v` to see how many features each selection matched\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `-L`<br>`--labels`<br>`--selection-from-labels` | _feature\_id_ _\[_ `,` _\.\.\._ `,` _feature\_id_ _\]_ |  put into the selection register the features carrying the given identifiers\.  The match is EXACT, not a regexp: for patterns use `-R` with the `id` field\.<br> A feature's identifier comes from its source format:   GFF3     the `ID=` attribute   GenBank  `/locus_tag`, or `/gene` when there is none   GTF      only the gene and transcript levels, from            `gene_id` and `transcript_id`  Many features have NO identifier &mdash; a GenBank mat\_peptide, and every row of a GTF file, since there only the synthesised gene and transcript parents get one\.  `-L` can never match those; select them with `-R` on `type` or `path` instead\.<br> `--selection-print` lists them, which is how to find out what to pass\.  Its first column is the identifier when the feature has one and a positional stand-in of the form `<seq>:<type>:<location>` when it does not &mdash; the latter is a label, not an identifier, and `-L` will not match it\.<br> Examples:   -L b0011              one feature, by locus tag   -L b0011,b0012,b0013  three of them   -L ENSG00000141510    a GFF3 feature by its ID= |  |
-| `-R`<br>`--regexps`<br>`--selection-from-regexps` | _field_ `~` _regexp_ _\[_ `,` _\.\.\._ `,` _field_ `~` _regexp_ _\]_ |  put into the selection register the features whose named fields match the given regexps\.  Criteria separated by `,` must ALL match\.<br> _field_ is one of:   type    the feature's own category, e\.g\. CDS, mat\_peptide   path    its whole category chain, e\.g\. source-&gt;CDS   seq     the sequence it lies on   strand  `+`, `-` or `.`   id      its identifier \(`label`, and the empty field           name, are synonyms\)   source  the provenance in GFF3 column 2 Any other name is read as an ATTRIBUTE, matching when any one of that attribute's values does &mdash; so `gene~dnaA` selects on the /gene qualifier\.  Those seven names are therefore reserved: an attribute sharing one of them cannot be selected on\.<br> _regexp_ is UNANCHORED, so `type~gene` also matches `pseudogene`\.  Anchor it with `^...$` when that matters\.<br> Examples:   -R `type~^mat_peptide$`    every mature peptide   -R `type~^CDS$,gene~^thr`  CDSs whose /gene starts `thr`   -R `seq~^chr1$`            everything on chr1   -R `~b0011`                the feature whose id is b0011 |  |
+| `-L`<br>`--labels`<br>`--selection-from-labels` | _feature\_id_ _\[_ `,` _\.\.\._ `,` _feature\_id_ _\]_ |  put into the selection register the features carrying the given identifiers\.  The match is EXACT, not a regexp: for patterns use `-R` with the `id` field\.<br> A feature's identifier comes from its source format:   GFF3     the `ID=` attribute   GenBank  `/locus_tag`, or `/gene` when there is none   GTF      only the gene and transcript levels, from            `gene_id` and `transcript_id`  Many features have NO identifier &mdash; a GenBank mat\_peptide, and every row of a GTF file, since there only the synthesised gene and transcript parents get one\.  `-L` can never match those; select them with `-R` on `type` or `path` instead\.<br> `--selection-print` lists them, which is how to find out what to pass\.  Its first column is the identifier when the feature has one and a positional stand-in of the form `<sequence>:<type>:<location>` when it does not &mdash; the latter is a label, not an identifier, and `-L` will not match it\.<br> Examples:   -L b0011              one feature, by locus tag   -L b0011,b0012,b0013  three of them   -L ENSG00000141510    a GFF3 feature by its ID= |  |
+| `-R`<br>`--regexps`<br>`--selection-from-regexps` | _field_ `~` _regexp_ _\[_ `,` _\.\.\._ `,` _field_ `~` _regexp_ _\]_ |  put into the selection register the features whose named fields match the given regexps\.  Criteria separated by `,` must ALL match\.<br> _field_ is one of:   type    the feature's own category, e\.g\. CDS, mat\_peptide   path    its whole category chain, e\.g\. source-&gt;CDS   sequence  the sequence it lies on   strand  `+`, `-` or `.`   id      its identifier \(`label`, and the empty field           name, are synonyms\)   source  the provenance in GFF3 column 2 Any other name is read as an ATTRIBUTE, matching when any one of that attribute's values does &mdash; so `gene~dnaA` selects on the /gene qualifier\.  Those seven names are therefore reserved: an attribute sharing one of them cannot be selected on\.<br> _regexp_ is UNANCHORED, so `type~gene` also matches `pseudogene`\.  Anchor it with `^...$` when that matters\.<br> Examples:   -R `type~^mat_peptide$`    every mature peptide   -R `type~^CDS$,gene~^thr`  CDSs whose /gene starts `thr`   -R `sequence~^chr1$`       everything on chr1   -R `~b0011`                the feature whose id is b0011 |  |
 | `--selection-negate` |  |  negate the current selection |  |
 | `--selection-print` |  |  print the features currently selected, one per line, to  standard output |  |
 | `--selection-clear` |  |  reset the selection register so that it matches everything |  |
@@ -580,7 +580,7 @@ translated with the feature's `/transl_table` when it
 carries one\.  Requires a reference to have been loaded\.
 Each defline names the feature and then carries, as a
 bracketed `[key=value]` apiece, where it came from \-\-
-`path`, `seq`, `location` \-\- and every qualifier it holds\.
+`path`, `sequence`, `location` \-\- and every qualifier it holds\.
 The brackets are in the manner of NCBI's own extracts, and
 they are what keeps the line splittable: both a qualifier
 such as `product=hypothetical protein` and a sequence name

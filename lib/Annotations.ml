@@ -260,10 +260,18 @@ include (
           if verbose then
             Printf.eprintf "(%s): reading annotation from %s\n%!"
               __FUNCTION__ path;
-          let ic = open_in path in
-          let res = of_channel ic in
-          close_in ic;
-          res
+          (* Through [Files.Compressed.open_input] like every text reader, so that a
+             compressed archive is read as one and a stream as a stream.  An input
+             that holds no archive is the user's to fix, not a bug to report. *)
+          let ic, close = Files.Compressed.open_input path in
+          Fun.protect ~finally:close (fun () ->
+            try
+              of_channel ic
+            with End_of_file | Failure _ ->
+              Exception.raise __FUNCTION__ IO_Format
+                (Printf.sprintf
+                   "'%s' does not hold an annotation archive, or holds a truncated one"
+                   path))
         (* [Initialize] rather than [Algorithm]: asking for a feature's sequence
            when no reference has been attached is an ordinary mistake by the caller,
            not a broken invariant inside the library.  [Exception.handle] prints the
@@ -465,7 +473,7 @@ include (
            values, hence the list: the field matches when any one of them does. *)
         let field_of ann ~path feature = function
           | "" | "id" | "label" -> [ label_of feature ]
-          | "seq" -> [ seq_name ann feature ]
+          | "sequence" -> [ seq_name ann feature ]
           | "path" -> [ path_to_string path ]
           | "type" -> [ (match List.rev path with leaf :: _ -> leaf | [] -> "") ]
           | "source" -> [ Option.value ~default:"" (feature_source ann feature) ]

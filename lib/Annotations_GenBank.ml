@@ -83,7 +83,8 @@ module GenBank:
   let parse_records s =
     Annotations_Lex.reset_genbank_mode ();
     let lexbuf = Lexing.from_string ~with_positions:true s in
-    Annotations_Parse.genbank_records Annotations_Lex.genbank lexbuf
+    parse_with ~what:"GenBank records"
+      Annotations_Parse.genbank_records Annotations_Lex.genbank lexbuf
   (* Pull (locus, sequence-length) out of the LOCUS header
      line.  Standard form is "NAME LEN bp ..." where the [bp]
      marker follows the integer length; we tolerate extra
