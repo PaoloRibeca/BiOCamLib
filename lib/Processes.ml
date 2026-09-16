@@ -200,7 +200,13 @@ module Parallel:
 = struct
     let get_nproc () =
       try
-        Subprocess.spawn_and_read_single_line "nproc" |> int_of_string
+        (* nproc is GNU, and a Mac has none: there the shell answered 127 and a line
+           on stderr, and the handler below called the machine single-core without
+           saying so, which is the worst way to be wrong about how many cores there
+           are.  spawn_and_read_single_line goes through /bin/sh, so the fallback is
+           asked for in the command itself *)
+        Subprocess.spawn_and_read_single_line "nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null"
+        |> int_of_string
       with _ ->
         1
     let process_stream_chunkwise ?(buffered_chunks_per_thread = 10)

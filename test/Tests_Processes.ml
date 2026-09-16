@@ -74,7 +74,16 @@ let test_spawn () =
     Testing.check_string "and leading and trailing space is the command's business"
       ~expected:"a b c" (S.spawn_and_read_single_line "echo a b c");
     Testing.check_bool "the number of processors is at least one" ~expected:true
-      (Processes.Parallel.get_nproc () >= 1))
+      (Processes.Parallel.get_nproc () >= 1);
+    (* The count is read off the machine, so no test can name it.  What can be said
+       is that where nproc exists it is the answer -- which is what the fallback
+       added beside it must not disturb.  Where it does not exist, on a Mac, this
+       check holds vacuously, that branch being unreachable from here *)
+    Testing.check_bool "and is nproc's own answer wherever nproc exists" ~expected:true
+      (if Sys.command "command -v nproc > /dev/null 2>&1" <> 0 then
+        true
+      else
+        Processes.Parallel.get_nproc () = int_of_string (S.spawn_and_read_single_line "nproc")))
 
 (* Memory accounting.  Nothing here can assert a number, but each of these has
    a range it cannot leave without something being wrong. *)
