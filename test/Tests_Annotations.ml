@@ -1296,8 +1296,11 @@ let test_add_invariants () =
    are held most-recent-first precisely so that Annotation.add is O(1) at each
    level; restore the append-and-walk-to-the-end version and every functional
    check here still passes while a flat million-feature file goes from seconds
-   to hours.  The threshold is deliberately loose -- linear predicts about 4,
-   quadratic about 16 -- so that a loaded machine cannot make it flap. *)
+   to hours.  It compares eight times the features rather than four, since at four
+   the collector's growth alone took a linear build to between 6 and 9 against a
+   limit of 8, and a loaded machine made it flap: at eight, linear lands between
+   9 and 14 and quadratic near 64, and the limit of 30 sits clear of both.  Each size
+   is timed at its best of three, load only ever adding time. *)
 
 let test_insertion_cost () =
   Testing.section "Insertion cost" (fun () ->
@@ -1317,15 +1320,16 @@ let test_insertion_cost () =
     (* Large enough that both measurements sit well clear of scheduler noise --
        at a few thousand features the smaller one lands near a millisecond and
        the ratio is mostly jitter. *)
+    let best n = List.fold_left (fun t _ -> Float.min t (build n)) infinity [ 1; 2; 3 ] in
     let _warm = build 5000 in
-    let small = build 20000 in
-    let large = build 80000 in
+    let small = best 20000 in
+    let large = best 160000 in
     let ratio = large /. Float.max small 1e-3 in
     Testing.check
       (Printf.sprintf
-         "quadrupling the feature count costs far less than quadratically \
+         "eight times the features costs far less than quadratically \
           (%.0f ms -> %.0f ms, %.1fx)" (small *. 1000.) (large *. 1000.) ratio)
-      (fun () -> ratio < 8.);
+      (fun () -> ratio < 30.);
     (* Order still has to be insertion order, which is the property the reversed
        representation is quietly relying on. *)
     Testing.check_string "features come back in insertion order"
