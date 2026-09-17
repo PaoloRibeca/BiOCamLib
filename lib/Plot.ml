@@ -4,7 +4,7 @@
     This file is part of BiOCamLib, the OCaml foundations upon which
     a number of the bioinformatics tools I developed are built.
 
-    Plot.ml implements simple vector plots -- a dot plot and a coverage
+    Plot.ml implements simple vector plots -- a dot plot and a depth
     track -- rendered to a multi-page PDF through the Vg library, so that
     tools can produce their own reports without calling out to R or
     ghostscript.  Vg and Gg are opened only inside the encapsulated
@@ -50,7 +50,7 @@ include (
     let line ~x1 ~y1 ~x2 ~y2 ?(width = 0.2) color =
       let p = P.empty |> P.sub (P2.v x1 y1) |> P.line (P2.v x2 y2) in
       I.const color |> I.cut ~area:(stroke ~width) p
-    (* An open polyline through the points, used for the coverage trace. *)
+    (* An open polyline through the points, used for the depth trace. *)
     let polyline points ?(width = 0.2) color =
       match points with
       | [] | [_] -> I.void
@@ -168,14 +168,14 @@ include (
           text ~x:6. ~y:(oy +. box /. 2. -. text_width y_label title_size /. 2.) ~size:title_size ~rotate:(Float.pi /. 2.) black y_label ] in
       let image = stack (List.concat [ segs; x_marks; y_marks; frame; x_ticks; y_ticks; titles ]) in
       (Size2.v (margin_lo +. box +. margin_hi) (margin_lo +. box +. margin_hi), image)
-    (* The coverage track: per-base depth along the concatenated sequences, drawn
+    (* The depth track: per-base depth along the concatenated sequences, drawn
        as a blue trace on a log2(depth + 1) y by default, whose range runs from 0
        to the deepest position's transformed value.  A bedgraph is a list of
        (name, start, end, value) intervals; the x axis counts only covered bases,
        so a within-sequence gap in the bedgraph closes up and is marked green,
        while a change of sequence is marked red.  The box is closed in black and
        the sequence names sit rotated above it. *)
-    let coverage ~label ?(logarithmic = true) records =
+    let depth ~label ?(logarithmic = true) records =
       let draw_w = 240. and draw_h = 120. in
       let ox = margin_lo and oy = margin_lo in
       let right = ox +. draw_w and top = oy +. draw_h in
@@ -235,7 +235,7 @@ include (
           text ~x:6. ~y:(oy +. draw_h /. 2. -. 24.) ~size:title_size ~rotate:(Float.pi /. 2.) black
             (if logarithmic then "log2(depth+1)" else "depth") ] in
       let image =
-        if n = 0 then text ~x:(ox +. draw_w /. 2.) ~y:(oy +. draw_h /. 2.) ~size:8. grey "no coverage"
+        if n = 0 then text ~x:(ox +. draw_w /. 2.) ~y:(oy +. draw_h /. 2.) ~size:8. grey "no reads"
         else stack (List.concat [ [ trace ]; boundaries; frame; x_ticks; y_ticks; titles ]) in
       (Size2.v (2. *. margin_lo +. draw_w) (margin_lo +. draw_h +. margin_hi), image)
     (* Arrange sub-pages into a grid of the given number of columns on a fixed
@@ -277,7 +277,7 @@ include (
       x_label:string -> y_label:string ->
       x_seqs:(string * int) list -> y_seqs:(string * int) list ->
       segments:(int * int * int * int) list -> page
-    val coverage: label:string -> ?logarithmic:bool -> (string * int * int * int) list -> page
+    val depth: label:string -> ?logarithmic:bool -> (string * int * int * int) list -> page
     val montage: columns:int -> page list -> page
     val to_pdf: string -> page list -> unit
   end

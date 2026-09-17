@@ -42,7 +42,7 @@ let show_sides (s, first, last) = Printf.sprintf "%S %d %d" s first last
 (* Side dashes.  The two indices are the first and last character of what is
    left, zero-based and inclusive, so an all-dash line reports a first past the
    end and a last before the beginning -- an empty range rather than a nonsense
-   one, which is what the callers below rely on to add nothing to coverage. *)
+   one, which is what the callers below rely on to add nothing to depth. *)
 
 let test_side_dashes () =
   Testing.section "Alignment side dashes" (fun () ->
@@ -113,8 +113,8 @@ let test_remove_tips () =
 
 (* The consensus itself.  Two things are worth pinning beyond the obvious
    majority vote: that an empty alignment is the empty string rather than an
-   error, and that the CASE of the output carries the coverage -- upper when at
-   least [min_coverage] sequences voted for the winning window, lower when
+   error, and that the CASE of the output carries the depth -- upper when at
+   least [min_depth] sequences voted for the winning window, lower when
    fewer did.  That is real information, and it is easy to lose in a refactor
    because both spellings look equally correct. *)
 
@@ -122,25 +122,25 @@ let test_of_alignment () =
   Testing.section "Consensus of an alignment" (fun () ->
     Testing.check_string "an empty alignment gives an empty consensus"
       ~expected:"" (Consensus.of_alignment [||]);
-    Testing.check_string "one sequence under the coverage floor comes back lower case"
+    Testing.check_string "one sequence under the depth floor comes back lower case"
       ~expected:"acgtacgt" (Consensus.of_alignment [| "ACGTACGT" |]);
     Testing.check_string "and upper case once the floor is met"
-      ~expected:"ACGTACGT" (Consensus.of_alignment ~min_coverage:1 [| "ACGTACGT" |]);
+      ~expected:"ACGTACGT" (Consensus.of_alignment ~min_depth:1 [| "ACGTACGT" |]);
     Testing.check_string "five identical sequences meet the default floor"
       ~expected:"ACGTACGT" (Consensus.of_alignment (Array.make 5 "ACGTACGT"));
     Testing.check_string "the majority wins a disagreeing column"
       ~expected:"ACGTACGT"
-      (Consensus.of_alignment ~min_coverage:1
+      (Consensus.of_alignment ~min_depth:1
          [| "ACGTACGT"; "ACGTACGT"; "ACGAACGT" |]);
     (* The guard on the truncation [remove_tips] used to do.  [of_alignment]
        indexes every line by the length it measured before tidying them, so a
        line coming back shorter is not a wrong answer but an out-of-bounds
        access: an interior gap is all it takes to reach that path. *)
     Testing.check_int "a line with an interior gap keeps its length" ~expected:18
-      (String.length (Consensus.of_alignment ~min_coverage:1 [| "ACGT--ACGTACGTACGT" |]));
+      (String.length (Consensus.of_alignment ~min_depth:1 [| "ACGT--ACGTACGTACGT" |]));
     Testing.check_string "input is DNA-linted on the way in"
       ~expected:"ACGTACGT"
-      (Consensus.of_alignment ~min_coverage:1 [| "acgtacgt" |]);
+      (Consensus.of_alignment ~min_depth:1 [| "acgtacgt" |]);
     Testing.check_raises ~re:"Incompatible sequence length"
       "sequences of different lengths are refused"
       (fun () -> Consensus.of_alignment [| "ACGTACGT"; "ACGT" |]);
@@ -148,8 +148,8 @@ let test_of_alignment () =
       (fun () -> Consensus.of_alignment ~consensus_window:99 [| "ACGTACGT" |]);
     Testing.check_raises ~re:"consensus_window" "and one that is not positive"
       (fun () -> Consensus.of_alignment ~consensus_window:0 [| "ACGTACGT" |]);
-    Testing.check_raises ~re:"cannot be negative" "as is a negative coverage floor"
-      (fun () -> Consensus.of_alignment ~min_coverage:(-1) [| "ACGTACGT" |]))
+    Testing.check_raises ~re:"cannot be negative" "as is a negative depth floor"
+      (fun () -> Consensus.of_alignment ~min_depth:(-1) [| "ACGTACGT" |]))
 
 (* Consensus from a pileup.  All of this runs through channels, so a case is a
    pileup in and the two files out -- which is what a caller actually sees, and
@@ -163,7 +163,7 @@ let read_file path =
 
 let pileup lines = String.concat "\n" (List.map (String.concat "\t") lines) ^ "\n"
 
-let consensus_of ?insertion_min_fraction ?insertion_min_coverage ?multiple_insertions ?seed text =
+let consensus_of ?insertion_min_fraction ?insertion_min_depth ?multiple_insertions ?seed text =
   let in_path = Filename.temp_file "BiOCamLib_Tests_" ".pileup"
   and seq_path = Filename.temp_file "BiOCamLib_Tests_" ".fasta"
   and bg_path = Filename.temp_file "BiOCamLib_Tests_" ".bedgraph" in
@@ -174,13 +174,13 @@ let consensus_of ?insertion_min_fraction ?insertion_min_coverage ?multiple_inser
     let ic = open_in in_path and seq_oc = open_out seq_path and bg_oc = open_out bg_path in
     let stats =
       Fun.protect ~finally:(fun () -> close_in ic; close_out seq_oc; close_out bg_oc) (fun () ->
-        Consensus.Mpileup.from_mpileup ?insertion_min_fraction ?insertion_min_coverage
+        Consensus.Mpileup.from_mpileup ?insertion_min_fraction ?insertion_min_depth
           ?multiple_insertions ?seed ~sequence:seq_oc ~bedgraph:bg_oc ic) in
     stats, read_file seq_path, read_file bg_path)
 
-let sequence_of ?insertion_min_fraction ?insertion_min_coverage ?multiple_insertions ?seed text =
+let sequence_of ?insertion_min_fraction ?insertion_min_depth ?multiple_insertions ?seed text =
   let _, s, _ =
-    consensus_of ?insertion_min_fraction ?insertion_min_coverage ?multiple_insertions ?seed text in
+    consensus_of ?insertion_min_fraction ?insertion_min_depth ?multiple_insertions ?seed text in
   s
 
 let bedgraph_of text = let _, _, b = consensus_of text in b
@@ -212,10 +212,10 @@ let test_from_mpileup () =
          (pileup
             [ [ "chr"; "1"; "A"; "4"; "...."; "IIII" ]; [ "chr"; "2"; "C"; "4"; "***."; "IIII" ];
               [ "chr"; "3"; "T"; "4"; "...."; "IIII" ] ]));
-    (* No coverage at all is not a deletion: a deletion is covered by reads that
+    (* No reads at all is not a deletion: a deletion is covered by reads that
        say so, while here nothing was read, so the segment is kept as an N
        rather than closed up. *)
-    Testing.check_string "a position with no coverage becomes an N"
+    Testing.check_string "a position with no reads becomes an N"
       ~expected:">chr\nANT\n"
       (sequence_of
          (pileup
@@ -228,19 +228,19 @@ let test_from_mpileup () =
          (pileup
             [ [ "chr1"; "1"; "A"; "2"; ".."; "II" ]; [ "chr2"; "1"; "C"; "2"; ".."; "II" ] ])))
 
-(* The coverage track.  A BedGraph interval is zero-based and half-open, which
+(* The depth track.  A BedGraph interval is zero-based and half-open, which
    is the whole of what these check: written inclusively -- as the tool this was
    taken from wrote it -- a run of one base is an interval of none, and every
    interval abuts the next one base short. *)
 
 let test_bedgraph () =
-  Testing.section "Consensus coverage track" (fun () ->
+  Testing.section "Consensus depth track" (fun () ->
     Testing.check_string "a single-base run spans one base, not zero"
       ~expected:"chr\t0\t1\t4\nchr\t1\t2\t2\n"
       (bedgraph_of
          (pileup
             [ [ "chr"; "1"; "A"; "4"; "...."; "IIII" ]; [ "chr"; "2"; "C"; "2"; ".."; "II" ] ]));
-    Testing.check_string "positions of equal coverage merge into one interval"
+    Testing.check_string "positions of equal depth merge into one interval"
       ~expected:"chr\t0\t3\t4\n"
       (bedgraph_of
          (pileup
@@ -326,9 +326,9 @@ let test_insertions () =
     and chr2 = [ [ "chr2"; "1"; "G"; "1"; "."; "I" ] ] in
     Testing.check_string "and one still open at a sequence boundary does not cross it"
       ~expected:
-        (sequence_of ~insertion_min_coverage:1 (pileup chr1)
-          ^ sequence_of ~insertion_min_coverage:1 (pileup chr2))
-      (sequence_of ~insertion_min_coverage:1 (pileup (chr1 @ chr2))))
+        (sequence_of ~insertion_min_depth:1 (pileup chr1)
+          ^ sequence_of ~insertion_min_depth:1 (pileup chr2))
+      (sequence_of ~insertion_min_depth:1 (pileup (chr1 @ chr2))))
 
 (* Ties, and the seed that settles them.  Two genotypes with the same count are
    two equally supported readings, and something has to be picked; what matters
@@ -361,8 +361,8 @@ let test_from_mpileup_arguments () =
   Testing.section "Consensus from a pileup: arguments" (fun () ->
     Testing.check_raises ~re:"insertion_min_fraction" "a non-positive fraction is refused"
       (fun () -> sequence_of ~insertion_min_fraction:0. "");
-    Testing.check_raises ~re:"insertion_min_coverage" "as is a coverage floor below one"
-      (fun () -> sequence_of ~insertion_min_coverage:0 "");
+    Testing.check_raises ~re:"insertion_min_depth" "as is a depth floor below one"
+      (fun () -> sequence_of ~insertion_min_depth:0 "");
     Testing.check_raises ~re:"column" "and a line with too few columns stops the run"
       (fun () -> sequence_of (pileup [ [ "chr"; "1"; "A" ] ]));
     Testing.check_string "an empty pileup produces an empty consensus" ~expected:""

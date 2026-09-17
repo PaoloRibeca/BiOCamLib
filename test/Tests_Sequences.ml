@@ -255,14 +255,14 @@ let test_reference () =
 
 let test_junctions () =
   Testing.section "Junctions" (fun () ->
-    let parse ?default_coverage text =
+    let parse ?default_depth text =
       let path = Filename.temp_file "BiOCamLib_Tests_" ".junctions" in
       let oc = open_out path in
       output_string oc text;
       close_out oc;
       Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
         let acc = ref [] in
-        Sequences.Junctions.parse ?default_coverage
+        Sequences.Junctions.parse ?default_depth
           (fun n s lo hi cov ->
             List.accum acc
               (Printf.sprintf "%d %s %d %d %g" n (T.string_of_stranded_string s) lo hi cov))
@@ -270,14 +270,14 @@ let test_junctions () =
         List.rev !acc |> String.concat " | ") in
     Testing.check_string "the short form names the sequence once"
       ~expected:"1 chr1:+ 100 200 0" (parse "chr1\t+\t100\t200\n");
-    Testing.check_string "and takes a coverage as a fifth field"
+    Testing.check_string "and takes a depth as a fifth field"
       ~expected:"1 chr1:+ 100 200 7.5" (parse "chr1\t+\t100\t200\t7.5\n");
-    Testing.check_string "an absent coverage is the caller's default"
+    Testing.check_string "an absent depth is the caller's default"
       ~expected:"1 chr1:+ 100 200 2.5"
-      (parse ~default_coverage:2.5 "chr1\t+\t100\t200\n");
+      (parse ~default_depth:2.5 "chr1\t+\t100\t200\n");
     Testing.check_string "the long form names it at both ends"
       ~expected:"1 chr1:- 100 200 0" (parse "chr1\t-\t100\tchr1\t-\t200\n");
-    Testing.check_string "and takes a coverage as a seventh field"
+    Testing.check_string "and takes a depth as a seventh field"
       ~expected:"1 chr1:- 100 200 3" (parse "chr1\t-\t100\tchr1\t-\t200\t3\n");
     Testing.check_string "lines are numbered as they are read"
       ~expected:"1 chr1:+ 1 2 0 | 2 chr2:+ 3 4 0"
@@ -297,7 +297,7 @@ let test_junctions () =
       (fun () -> ignore (parse "chr1\t+\t100\tchr1\t-\t200\n"));
     Testing.check_raises ~re:"Negative" "as is a negative coordinate"
       (fun () -> ignore (parse "chr1\t+\t-1\t200\n"));
-    Testing.check_raises ~re:"Negative" "and a negative coverage"
+    Testing.check_raises ~re:"Negative" "and a negative depth"
       (fun () -> ignore (parse "chr1\t+\t1\t2\t-3\n"));
     Testing.check_raises ~re:"Input file not found" "a missing file is refused as such"
       (fun () ->

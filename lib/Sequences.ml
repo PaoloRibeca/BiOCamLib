@@ -327,12 +327,12 @@ module Types =
 
 module Junctions:
   sig
-    val parse: ?default_coverage:float ->
+    val parse: ?default_depth:float ->
                (int -> string Types.stranded_t -> int -> int -> float -> unit) -> string -> unit
   end
 = struct
     (* Helper function to parse what is produced by the GEM pipeline - legacy code? *)
-    let parse ?(default_coverage = 0.) f introns =
+    let parse ?(default_depth = 0.) f introns =
       let introns = open_in introns and cntr = ref 0 in
       try
         while true do
@@ -340,9 +340,9 @@ module Junctions:
           incr cntr;
           let error message =
             Exception.raise __FUNCTION__ IO_Format (Printf.sprintf "On line %d: %s" !cntr message) in
-          (* Format is: <name_1> <str_1> <pos_1> <name_2> <str_2> <pos_2> [<cov>],
-              or:       <name> <str> <pos_1> <pos_2> [<cov>] *)
-          let stranded_name, pos_don, pos_acc, cov =
+          (* Format is: <name_1> <str_1> <pos_1> <name_2> <str_2> <pos_2> [<depth>],
+              or:       <name> <str> <pos_1> <pos_2> [<depth>] *)
+          let stranded_name, pos_don, pos_acc, depth =
             let len = Array.length line in
             match len with
             | 4 | 5 ->
@@ -350,12 +350,12 @@ module Junctions:
                 let dir = Types.strand_of_string line.(1)
                 and pos_don = int_of_string line.(2)
                 and pos_acc = int_of_string line.(3)
-                and cov =
+                and depth =
                   if len = 5 then
                     float_of_string line.(4)
                   else
-                    default_coverage in
-                (Types.stranded_of_split dir line.(0)), pos_don, pos_acc, cov
+                    default_depth in
+                (Types.stranded_of_split dir line.(0)), pos_don, pos_acc, depth
               with _ ->
                 error "Incorrect syntax"
               end
@@ -365,22 +365,22 @@ module Junctions:
                 and pos_don = int_of_string line.(2)
                 and dir_acc = Types.strand_of_string line.(4)
                 and pos_acc = int_of_string line.(5)
-                and cov =
+                and depth =
                   if len = 7 then
                     float_of_string line.(6)
                   else
-                    default_coverage in
+                    default_depth in
                 if line.(0) <> line.(3) || dir_don <> dir_acc then
                   raise_notrace Exit; (* This one is OK as it will be caught *)
-                (Types.stranded_of_split dir_don line.(0)), pos_don, pos_acc, cov
+                (Types.stranded_of_split dir_don line.(0)), pos_don, pos_acc, depth
               with _ ->
                 error "Incorrect syntax"
               end
             | _ ->
               Printf.sprintf "Invalid number of fields (%d)" len |> error in
-          if pos_don < 0 || pos_acc < 0 || cov < 0. then
-            error "Negative coordinates or coverage";
-          f !cntr stranded_name pos_don pos_acc cov
+          if pos_don < 0 || pos_acc < 0 || depth < 0. then
+            error "Negative coordinates or depth";
+          f !cntr stranded_name pos_don pos_acc depth
         done
       with End_of_file -> close_in introns
   end

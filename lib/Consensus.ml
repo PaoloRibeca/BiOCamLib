@@ -130,7 +130,7 @@ include (
     (* Processes a string.t array *)
     let of_alignment
         ?(tip_gap_multiplier = 2.5) ?(max_tip_threshold = 30) ?(min_branch_threshold = 40)
-        ?(consensus_window = 7) ?(min_coverage = 5) al =
+        ?(consensus_window = 7) ?(min_depth = 5) al =
       if tip_gap_multiplier < 0. then
         Exception.raise __FUNCTION__ Initialize
           (Printf.sprintf "Argument 'tip_gap_multiplier' cannot be negative (found %g)" tip_gap_multiplier);
@@ -139,9 +139,9 @@ include (
       if consensus_window < 1 then
         Exception.raise __FUNCTION__ Initialize
           (Printf.sprintf "Argument 'consensus_window' must be positive (found %d)" consensus_window);
-      if min_coverage < 0 then
+      if min_depth < 0 then
         Exception.raise __FUNCTION__ Initialize
-          (Printf.sprintf "Argument 'min_coverage' cannot be negative (found %d)" min_coverage);
+          (Printf.sprintf "Argument 'min_depth' cannot be negative (found %d)" min_depth);
       let n_seqs = Array.length al in
       if n_seqs = 0 then
         ""
@@ -163,13 +163,13 @@ include (
               Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:true seq
                 |> Alignment.remove_tips ~tip_gap_multiplier ~max_tip_threshold |> Bytes.of_string)
             al in
-        (* We replace stretches of dashes on the sides with spaces and compute coverage *)
-        let cov = Array.make seq_len 0 in
+        (* We replace stretches of dashes on the sides with spaces and compute depth *)
+        let depth = Array.make seq_len 0 in
         Array.iter
           (fun seq ->
             let first_non_dash_idx, last_non_dash_idx = Alignment.replace_side_dashes_bytes ~replacement:' ' seq in
             for i = first_non_dash_idx to last_non_dash_idx do
-              cov.(i) <- cov.(i) + 1
+              depth.(i) <- depth.(i) + 1
             done)
           al;
         let max_res = Array.make seq_len 0 and res = Bytes.make seq_len 'n' in
@@ -195,7 +195,7 @@ include (
               end)
             !stats;
           let max_n = !max_n in
-          if !max_c = '-' && 100 * max_n >= min_branch_threshold * cov.(i) then begin
+          if !max_c = '-' && 100 * max_n >= min_branch_threshold * depth.(i) then begin
             max_res.(i) <- max_n;
             res.@(i) <- '-'
           end
@@ -251,11 +251,11 @@ include (
           String.iteri
             (fun i c ->
               let i_c = i_col + i in
-              if max_n > max_res.(i_c) && 100 * max_n >= min_branch_threshold * cov.(i_c) then begin
+              if max_n > max_res.(i_c) && 100 * max_n >= min_branch_threshold * depth.(i_c) then begin
                 max_res.(i_c) <- max_n;
                 res.@(i_c) <-
-                  (* The case conveys information about coverage *)
-                  if max_n >= min_coverage then
+                  (* The case conveys information about depth *)
+                  if max_n >= min_depth then
                     Char.uppercase_ascii c
                   else
                     Char.lowercase_ascii c
@@ -356,9 +356,9 @@ include (
             type t = {
               (* Accumulated count of compatible insertions so far *)
               acc: int;
-              (* The LOWEST coverage of a non-indel genotype seen within the
+              (* The LOWEST depth of a non-indel genotype seen within the
                  insertion's support, which is what its fraction is taken of *)
-              cov: int;
+              depth: int;
               (* Remaining span of the insertion.  At zero it leaves the set *)
               rem: int;
               state: state_t
@@ -378,7 +378,7 @@ include (
             (* Update the open insertions given the most frequent non-insertion
                symbol and the most frequent insertion at this position.  Returns
                the insertion to be written into the consensus here, or "" *)
-            let update ?(min_fraction = 0.6) ?(min_coverage = 2) ?(multiple_insertions = false)
+            let update ?(min_fraction = 0.6) ?(min_depth = 2) ?(multiple_insertions = false)
                 ?(verbose = false) ~ambiguities random line ois symbol sym_freq insertion ins_freq =
               if String.length symbol <> 1 then
                 Exception.raise __FUNCTION__ Algorithm
@@ -401,19 +401,19 @@ include (
                       | Some found when found.acc > payl.acc -> found
                       | Some _ | None -> payl in
                     if payl.rem > 1 then begin
-                      let cov = if is_nucl symbol then min sym_freq payl.cov else payl.cov in
-                      res := StringMap.add new_seq { payl with cov = cov; rem = payl.rem - 1 } !res
+                      let depth = if is_nucl symbol then min sym_freq payl.depth else payl.depth in
+                      res := StringMap.add new_seq { payl with depth = depth; rem = payl.rem - 1 } !res
                     end else
                       (* It has run out of its original support *)
                       res := StringMap.remove new_seq !res)
                   !ois;
               (* Then the insertion seen here, if there is one *)
               if insertion <> "" then begin
-                let acc, cov, state =
+                let acc, depth, state =
                   match StringMap.find_opt insertion !res with
                   | Some found ->
-                    (* Here cov has been updated already *)
-                    found.acc + ins_freq, found.cov, begin
+                    (* Here depth has been updated already *)
+                    found.acc + ins_freq, found.depth, begin
                       match found.state, multiple_insertions with
                       (* Under multiple_insertions, a shadowed insertion occurring
                          again becomes writable once more *)
@@ -426,7 +426,7 @@ include (
                 (* The span is always reset *)
                 res :=
                   StringMap.add insertion
-                    { acc = acc; cov = cov; rem = String.length insertion - 1; state = state } !res
+                    { acc = acc; depth = depth; rem = String.length insertion - 1; state = state } !res
               end;
               (* The most frequent open insertion that has cleared both thresholds
                  and has not been written yet, if there is one *)
@@ -434,8 +434,8 @@ include (
               StringMap.iter
                 (fun ins payl ->
                   if begin
-                    float_of_int payl.acc >= min_fraction *. float_of_int payl.cov &&
-                    payl.acc >= min_coverage && begin
+                    float_of_int payl.acc >= min_fraction *. float_of_int payl.depth &&
+                    payl.acc >= min_depth && begin
                       match payl.state with
                       | Regular -> true
                       | Shadowed | Output -> false
@@ -466,20 +466,20 @@ include (
                 chosen
               end
           end
-        (* Build a consensus sequence, and the coverage track beside it, from a
+        (* Build a consensus sequence, and the depth track beside it, from a
            pileup.  Both are written as the pileup is read, one sequence at a
            time, so that neither is ever held whole beyond the sequence in hand *)
-        let from_mpileup ?(insertion_min_fraction = 0.6) ?(insertion_min_coverage = 2)
+        let from_mpileup ?(insertion_min_fraction = 0.6) ?(insertion_min_depth = 2)
             ?(multiple_insertions = false) ?(seed = 0) ?(verbose = false) ?(quality_offset = 33)
             ~sequence ~bedgraph input =
           if insertion_min_fraction <= 0. then
             Exception.raise __FUNCTION__ Initialize
               (Printf.sprintf "Argument 'insertion_min_fraction' must be positive (found %g)"
                 insertion_min_fraction);
-          if insertion_min_coverage < 1 then
+          if insertion_min_depth < 1 then
             Exception.raise __FUNCTION__ Initialize
-              (Printf.sprintf "Argument 'insertion_min_coverage' must be at least 1 (found %d)"
-                insertion_min_coverage);
+              (Printf.sprintf "Argument 'insertion_min_depth' must be at least 1 (found %d)"
+                insertion_min_depth);
           let random = Random.State.make [| seed |] and curr_seq_name = ref ""
           and curr_seq = Buffer.create 1048576 and curr_bg = ref [] and line_number = ref 0
           and positions = ref 0 and ambiguities = ref 0 and written = ref 0 in
@@ -527,7 +527,7 @@ include (
               incr positions;
               let symbol, sym_freq =
                 if IntMap.is_empty line.symbols then begin
-                  (* A position with no coverage, which is not a deletion: a
+                  (* A position with no reads, which is not a deletion: a
                      deletion is covered by reads that say so, while here there
                      is no information at all.  The segment is kept by writing an
                      'N', and that N goes to the insertions too, invalidating
@@ -556,7 +556,7 @@ include (
                  remaining span stops meaning what it says *)
               let to_be_output =
                 OpenInsertions.update ~min_fraction:insertion_min_fraction
-                  ~min_coverage:insertion_min_coverage ~multiple_insertions ~verbose ~ambiguities
+                  ~min_depth:insertion_min_depth ~multiple_insertions ~verbose ~ambiguities
                   random line open_insertions symbol sym_freq insertion ins_freq in
               if verbose && not (StringMap.is_empty !open_insertions) then begin
                 let header_printed = ref false in
@@ -565,7 +565,7 @@ include (
                     (* An arbitrary threshold, only to keep the amount of output
                        down *)
                     let acc = payl.OpenInsertions.acc in
-                    if float_of_int acc >= float_of_int payl.cov /. 3. then begin
+                    if float_of_int acc >= float_of_int payl.depth /. 3. then begin
                       if not !header_printed then begin
                         Printf.eprintf "%s: Large accumulated insertions at '%s':%d:" __FUNCTION__
                           line.seq line.pos;
@@ -576,7 +576,7 @@ include (
                         | OpenInsertions.Regular -> ""
                         | OpenInsertions.Output -> "(!)"
                         | OpenInsertions.Shadowed -> "(x)"
-                      end payl.cov
+                      end payl.depth
                     end)
                   !open_insertions;
                 if !header_printed then
@@ -612,7 +612,7 @@ include (
         val remove_tips: ?tip_gap_multiplier:float -> ?max_tip_threshold:int -> string -> string
       end
     val of_alignment: ?tip_gap_multiplier:float -> ?max_tip_threshold:int -> ?min_branch_threshold:int ->
-                      ?consensus_window:int -> ?min_coverage:int -> string array -> string
+                      ?consensus_window:int -> ?min_depth:int -> string array -> string
     module Mpileup:
       sig
         (* What a run did.  These are returned rather than printed: a library has
@@ -625,11 +625,11 @@ include (
           ambiguities: int;
           insertions: int
         }
-        (* Build a consensus sequence, and the BedGraph coverage track beside it,
+        (* Build a consensus sequence, and the BedGraph depth track beside it,
            from a pileup read line by line from the given channel.
            An insertion is written into the consensus once its accumulated
-           support reaches [insertion_min_fraction] of the lowest coverage seen
-           within its span (default 0.6) and is at least [insertion_min_coverage]
+           support reaches [insertion_min_fraction] of the lowest depth seen
+           within its span (default 0.6) and is at least [insertion_min_depth]
            reads (default 2).  Staggered copies of one insertion, which is what a
            repetitive region makes of it, are recognised as the one event they
            are; [multiple_insertions] additionally lets an insertion that another
@@ -638,7 +638,7 @@ include (
            readings, so that a run can be reproduced exactly or its ties
            deliberately explored *)
         val from_mpileup:
-          ?insertion_min_fraction:float -> ?insertion_min_coverage:int ->
+          ?insertion_min_fraction:float -> ?insertion_min_depth:int ->
           ?multiple_insertions:bool -> ?seed:int -> ?verbose:bool -> ?quality_offset:int ->
           sequence:out_channel -> bedgraph:out_channel -> in_channel -> stats_t
       end

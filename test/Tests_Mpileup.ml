@@ -390,9 +390,9 @@ let test_agreement () =
       (let u = summarize (line [ "polio"; "105"; "C"; "4"; ".*.,"; "IIII" ]) in
        Printf.sprintf "depth %d, voting %d, gaps %d"
          u.M.Summary.depth u.M.Summary.voting u.M.Summary.gaps);
-    (* A position with no coverage has nothing to say about any genotype, which
+    (* A position with no reads has nothing to say about any genotype, which
        is what SiNPle's bare 'polio 106' says too. *)
-    Testing.check_string "and a position with no coverage says nothing" ~expected:""
+    Testing.check_string "and a position with no reads says nothing" ~expected:""
       (show_genotypes (summarize (line [ "polio"; "106"; "T"; "0"; "*"; "*" ]))))
 
 let run () =

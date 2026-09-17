@@ -332,7 +332,7 @@ module Iterator:
            Two functions are returned, an accumulator and a finaliser.
            The accumulator can be called repeatedly on different encoded strings;
             its argument is the encoded vector. An optional argument can be provided
-             to weigh k-mers based on coverage.
+             to weigh k-mers based on depth.
            The finaliser applies the iterator to the hashes accumulated so far
             and deallocates storage, pretty much as what happens when flushing *)
         val make: ?verbose:bool ->
