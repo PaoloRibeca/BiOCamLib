@@ -462,6 +462,51 @@ AnnoTools --from-genbank NC_000913.gb -R 'type~CDS' --extract-protein proteins.f
 ```
 A feature's intervals are spliced in the order they are stored, so a `join(...)` location comes out as one record rather than one per exon; the result is reverse-complemented as a whole when the feature is on the minus strand. For `--extract-protein` the phase bases are dropped from the 5' end and the feature's `/transl_table` is honoured when it carries one. Because a GenBank file supplies its own sequence through its `ORIGIN` block, the example above needs nothing else; for GFF3 or GTF input, add `--from-fasta` first.
 
+### Translating between formats
+
+`AnnoTools` reads and writes every format faithfully: a GenBank record written as GFF3 keeps its INSDC feature keys and its flat structure, which is valid GFF3 but not what a GFF3 consumer expects. Rendering it in GFF3's own terms &mdash; Sequence Ontology types, a CDS nested beneath the gene it belongs to &mdash; is a *translation*, and what a translation renames, nests, makes up or drops is read from a table, one for each ordered pair of formats:
+```bash
+AnnoTools --from-genbank OP162340.1.gb --drop-mrna --translate genbank gff3 --to-gff3 OP162340.1.gff3
+```
+Built-in tables translate GenBank to GFF3 and back, and GFF3 to GTF and back. The GenBank one follows the Sequence Ontology's INSDC mapping, and NCBI's practice where the two part; on NCBI's own norovirus (`OP162340.1`) and SARS-CoV-2 (`NC_045512.2`) records the result is, feature for feature, the GFF3 NCBI publishes for them. By default a gene model is the eukaryotic one, gene &rarr; mRNA &rarr; CDS, with an mRNA made for each CDS that has none; `--drop-mrna` puts a CDS directly beneath its gene, as viral and prokaryotic annotations do. A translation to GTF keeps a type GTF has no row for, such as a mature peptide, under its own name, unless `--strict-gtf` is given.
+
+A feature whose path no row lists is dropped &mdash; and always listed on standard error, as is anything a row or an option drops:
+```
+(AnnoTools): dropped by the table: region (1)
+(AnnoTools): dropped by --strict-gtf: gene->mRNA->CDS->mature_protein_region_of_CDS (6)
+```
+Under `-v` a summary also says how many features were placed, how many levels were made up, and how many parents were chosen by source order.
+
+A table is a tab-separated file, and the built-in ones are the place to start writing your own:
+```bash
+AnnoTools --translation-table genbank gff3 > my.table
+AnnoTools --from-genbank record.gb --translate-with my.table --to-gff3 record.gff3
+```
+Its header names the two formats, and each row renders the features at a path of the first at a path of the second:
+```
+#genbank              #gff3                            #when
+source                region
+source->CDS           gene->mRNA->CDS
+source->ncRNA         gene->lnc_RNA                    ncRNA_class=lncRNA
+source->ncRNA         gene->ncRNA
+source->assembly_gap  .
+#link                 locus_tag,gene
+#per_feature          mRNA
+#attribute            db_xref=Dbxref,note=Note
+```
+
+| Line | Meaning |
+|-|-|
+| _source_ _target_ | put a feature found at the source path at the target path; a target of `.` drops it |
+| `*->`_category_ | as a source path, any path ending with the category |
+| third column | a qualifier the feature must carry, or `qualifier=value`; a row with a condition wins over one without |
+| `#link` | the qualifiers naming a feature's locus, in order of preference |
+| `#per_feature` | levels made up once for each feature that needs one, as an mRNA is for each CDS; any other level made up is shared by the locus |
+| `#container` | a top-level category spanning a whole record, as GenBank's `source` does, made up once per sequence |
+| `#attribute` | attribute keys renamed, or dropped where the new name is `.` |
+
+When a translation adds a level the source never had, a feature is placed beneath the parent the source states, if there is one; otherwise beneath a feature of its locus whose intervals contain its own &mdash; the one listed last before it where several do, which is how the flat file tells apart the two copies of a peptide under SARS-CoV-2's ORF1ab and ORF1a &mdash; and otherwise beneath a level made up to span exactly what lies beneath it. Overlapping reading frames with different loci are different genes, and copies of a gene that share a symbol but lie apart on the sequence are kept apart.
+
 ### Command line options for `AnnoTools`
 
 This is the full list of command line options available for the program `AnnoTools`. You can visualise the list by typing
@@ -470,8 +515,8 @@ AnnoTools -h
 ```
 in your terminal. You will see a header containing information about the version:
 ```
-This is AnnoTools version 1.3.3-958 [30-Aug-2026]
- compiled against: BiOCamLib version 1.3.3-958 [30-Aug-2026]
+This is AnnoTools version 1.3.4-1007 [17-Sep-2026]
+ compiled against: BiOCamLib version 1.3.4-1007 [17-Sep-2026]
  (c) 2026 Paolo Ribeca <paolo.ribeca@gmail.com>
 ```
 followed by detailed information. The general form(s) the command can be used is:
@@ -520,8 +565,24 @@ default to `replace`\.
 | `--from-genbank` | _file_ |  shorthand for `--annotation replace genbank <file>` |  |
 
 
-Reference \(multi\-FASTA\) input\.
-Long form takes the same mode keyword as \-\-annotation\.
+Translation\.
+Render the register in the vocabulary and nesting of
+another format\.  Which categories are renamed, nested,
+made up or dropped is read from a table, one for each
+ordered pair of formats\.  A feature whose path no row
+lists is dropped, and listed on standard error\.
+
+| Option | Argument(s) | Effect | Note(s) |
+|-|-|-|-|
+| `--translate` | `genbank`&#124;`gff3`&#124;`gtf` `genbank`&#124;`gff3`&#124;`gtf` |  translate the register from the first format to the second with the built-in table for the pair: genbank to gff3, gff3 to genbank, gff3 to gtf or gtf to gff3 |  |
+| `--translate-with` | _table\_file_ |  translate the register with the table in the file, whose header names the two formats |  |
+| `--translation-table` | `genbank`&#124;`gff3`&#124;`gtf` `genbank`&#124;`gff3`&#124;`gtf` |  print the built-in table for the pair to standard output, to be copied, edited and used with `--translate-with` |  |
+| `--drop-mrna` |  |  in every translation, leave the mRNA level out, so that a CDS stands directly beneath its gene as in a viral or prokaryotic annotation\.  A feature that is itself an mRNA is dropped |  |
+| `--strict-gtf` |  |  in every translation to gtf, drop a feature whose type GTF has no row for, such as a mature peptide, rather than keeping it under its own type |  |
+
+
+Reference \(multi-FASTA\) input\.
+Long form takes the same mode keyword as --annotation\.
 Short form `--from-fasta` defaults to `replace`\.
 
 | Option | Argument(s) | Effect | Note(s) |
@@ -531,7 +592,7 @@ Short form `--from-fasta` defaults to `replace`\.
 
 
 Validation\.
-Each check stops at the first violation, exits non\-zero,
+Each check stops at the first violation, exits non-zero,
 and points the user at `--validate-report <file>` for the
 full list\.  All require a reference to be set\.
 
@@ -564,7 +625,7 @@ Add `-v` to see how many features each selection matched\.
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
 | `-L`<br>`--labels`<br>`--selection-from-labels` | _feature\_id_ _\[_ `,` _\.\.\._ `,` _feature\_id_ _\]_ |  put into the selection register the features carrying the given identifiers\.  The match is EXACT, not a regexp: for patterns use `-R` with the `id` field\.<br> A feature's identifier comes from its source format:   GFF3     the `ID=` attribute   GenBank  `/locus_tag`, or `/gene` when there is none   GTF      only the gene and transcript levels, from            `gene_id` and `transcript_id`  Many features have NO identifier &mdash; a GenBank mat\_peptide, and every row of a GTF file, since there only the synthesised gene and transcript parents get one\.  `-L` can never match those; select them with `-R` on `type` or `path` instead\.<br> `--selection-print` lists them, which is how to find out what to pass\.  Its first column is the identifier when the feature has one and a positional stand-in of the form `<sequence>:<type>:<location>` when it does not &mdash; the latter is a label, not an identifier, and `-L` will not match it\.<br> Examples:   -L b0011              one feature, by locus tag   -L b0011,b0012,b0013  three of them   -L ENSG00000141510    a GFF3 feature by its ID= |  |
-| `-R`<br>`--regexps`<br>`--selection-from-regexps` | _field_ `~` _regexp_ _\[_ `,` _\.\.\._ `,` _field_ `~` _regexp_ _\]_ |  put into the selection register the features whose named fields match the given regexps\.  Criteria separated by `,` must ALL match\.<br> _field_ is one of:   type    the feature's own category, e\.g\. CDS, mat\_peptide   path    its whole category chain, e\.g\. source-&gt;CDS   sequence  the sequence it lies on   strand  `+`, `-` or `.`   id      its identifier \(`label`, and the empty field           name, are synonyms\)   source  the provenance in GFF3 column 2 Any other name is read as an ATTRIBUTE, matching when any one of that attribute's values does &mdash; so `gene~dnaA` selects on the /gene qualifier\.  Those seven names are therefore reserved: an attribute sharing one of them cannot be selected on\.<br> _regexp_ is UNANCHORED, so `type~gene` also matches `pseudogene`\.  Anchor it with `^...$` when that matters\.<br> Examples:   -R `type~^mat_peptide$`    every mature peptide   -R `type~^CDS$,gene~^thr`  CDSs whose /gene starts `thr`   -R `sequence~^chr1$`       everything on chr1   -R `~b0011`                the feature whose id is b0011 |  |
+| `-R`<br>`--regexps`<br>`--selection-from-regexps` | _field_ `~` _regexp_ _\[_ `,` _\.\.\._ `,` _field_ `~` _regexp_ _\]_ |  put into the selection register the features whose named fields match the given regexps\.  Criteria separated by `,` must ALL match\.<br> _field_ is one of:   type      the feature's own category, e\.g\. CDS, mat\_peptide   path      its whole category chain, e\.g\. source-&gt;CDS   sequence  the sequence it lies on   strand    `+`, `-` or `.`   id        its identifier \(`label`, and the empty field             name, are synonyms\)   source    the provenance in GFF3 column 2 Any other name is read as an ATTRIBUTE, matching when any one of that attribute's values does &mdash; so `gene~dnaA` selects on the /gene qualifier\.  Those seven names are therefore reserved: an attribute sharing one of them cannot be selected on\.<br> _regexp_ is UNANCHORED, so `type~gene` also matches `pseudogene`\.  Anchor it with `^...$` when that matters\.<br> Examples:   -R `type~^mat_peptide$`    every mature peptide   -R `type~^CDS$,gene~^thr`  CDSs whose /gene starts `thr`   -R `sequence~^chr1$`       everything on chr1   -R `~b0011`                the feature whose id is b0011 |  |
 | `--selection-negate` |  |  negate the current selection |  |
 | `--selection-print` |  |  print the features currently selected, one per line, to  standard output |  |
 | `--selection-clear` |  |  reset the selection register so that it matches everything |  |
@@ -573,19 +634,19 @@ Add `-v` to see how many features each selection matched\.
 Sequence extraction\.
 Emit the sequence denoted by each selected feature as
 FASTA\.  A feature's intervals are spliced in the order
-they are stored and the result is reverse\-complemented
+they are stored and the result is reverse-complemented
 when the feature is on the minus strand; a protein is that
 sequence with the phase bases dropped from its 5' end,
 translated with the feature's `/transl_table` when it
 carries one\.  Requires a reference to have been loaded\.
 Each defline names the feature and then carries, as a
-bracketed `[key=value]` apiece, where it came from \-\-
-`path`, `sequence`, `location` \-\- and every qualifier it holds\.
-The brackets are in the manner of NCBI's own extracts, and
-they are what keeps the line splittable: both a qualifier
-such as `product=hypothetical protein` and a sequence name
-may carry spaces\.  `ID` and `Parent` are left out, being
-the name and the path over again\.
+bracketed `[key=value]` apiece, where it came from --
+`path`, `sequence`, `location` &mdash; and every qualifier it
+holds\.  The brackets are in the manner of NCBI's own
+extracts, and they are what keeps the line splittable: both
+a qualifier such as `product=hypothetical protein` and a
+sequence name may carry spaces\.  `ID` and `Parent` are left
+out, being the name and the path over again\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|

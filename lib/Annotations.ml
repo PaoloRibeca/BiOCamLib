@@ -101,6 +101,30 @@ include (
     end)
     include (Annotations_Tabular: sig module Tabular: Format_t end)
     include (Annotations_Tbl: sig module Tbl: Writer_t end)
+    (* Rendering a register in the vocabulary and nesting of another format, by a
+       table: see [Annotations_Translation]. *)
+    include (Annotations_Translation: sig
+      module Translation: sig
+        type t
+        val of_string: string -> t
+        val of_file: string -> t
+        val to_string: t -> string
+        val formats: t -> string * string
+        val builtin: from:string -> into:string -> t option
+        val builtin_pairs: (string * string) list
+        type report = {
+          placed: int;
+          unlisted: (string * int) list;
+          dropped: (string * int) list;
+          dropped_by_option: (string * int) list;
+          invented: (string * int) list;
+          ties: int
+        }
+        val apply:
+          ?drop_levels:string list -> ?keep_only:string list ->
+          t -> Annotation.t -> Annotation.t * report
+      end
+    end)
     (* A serialisable handle on the three formats, used by the
        [AnnoTools] CLI and by any caller that wants to dispatch on
        format at runtime.  The constructor names mirror the module
@@ -875,6 +899,28 @@ include (
     module Tabular: Format_t
     (* NCBI's submission feature table.  Write-only; see [Writer_t]. *)
     module Tbl: Writer_t
+    (* A table rendering one format's vocabulary and nesting in another's: which
+       categories a conversion renames, nests, invents or drops is data, not code. *)
+    module Translation: sig
+      type t
+      val of_string: string -> t
+      val of_file: string -> t
+      val to_string: t -> string
+      val formats: t -> string * string
+      val builtin: from:string -> into:string -> t option
+      val builtin_pairs: (string * string) list
+      type report = {
+        placed: int;
+        unlisted: (string * int) list;
+        dropped: (string * int) list;
+        dropped_by_option: (string * int) list;
+        invented: (string * int) list;
+        ties: int
+      }
+      val apply:
+        ?drop_levels:string list -> ?keep_only:string list ->
+        t -> Annotation.t -> Annotation.t * report
+    end
     (* A runtime handle on the formats, for dispatching on one chosen at the
        command line.  The constructors share their names with the modules but
        live in their own namespace, so [Format.GFF3] and [GFF3] do not clash.

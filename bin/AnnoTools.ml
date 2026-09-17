@@ -74,15 +74,22 @@ type to_do_t =
   | Selection_print
   | Selection_clear
   | Extract of Sequence_kind.t * string
+  | Translate of string * string
+  | Translate_with of string
+  | Print_translation of string * string
   | Summary
 
 module Defaults = struct
   let verbose = false
+  let drop_mrna = false
+  let strict_gtf = false
 end
 
 module Parameters = struct
   let program = ref []
   let verbose = ref Defaults.verbose
+  let drop_mrna = ref Defaults.drop_mrna
+  let strict_gtf = ref Defaults.strict_gtf
 end
 
 let info = Info.annotools and authors = [
@@ -233,6 +240,54 @@ let () =
         (fun _ ->
           Annotation_op (Mode.Replace, A.Format.GenBank, TA.get_parameter ())
           |> List.accum Parameters.program);
+      TA.make_separator_multiline
+        [ "";
+          "Translation.";
+          "Render the register in the vocabulary and nesting of";
+          "another format.  Which categories are renamed, nested,";
+          "made up or dropped is read from a table, one for each";
+          "ordered pair of formats.  A feature whose path no row";
+          "lists is dropped, and listed on standard error." ];
+      [ "--translate" ],
+        Some "<genbank|gff3|gtf> <genbank|gff3|gtf>",
+        [ "translate the register from the first format to the";
+          "second with the built-in table for the pair: genbank";
+          "to gff3, gff3 to genbank, gff3 to gtf or gtf to gff3" ],
+        TA.Optional,
+        (fun _ ->
+          let from = TA.get_parameter () in
+          let into = TA.get_parameter () in
+          Translate (from, into) |> List.accum Parameters.program);
+      [ "--translate-with" ],
+        Some "<table_file>",
+        [ "translate the register with the table in the file, whose";
+          "header names the two formats" ],
+        TA.Optional,
+        (fun _ -> Translate_with (TA.get_parameter ()) |> List.accum Parameters.program);
+      [ "--translation-table" ],
+        Some "<genbank|gff3|gtf> <genbank|gff3|gtf>",
+        [ "print the built-in table for the pair to standard output,";
+          "to be copied, edited and used with '--translate-with'" ],
+        TA.Optional,
+        (fun _ ->
+          let from = TA.get_parameter () in
+          let into = TA.get_parameter () in
+          Print_translation (from, into) |> List.accum Parameters.program);
+      [ "--drop-mrna" ],
+        None,
+        [ "in every translation, leave the mRNA level out, so that a";
+          "CDS stands directly beneath its gene as in a viral or";
+          "prokaryotic annotation.  A feature that is itself an mRNA";
+          "is dropped" ],
+        TA.Optional,
+        (fun _ -> Parameters.drop_mrna := true);
+      [ "--strict-gtf" ],
+        None,
+        [ "in every translation to gtf, drop a feature whose type GTF";
+          "has no row for, such as a mature peptide, rather than";
+          "keeping it under its own type" ],
+        TA.Optional,
+        (fun _ -> Parameters.strict_gtf := true);
       TA.make_separator_multiline
         [ "";
           "Reference (multi-FASTA) input.";
@@ -654,6 +709,56 @@ let () =
           matched total (String.pluralize_int "feature" total)
           (A.Selection.to_string !selection)
       end in
+    (* The types a GTF row may carry, as AGAT's strictest GTF admits them. *)
+    let gtf_types =
+      [ "gene"; "transcript"; "exon"; "CDS"; "five_prime_utr"; "three_prime_utr";
+        "start_codon"; "stop_codon"; "Selenocysteine" ] in
+    let builtin_translation from into =
+      match A.Translation.builtin ~from ~into with
+      | Some table -> table
+      | None ->
+        Exception.raise __FUNCTION__ Initialize
+          (Printf.sprintf "There is no built-in translation from '%s' to '%s': there are %s"
+             from into
+             (List.map (fun (a, b) -> a ^ " to " ^ b) A.Translation.builtin_pairs
+              |> String.concat ", ")) in
+    let translate table =
+      let from, into = A.Translation.formats table in
+      let strict = !Parameters.strict_gtf && into = "gtf" in
+      let translated, report =
+        A.Translation.apply
+          ~drop_levels:(if !Parameters.drop_mrna then [ "mRNA" ] else [])
+          ~keep_only:(if strict then gtf_types else [])
+          table !current in
+      current := translated;
+      (* WHAT WAS DROPPED IS ALWAYS SAID.  Files that are not what their format says
+         they should be are common, and a feature that goes missing without a word is
+         the worst way to find one. *)
+      let listed what = function
+        | [] -> ()
+        | l ->
+          Printf.eprintf "(%s): %s: %s\n%!" info.Tools.Argv.name what
+            (List.map (fun (path, n) -> Printf.sprintf "%s (%d)" path n) l |> String.concat ", ") in
+      listed "dropped, as no row of the table lists them" report.A.Translation.unlisted;
+      listed "dropped by the table" report.dropped;
+      listed
+        ("dropped by "
+         ^ String.concat " and "
+             ((if !Parameters.drop_mrna then [ "--drop-mrna" ] else [])
+              @ (if strict then [ "--strict-gtf" ] else [])))
+        report.dropped_by_option;
+      if !Parameters.verbose then begin
+        let made_up = List.fold_left (fun a (_, n) -> a + n) 0 report.invented in
+        Printf.eprintf "(%s): translated %s to %s: %d %s placed, %d %s made up%s, %d %s broken by source order\n%!"
+          info.Tools.Argv.name from into
+          report.placed (String.pluralize_int "feature" report.placed)
+          made_up (String.pluralize_int "level" made_up)
+          (match report.invented with
+           | [] -> ""
+           | l -> " (" ^ (List.map (fun (path, n) -> Printf.sprintf "%s %d" path n) l |> String.concat ", ") ^ ")")
+          report.ties (String.pluralize_int "tie" report.ties)
+      end;
+      if !selection <> A.Selection.All then report_selection () in
     List.iter (function
       | Empty ->
         current := A.Annotation.create A.GFF3.default_hierarchy
@@ -799,6 +904,10 @@ let () =
             if !Parameters.verbose then
               Printf.eprintf "(%s): wrote %d %s %s to %s\n%!" info.Tools.Argv.name !n
                 (Sequence_kind.to_string kind) (String.pluralize_int "sequence" !n) path)
+      | Translate (from, into) -> translate (builtin_translation from into)
+      | Translate_with path -> translate (A.Translation.of_file path)
+      | Print_translation (from, into) ->
+        print_string (A.Translation.to_string (builtin_translation from into))
       | Summary -> summary ()
     ) program
   with

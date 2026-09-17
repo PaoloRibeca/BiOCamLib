@@ -879,6 +879,145 @@ let test_writer_compliance () =
     List.iter (fun p -> try Sys.remove p with Sys_error _ -> ())
       [ prefix; prefix ^ ".Annotation"; gzipped ^ ".Annotation"; garbage ^ ".Annotation" ])
 
+let test_translation () =
+  Testing.section "Translation between formats" (fun () ->
+    let translate ?drop_levels ?keep_only ~from ~into ann =
+      A.Translation.apply ?drop_levels ?keep_only
+        (Option.get (A.Translation.builtin ~from ~into)) ann in
+    (* Every GFF3 row as "type lo..hi <- the type and first row of its parent", which
+       is what placement decides and what an identifier does not. *)
+    let relations text =
+      let rows =
+        String.split_on_char '\n' text
+        |> List.filter_map (fun line ->
+             match String.split_on_char '\t' line with
+             | [ _; _; kind; lo; hi; _; _; _; attrs ] ->
+               let get key =
+                 String.split_on_char ';' attrs
+                 |> List.find_map (fun kv ->
+                      match String.index_opt kv '=' with
+                      | Some i when String.sub kv 0 i = key ->
+                        Some (String.sub kv (i + 1) (String.length kv - i - 1))
+                      | _ -> None) in
+               Some (get "ID", get "Parent", Printf.sprintf "%s %s..%s" kind lo hi)
+             | _ -> None) in
+      List.map (fun (_, parent, me) ->
+        me ^ " <- "
+        ^ match parent with
+          | None -> "top"
+          | Some p ->
+            (match List.find_opt (fun (id, _, _) -> id = Some p) rows with
+             | Some (_, _, described) -> described
+             | None -> "?")) rows in
+    let to_gff3 ?drop_levels ann =
+      let translated, report = translate ?drop_levels ~from:"genbank" ~into:"gff3" ann in
+      relations (A.GFF3.to_string translated), report in
+    (* Overlap decides nothing: two loci whose reading frames overlap are two genes,
+       each with its own CDS beneath it, as NCBI's norovirus records have them. *)
+    let loci =
+      genbank [ "     gene            1..15"; "                     /gene=\"a\"";
+                "     CDS             1..15"; "                     /gene=\"a\"";
+                "     mat_peptide     4..12"; "                     /gene=\"a\"";
+                "     gene            10..30"; "                     /gene=\"b\"";
+                "     CDS             10..27"; "                     /gene=\"b\"" ]
+      |> A.GenBank.of_string in
+    let rels, report = to_gff3 ~drop_levels:[ "mRNA" ] loci in
+    Testing.check "overlapping reading frames with distinct /gene are two genes, each over its CDS"
+      (fun () -> List.mem "CDS 1..15 <- gene 1..15" rels && List.mem "CDS 10..27 <- gene 10..30" rels);
+    Testing.check "a peptide goes beneath the CDS of its locus"
+      (fun () -> List.mem "mature_protein_region_of_CDS 4..12 <- CDS 1..15" rels);
+    Testing.check "source becomes a region, at the top"
+      (fun () -> List.mem "region 1..30 <- top" rels);
+    Testing.check "and nothing is made up when the record has every level"
+      (fun () -> report.A.Translation.invented = []);
+    (* The default is the eukaryotic gene model: an mRNA is made for each CDS that has
+       none, beneath the gene of its locus. *)
+    let rels, report = to_gff3 loci in
+    Testing.check "by default each CDS gets an mRNA of its own, beneath its gene"
+      (fun () ->
+        List.mem "CDS 1..15 <- mRNA 1..15" rels && List.mem "mRNA 1..15 <- gene 1..15" rels
+        && List.mem "CDS 10..27 <- mRNA 10..27" rels && List.mem "mRNA 10..27 <- gene 10..30" rels);
+    Testing.check "and the report counts what was made up"
+      (fun () -> report.A.Translation.invented = [ "gene->mRNA", 2 ]);
+    (* Two products of one locus, and the same peptide listed after each: containment
+       cannot tell the two parents apart, the order of the flat file can -- which is how
+       NCBI's SARS-CoV-2 record places nsp1 to nsp10 twice. *)
+    let polyproteins =
+      genbank [ "     CDS             1..27"; "                     /locus_tag=\"L\"";
+                "     mat_peptide     1..9"; "                     /locus_tag=\"L\"";
+                "     CDS             1..15"; "                     /locus_tag=\"L\"";
+                "     mat_peptide     1..9"; "                     /locus_tag=\"L\"" ]
+      |> A.GenBank.of_string in
+    let rels, report = to_gff3 ~drop_levels:[ "mRNA" ] polyproteins in
+    let count x = List.length (List.filter ((=) x) rels) in
+    Testing.check "each copy of a peptide goes beneath the CDS listed before it"
+      (fun () ->
+        count "mature_protein_region_of_CDS 1..9 <- CDS 1..27" = 1
+        && count "mature_protein_region_of_CDS 1..9 <- CDS 1..15" = 1);
+    Testing.check_int "and both calls are counted as ties" ~expected:2 report.A.Translation.ties;
+    Testing.check "two CDSs of one locus share the one gene made for them"
+      (fun () -> List.mem "CDS 1..27 <- gene 1..27" rels && List.mem "CDS 1..15 <- gene 1..27" rels);
+    (* A symbol shared by copies far apart is two loci, not one.  No gene features, so
+       that it is the grouping deciding and not containment rescuing it: taken as one
+       locus, the two copies would share one gene made up across both. *)
+    let copies =
+      genbank [ "     tRNA            1..6"; "                     /gene=\"t\"";
+                "     tRNA            20..26"; "                     /gene=\"t\"" ]
+      |> A.GenBank.of_string in
+    let rels, _ = to_gff3 copies in
+    Testing.check "copies of a gene sharing one symbol get a gene each"
+      (fun () -> List.mem "tRNA 1..6 <- gene 1..6" rels && List.mem "tRNA 20..26 <- gene 20..26" rels);
+    (* A row with a condition wins where the condition holds. *)
+    let rnas =
+      genbank [ "     ncRNA           1..9"; "                     /ncRNA_class=\"lncRNA\"";
+                "     ncRNA           12..20"; "                     /ncRNA_class=\"other\"" ]
+      |> A.GenBank.of_string in
+    let rels, _ = to_gff3 rnas in
+    Testing.check "a conditioned row renders an lncRNA as lnc_RNA, the plain row the rest as ncRNA"
+      (fun () ->
+        List.exists (fun r -> String.starts_with ~prefix:"lnc_RNA 1..9 " r) rels
+        && List.exists (fun r -> String.starts_with ~prefix:"ncRNA 12..20 " r) rels);
+    (* What is not translated is dropped, and always said, apart by reason. *)
+    let table =
+      A.Translation.of_string "#genbank\t#gff3\nsource\tregion\nsource->gene\tgene\nsource->CDS\t.\n" in
+    let _, report = A.Translation.apply table loci in
+    Testing.check "a path no row lists is dropped and listed, with its count"
+      (fun () -> report.A.Translation.unlisted = [ "source->mat_peptide", 1 ]);
+    Testing.check "a path a row drops is listed apart"
+      (fun () -> report.A.Translation.dropped = [ "source->CDS", 2 ]);
+    let gff3_register, _ = translate ~from:"genbank" ~into:"gff3" loci in
+    let _, report =
+      translate ~keep_only:[ "gene"; "transcript"; "exon"; "CDS" ] ~from:"gff3" ~into:"gtf"
+        gff3_register in
+    Testing.check "keep_only drops, and lists, a type GTF has no row for"
+      (fun () ->
+        report.A.Translation.dropped_by_option
+        = [ "gene->mRNA->CDS->mature_protein_region_of_CDS", 1 ]);
+    Testing.check "and GTF's table drops the region, and says so"
+      (fun () -> report.A.Translation.dropped = [ "region", 1 ]);
+    (* GenBank's source spans a record: made once for a sequence, not once per locus. *)
+    let bare =
+      gff3 [ "chr1\tdemo\tgene\t1\t9\t.\t+\t.\tID=g1";
+             "chr1\tdemo\tgene\t12\t20\t.\t+\t.\tID=g2" ]
+      |> A.GFF3.of_string in
+    let _, report = translate ~from:"gff3" ~into:"genbank" bare in
+    Testing.check "a GFF3 with no region gets one source for its sequence"
+      (fun () -> report.A.Translation.invented = [ "source", 1 ]);
+    (* A table is data: it prints as it parses. *)
+    Testing.check "every built-in table reads back from what it prints"
+      (fun () ->
+        List.for_all (fun (from, into) ->
+          let t = Option.get (A.Translation.builtin ~from ~into) in
+          let printed = A.Translation.to_string t in
+          A.Translation.to_string (A.Translation.of_string printed) = printed)
+          A.Translation.builtin_pairs);
+    Testing.check_raises ~re:"format is named"
+      "a table whose first line does not name the formats is refused"
+      (fun () -> ignore (A.Translation.of_string "source\tregion\n"));
+    Testing.check_raises ~re:"unknown directive"
+      "and so is a directive it does not know"
+      (fun () -> ignore (A.Translation.of_string "#genbank\t#gff3\n#nonesuch\tx\n")))
+
 let test_tabular () =
   Testing.section "Tabular format" (fun () ->
     let describe ann =
@@ -2067,5 +2206,6 @@ let run () =
   test_hierarchy ();
   test_gtf ();
   test_writer_compliance ();
+  test_translation ();
   test_mutation ()
 

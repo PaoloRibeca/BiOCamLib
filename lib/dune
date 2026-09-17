@@ -38,6 +38,7 @@
    Annotations_GenBank
    Annotations_Tabular
    Annotations_Tbl
+   Annotations_Translation
    Annotations_Lex
    Annotations_Parse
    Trees_Base
