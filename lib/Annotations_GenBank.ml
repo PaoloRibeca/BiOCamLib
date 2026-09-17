@@ -52,24 +52,32 @@ module GenBank:
     val default_hierarchy: Hierarchy.t
   end
 = struct
-  (* INSDC feature table standard categories, flat under an
-     implicit [source]: features in a GenBank record do not
-     carry explicit parent links and the format groups them
-     only by interval containment.  Users wanting a richer
-     hierarchy can swap this out via [?hierarchy]. *)
+  (* The INSDC feature keys, flat under an implicit [source]: features in a GenBank
+     record carry no parent links, and the format groups them only by interval
+     containment.  The list is the whole vocabulary a record may use -- the keys of
+     the current Feature Table Definition, then those it has retired and older
+     records still carry, then three that are not INSDC's but were admitted before
+     and are kept so that nothing read until now stops reading.  It used to be
+     twenty-odd keys, some spelled as Sequence Ontology terms, and refused NCBI's
+     own SARS-CoV-2 record over "5'UTR".  Users wanting a nested hierarchy translate
+     to one; see [Annotations.Translation]. *)
   let default_hierarchy =
     Hierarchy.of_string
       "(source \
-         (gene, mRNA, tRNA, rRNA, ncRNA, misc_RNA, \
-          CDS, exon, intron, \
-          five_prime_UTR, three_prime_UTR, \
-          promoter, regulatory, \
-          repeat_region, misc_feature, \
-          variation, polyA_signal, polyA_site, \
-          primer_bind, protein_bind, \
-          oriT, oriC, \
-          sig_peptide, mat_peptide, propeptide, \
-          stem_loop, terminator))"
+         (assembly_gap, C_region, CDS, centromere, D-loop, D_segment, exon, gap, \
+          gene, iDNA, intron, J_segment, mat_peptide, misc_binding, \
+          misc_difference, misc_feature, misc_recomb, misc_RNA, misc_structure, \
+          mobile_element, modified_base, mRNA, ncRNA, N_region, old_sequence, \
+          operon, oriT, polyA_site, precursor_RNA, prim_transcript, primer_bind, \
+          propeptide, protein_bind, regulatory, repeat_region, rep_origin, rRNA, \
+          S_region, sig_peptide, stem_loop, STS, telomere, tmRNA, \
+          transit_peptide, tRNA, unsure, V_region, V_segment, variation, \
+          3'UTR, 5'UTR, \
+          -10_signal, -35_signal, 3'clip, 5'clip, attenuator, CAAT_signal, \
+          conflict, enhancer, GC_signal, LTR, misc_signal, polyA_signal, \
+          promoter, RBS, repeat_unit, satellite, scRNA, snoRNA, snRNA, \
+          TATA_signal, terminator, \
+          five_prime_UTR, three_prime_UTR, oriC))"
   let dialects = [ "standard", default_hierarchy ]
   (* GenBank record framing is handled by the modal [genbank]
      ocamllex rule: it reads the file line by line, classifying
