@@ -221,7 +221,28 @@ let test_genbank_records () =
         genbank [
           "     CDS             1..15";
           "                     /codon_start=\"7\"" ]
-        |> A.GenBank.of_string))
+        |> A.GenBank.of_string);
+    (* Values wrapped across lines, as NCBI writes every long one. *)
+    let wrapped =
+      genbank [
+        "     CDS             1..15";
+        "                     /note=\"similar to interleukin-10 domain protein in Ovine";
+        "                     herpesvirus 2\"";
+        "                     /translation=\"MPGKRLAHRQLAHR";
+        "                     QLAH\"" ]
+      |> A.GenBank.of_string in
+    let qualifier key =
+      match feature_at wrapped "CDS" with
+      | Some (_, f) ->
+        (match A.Annotation.attr_get wrapped f key with
+         | Some (v :: _) -> v
+         | _ -> "(absent)")
+      | None -> "(no CDS)" in
+    Testing.check_string "a line break inside a wrapped value reads as a space"
+      ~expected:"similar to interleukin-10 domain protein in Ovine herpesvirus 2"
+      (qualifier "note");
+    Testing.check_string "except inside a /translation, which is a sequence"
+      ~expected:"MPGKRLAHRQLAHRQLAH" (qualifier "translation"))
 
 (* GenBank round trip.  Unlike GFF3, GenBank keeps a joined feature as one
    feature and can spell every location this AST can hold, so it is the format

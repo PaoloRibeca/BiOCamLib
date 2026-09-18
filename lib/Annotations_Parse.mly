@@ -318,7 +318,14 @@ gb_qualifiers:
     { [] }
   | Gb_QUAL_LINE gb_qual_continuations gb_qualifiers
     { let key, value_stub = $1 in
-      let value = String.concat "" (value_stub :: $2) in
+      (* A value wrapped across lines was broken at a space, which the wrap
+         took: a line break inside free text reads as one space, as Biopython
+         and BioPerl read it.  A /translation is the exception, being a
+         sequence, which is broken anywhere and has no spaces to restore.
+         Concatenating every value outright made NCBI's wrapped notes read
+         "protein in Ovineherpesvirus 2". *)
+      let value =
+        String.concat (if key = "translation" then "" else " ") (value_stub :: $2) in
       (* Quoted multi-line values carry one double quote on the
          first physical line and the matching one on the last;
          both survive the per-line lexer because each individual
