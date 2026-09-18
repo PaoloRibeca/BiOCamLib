@@ -112,6 +112,14 @@ include (
         val formats: t -> string * string
         val builtin: from:string -> into:string -> t option
         val builtin_pairs: (string * string) list
+        (* What the table makes of one path, with no feature to test a condition on,
+           so that only unconditioned rows apply: [None] where no row lists it, [Some
+           None] where a row drops it.  [drop_levels] as in [apply]. *)
+        val path: ?drop_levels:string list -> t -> string list -> string list option option
+        (* The standard path in format [into] ending with a category, as the built-in
+           table into that format spells it, or [None] where it has none.
+           [drop_levels] takes levels out of it as in [apply], never the category. *)
+        val complete: ?drop_levels:string list -> into:string -> string -> string list option
         type report = {
           placed: int;
           unlisted: (string * int) list;
@@ -701,6 +709,16 @@ include (
         val to_string: t -> string
         val of_string: string -> t
         val of_file: string -> t
+        (* A [*] where a category would go admits any category there, and
+           anything beneath it -- also what a named sibling of it does not admit:
+           [of_string "*"] takes a file's structure as the file states it, and is
+           GFF3's default.  [is_open] says whether a [*] occurs anywhere.
+           [merge a b] adds [b] to [a], recursively by name and in [a]'s order.
+           [of_paths] is the hierarchy that exactly admits the paths given, which
+           omit the implicit root, in the order they are first seen. *)
+        val is_open: t -> bool
+        val merge: t -> t -> t
+        val of_paths: string list list -> t
       end
     (* Coordinates as the file formats write them, which is not how the library
        holds them: intervals are 0-based half-open internally and 1-based
@@ -775,6 +793,7 @@ include (
         type t
         val create: Hierarchy.t -> t
         val hierarchy: t -> Hierarchy.t
+        val with_hierarchy: t -> Hierarchy.t -> t
         (* The interning tables.  Needed to resolve a [Path.t] or a [Seq.t] by
            hand; the accessors below do it for the common cases. *)
         val paths: t -> Path.Table.t
@@ -909,6 +928,14 @@ include (
       val formats: t -> string * string
       val builtin: from:string -> into:string -> t option
       val builtin_pairs: (string * string) list
+      (* What the table makes of one path, with no feature to test a condition on,
+         so that only unconditioned rows apply: [None] where no row lists it, [Some
+         None] where a row drops it.  [drop_levels] as in [apply]. *)
+      val path: ?drop_levels:string list -> t -> string list -> string list option option
+      (* The standard path in format [into] ending with a category, as the built-in
+         table into that format spells it, or [None] where it has none.
+         [drop_levels] takes levels out of it as in [apply], never the category. *)
+      val complete: ?drop_levels:string list -> into:string -> string -> string list option
       type report = {
         placed: int;
         unlisted: (string * int) list;

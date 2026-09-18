@@ -6,9 +6,12 @@
 
     Annotations_GFF3.ml reads and writes GFF3, the nine-column TSV
     of the current INSDC standard, including the [##FASTA] directive
-    that carries a reference alongside the annotation.  It ships two
-    dialects: a broad default hierarchy and [gencode_hierarchy],
-    derived from a survey of GENCODE v47 basic.
+    that carries a reference alongside the annotation.  Its default
+    hierarchy is open, [*]: a GFF3 file states its own structure through
+    [Parent=], and the reader takes it as stated.  Two dialects check a
+    file against a fixed vocabulary instead: [gencode], derived from a
+    survey of GENCODE v47 basic, and [broad], the list that used to be
+    the default.
 
     This program was designed and developed by the author(s),
     with the assistance of the following AI tool(s):
@@ -44,7 +47,14 @@ module GFF3:
     val gencode_hierarchy: Hierarchy.t
   end
 = struct
-  let default_hierarchy = default_gff3_hierarchy
+  (* OPEN.  A GFF3 file states its structure through [Parent=], so the reader
+     takes it as the file states it, and leaves the register holding the
+     structure actually read -- see [read].  A fixed default checked every path
+     against a vocabulary no fixed list can cover: NCBI's own GFF3 nests a
+     [mature_protein_region_of_CDS] beneath a CDS and puts a [terminal_repeat]
+     at the top, and was refused for both.  A caller who wants a file checked
+     names a hierarchy, a dialect below or one of its own. *)
+  let default_hierarchy = Hierarchy.of_string "*"
   (* GENCODE files (and most Ensembl GFF3) collapse every
      transcript biotype into the single type [transcript]
      (with the actual biotype carried as a transcript_type
@@ -63,12 +73,83 @@ module GFF3:
               start_codon, stop_codon))))"
   let dialects = [
     "standard", default_hierarchy;
+    "broad", default_gff3_hierarchy;
     "gencode", gencode_hierarchy
   ]
-  let parse_attributes s =
-    let lexbuf = Lexing.from_string ~with_positions:true s in
-    parse_with ~what:(Printf.sprintf "GFF3 attributes %S" s)
-      Annotations_Parse.gff_attribute_list Annotations_Lex.gff_attributes lexbuf
+  (* COLUMN 9 AS FILES WRITE IT, and not only as the specification says it
+     should be.  The specification reserves [;] [=] [&] [,] and has them
+     percent-encoded inside a value, and a good many files -- this library's own,
+     before it escaped anything, among them -- leave some of them raw.  The string
+     is repaired before the grammar sees it, so that a compliant one is parsed
+     exactly as before, and every repair is reported through [warn]:
+     - a fragment after a [;] that cannot be an attribute, having no [=] and not
+       being a bare key, is the rest of the value before it, the [;] having been
+       meant literally, as in [note="similar to Bov2.b3; earlystop codon"];
+     - a bare key, [pseudo], is an attribute present with no value, [pseudo=];
+     - a raw [=] or [&] inside a value, and a [%] not starting an escape, are
+       escaped.
+     A comma cannot be told from the separator between values, and is left
+     alone.  Quotes mean nothing in GFF3 and are kept, as data. *)
+  let is_key s =
+    s <> ""
+    && String.for_all
+         (function 'A'..'Z' | 'a'..'z' | '0'..'9' | '_' | '.' | ':' | '-' -> true | _ -> false)
+         s
+  let escape_value ~warn ~key v =
+    let buf = Buffer.create (String.length v) and n = String.length v in
+    let hex = function '0'..'9' | 'a'..'f' | 'A'..'F' -> true | _ -> false in
+    String.iteri (fun i c ->
+      match c with
+      | ';' -> Buffer.add_string buf "%3B"
+      | '=' ->
+        warn (Printf.sprintf "an unescaped '=' in the value of '%s' was read as part of it" key);
+        Buffer.add_string buf "%3D"
+      | '&' ->
+        warn (Printf.sprintf "an unescaped '&' in the value of '%s' was read as part of it" key);
+        Buffer.add_string buf "%26"
+      | '%' when not (i + 2 < n && hex v.[i + 1] && hex v.[i + 2]) ->
+        warn (Printf.sprintf "a '%%' in the value of '%s' starts no escape, and was read as itself" key);
+        Buffer.add_string buf "%25"
+      | c -> Buffer.add_char buf c) v;
+    Buffer.contents buf
+  let repair_attributes ~warn s =
+    let attrs = ref [] in
+    List.iter (fun piece ->
+      let trimmed = String.trim piece in
+      if trimmed <> "" then
+        match String.index_opt piece '=' with
+        | Some i when is_key (String.trim (String.sub piece 0 i)) ->
+          List.accum attrs
+            (String.trim (String.sub piece 0 i),
+             Some (String.sub piece (i + 1) (String.length piece - i - 1)))
+        | _ when is_key trimmed ->
+          warn (Printf.sprintf "attribute '%s' has no '=', and was read as present with no value" trimmed);
+          List.accum attrs (trimmed, Some "")
+        | _ ->
+          match !attrs with
+          | (key, Some v) :: rest ->
+            warn (Printf.sprintf "an unescaped ';' in the value of '%s' was read as part of it" key);
+            attrs := (key, Some (v ^ ";" ^ piece)) :: rest
+          | _ ->
+            (* Nothing to attach it to: left as it is, for the grammar to refuse. *)
+            List.accum attrs (piece, None))
+      (String.split_on_char ';' s);
+    List.rev_map (fun (key, v) ->
+        match v with
+        | None -> key
+        | Some v -> key ^ "=" ^ escape_value ~warn ~key v)
+      !attrs
+    |> String.concat ";"
+  let parse_attributes ?(warn = fun _ -> ()) s =
+    match String.trim s with
+    (* GFF3's empty column, which is a "." only when it is the whole column: one
+       inside it is a value like any other, as in [start_range=.,1]. *)
+    | "" | "." -> []
+    | _ ->
+      let s = repair_attributes ~warn s in
+      let lexbuf = Lexing.from_string ~with_positions:true s in
+      parse_with ~what:(Printf.sprintf "GFF3 attributes %S" s)
+        Annotations_Parse.gff_attribute_list Annotations_Lex.gff_attributes lexbuf
   (* Single GFF3 row -> (id, parent_id option, type, feature).
      The [seq] and [attributes] of [row_feature] are
      pre-interned against the supplied [seqs] / [attr_keys]
@@ -80,7 +161,7 @@ module GFF3:
     row_type: string;
     row_feature: feature_t
   }
-  let parse_row ~seqs ~attr_keys ~values line_no fields =
+  let parse_row ?(warn = fun _ -> ()) ~seqs ~attr_keys ~values line_no fields =
     if Array.length fields <> 9 then
       Exception.raise __FUNCTION__ IO_Format
         (Printf.sprintf "On line %d: GFF3 row has %d columns, expected 9"
@@ -96,7 +177,7 @@ module GFF3:
     and score = score_of_field fields.(5)
     and strand = strand_of_field fields.(6)
     and phase = phase_of_field fields.(7)
-    and attrs = parse_attributes fields.(8) in
+    and attrs = parse_attributes ~warn fields.(8) in
     let attr_map =
       List.fold_left (fun m (k, vs) ->
         let kid = AttrKey.intern attr_keys k in
@@ -125,14 +206,14 @@ module GFF3:
       attributes = attr_map
     } in
     { row_id = id; row_parent = parent; row_type = ftype; row_feature = feature }
-  let read_rows ~seqs ~attr_keys ~values s =
+  let read_rows ?(warn = fun _ _ -> ()) ~seqs ~attr_keys ~values s =
     let pragmas = ref [] and rows = ref [] and sequence = ref "" in
     iter_tsv_lines s
       ~pragma:(fun body -> List.accum pragmas body)
       ~fasta:(fun body -> sequence := body)
       ~data:(fun lnum fields ->
         List.accum rows
-          (lnum, parse_row ~seqs ~attr_keys ~values lnum fields));
+          (lnum, parse_row ~warn:(warn lnum) ~seqs ~attr_keys ~values lnum fields));
     List.rev !pragmas, List.rev !rows, !sequence
   (* Walk the parent-ID DAG, computing each row's full path
      from root and emitting (path, feature) pairs in DFS
@@ -243,6 +324,18 @@ module GFF3:
          with Not_found -> ()) in
     List.iter emit toplevel;
     List.rev !acc
+  (* What [repair_attributes] did, on standard error: the first few repairs with
+     their lines, then how many more there were.  Reading goes on regardless, and a
+     compliant file says nothing. *)
+  let max_reported_repairs = 10
+  let report_repairs repairs n =
+    if n > 0 then begin
+      let program = Filename.basename Sys.executable_name |> Filename.remove_extension in
+      List.iter (fun (lnum, message) ->
+        Printf.eprintf "(%s): GFF3 line %d: %s\n%!" program lnum message) repairs;
+      if n > List.length repairs then
+        Printf.eprintf "(%s): GFF3: %d more repairs like these\n%!" program (n - List.length repairs)
+    end
   (* Carrier-based reader: install the GFF3 features and
      pragmas encoded in [s] into [ann_in], using the carrier's
      hierarchy for validation.  The carrier's interning tables
@@ -251,11 +344,34 @@ module GFF3:
   let read ann_in s =
     let ann = ref ann_in in
     let hierarchy = Annotation.hierarchy !ann in
+    (* Repairs of column 9, reported once the file has been read. *)
+    let repairs = ref [] and n_repairs = ref 0 in
+    let warn lnum message =
+      incr n_repairs;
+      if !n_repairs <= max_reported_repairs then List.accum repairs (lnum, message) in
     let pragmas, rows, sequence =
-      read_rows
+      read_rows ~warn
         ~seqs:(seqs !ann) ~attr_keys:(attr_keys !ann)
         ~values:(values !ann) s in
     add_dfs_with_seq_bloom ann (walk_dfs hierarchy (coalesce_rows rows));
+    (* An open hierarchy -- the default -- admitted whatever the file stated, and
+       stays open: the paths actually read are recorded in it beside its [*], so
+       that the register lists the structure it holds while a later read into it is
+       as open as this one was.  Closing it is the caller's to decide, by naming a
+       hierarchy. *)
+    if Hierarchy.is_open hierarchy then begin
+      let seen = Hashtbl.create 64 and order = ref [] in
+      iter_paths (fun ~path _ ->
+        let p = List.tl path in
+        if not (Hashtbl.mem seen p) then begin
+          Hashtbl.add seen p ();
+          List.accum order p
+        end) !ann;
+      ann :=
+        with_hierarchy !ann
+          (Hierarchy.merge hierarchy (Hierarchy.of_paths (List.rev !order)))
+    end;
+    report_repairs (List.rev !repairs) !n_repairs;
     List.iter (fun pragma ->
       match String.index_opt pragma ' ' with
       | None -> ann := add_metadata !ann ~key:pragma ~value:""
@@ -298,10 +414,23 @@ module GFF3:
      the way in, so the writer has to percent-encode on the way out, or a value
      containing one of them changes meaning on the next read: a comma splits it
      into two values, a semicolon into two attributes.
-     Space is in the set although GFF3 permits it unencoded, because this
-     lexer treats a space as a token separator: encoding it is what makes
-     [product=hypothetical protein] survive being written and read again. *)
-  let column_9_reserved = ";=&, "
+     A space is not in the set.  GFF3 permits it unencoded, nobody encodes it,
+     and the lexer keeps it inside a value, so [product=hypothetical protein]
+     reads back as written.  A leading or a trailing one is still escaped,
+     being what a reader is likeliest to trim. *)
+  let column_9_reserved = ";=&,"
+  let encode_column_9 s =
+    let e = Annotations_Lex.url_encode ~reserved:column_9_reserved s in
+    let n = String.length e in
+    let lead = ref 0 and trail = ref 0 in
+    while !lead < n && e.[!lead] = ' ' do incr lead done;
+    while !trail < n - !lead && e.[n - 1 - !trail] = ' ' do incr trail done;
+    if !lead = 0 && !trail = 0 then
+      e
+    else
+      String.concat "" (List.init !lead (fun _ -> "%20"))
+      ^ String.sub e !lead (n - !lead - !trail)
+      ^ String.concat "" (List.init !trail (fun _ -> "%20"))
   (* [ID] and [Parent] are where GFF3 keeps structure, and the register keeps
      the same thing in its forest.  They are written from the forest here, and
      any [ID] or [Parent] sitting among the attributes -- left there by a GFF3
@@ -313,7 +442,7 @@ module GFF3:
      had.  A register that never came from GFF3, a GenBank one for instance, has
      no such attributes at all, which is why its structure used to vanish. *)
   let attribute_string ann ~id ~parent feature =
-    let encode = Annotations_Lex.url_encode ~reserved:column_9_reserved in
+    let encode = encode_column_9 in
     let structural =
       (match id with Some i -> [ "ID=" ^ encode i ] | None -> [])
       @ (match parent with Some p -> [ "Parent=" ^ encode p ] | None -> []) in

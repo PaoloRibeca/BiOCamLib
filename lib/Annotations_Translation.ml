@@ -46,6 +46,14 @@ module Translation:
     (* The tables that come with the library, by the names of the two formats. *)
     val builtin: from:string -> into:string -> t option
     val builtin_pairs: (string * string) list
+    (* What the table makes of one path, with no feature to test a condition on,
+       so that only unconditioned rows apply: [None] where no row lists it, [Some
+       None] where a row drops it.  [drop_levels] as in [apply]. *)
+    val path: ?drop_levels:string list -> t -> string list -> string list option option
+    (* The standard path in format [into] ending with a category, as the built-in
+       table into that format spells it, or [None] where it has none.
+       [drop_levels] takes levels out of it as in [apply], never the category. *)
+    val complete: ?drop_levels:string list -> into:string -> string -> string list option
     (* What a translation did that was not forced, every list in order of first
        appearance and with its count: the source paths no row lists, those a row
        drops, those an option drops, and the target levels made up. *)
@@ -256,19 +264,6 @@ module Translation:
         inner
     let prefix_of path = List.filteri (fun i _ -> i < List.length path - 1) path
 
-    (* The target hierarchy is the paths actually used, in order of first use. *)
-    type trie = Trie of string * trie list
-    let hierarchy_of_paths paths =
-      let rec insert kids = function
-        | [] -> kids
-        | name :: rest ->
-          let rec go = function
-            | [] -> [ Trie (name, insert [] rest) ]
-            | Trie (n, grandkids) :: others when n = name -> Trie (n, insert grandkids rest) :: others
-            | other :: others -> other :: go others in
-          go kids in
-      let rec build (Trie (name, kids)) = Hierarchy.node name (List.map build kids) in
-      Hierarchy.node implicit_root_name (List.map build (List.fold_left insert [] paths))
 
     let apply ?(drop_levels = []) ?(keep_only = []) t ann =
       let count_unlisted, unlisted = counter () and count_dropped, dropped = counter ()
@@ -512,7 +507,8 @@ module Translation:
         end;
         List.iter collect (by_index n.n_children) in
       List.iter collect (by_index !roots);
-      let result = ref (create (hierarchy_of_paths (List.rev !path_order))) in
+      (* The target hierarchy is the paths actually used, in order of first use. *)
+      let result = ref (create (Hierarchy.of_paths (List.rev !path_order))) in
       (match reference ann with Some r -> result := set_reference !result r | None -> ());
       StringMap.iter
         (fun key values -> List.iter (fun value -> result := add_metadata !result ~key ~value) values)
@@ -800,4 +796,35 @@ module Translation:
       | "gff3", "gtf" -> Some (Lazy.force gff3_to_gtf)
       | "gtf", "gff3" -> Some (Lazy.force gtf_to_gff3)
       | _ -> None
+
+    (* ONE PATH AT A TIME, for whoever declares paths rather than reads features -- a
+       NailIt index deriving one format's column from another's.  With no feature,
+       there is nothing to test a condition on, and only unconditioned rows apply. *)
+    let path ?(drop_levels = []) t p =
+      match row_for t p (fun _ -> None) with
+      | None -> None
+      | Some { into = None; _ } -> Some None
+      | Some { into = Some into; _ } ->
+        let category = List.nth into (List.length into - 1) in
+        if List.mem category drop_levels then Some None
+        else Some (Some (List.filter (fun c -> not (List.mem c drop_levels)) into))
+    (* The standard path in a format for a category, as the built-in table into that
+       format spells it: the target of its first unconditioned row ending there.  GFF3's
+       comes from the GenBank table, GTF's from the GFF3 one, GenBank's from the GFF3
+       one. *)
+    let complete ?(drop_levels = []) ~into category =
+      let table =
+        match String.lowercase_ascii into with
+        | "gff3" -> Some genbank_to_gff3
+        | "gtf" -> Some gff3_to_gtf
+        | "genbank" -> Some gff3_to_genbank
+        | _ -> None in
+      Option.bind table (fun table ->
+        List.find_map
+          (fun r ->
+            match r.condition, r.into with
+            | Always, Some p when List.nth p (List.length p - 1) = category ->
+              Some (List.filter (fun c -> c = category || not (List.mem c drop_levels)) p)
+            | _ -> None)
+          (Lazy.force table).rows)
   end

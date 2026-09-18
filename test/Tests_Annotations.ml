@@ -699,15 +699,25 @@ let test_gff3_fidelity () =
        match feature_at back "CDS" with
        | Some (path, _) -> A.Annotation.path_to_string path
        | None -> "(no CDS)");
-    (* Read under GFF3's own default instead and it is refused, which is the
+    (* Read under a fixed GFF3 vocabulary instead and it is refused, which is the
        correct answer rather than a silent reshaping. *)
-    Testing.check_raises "reading it under GFF3's default hierarchy is refused"
-      (fun () -> ignore (A.GFF3.to_string joined |> A.GFF3.of_string));
-    (* Which is the difference the tabular format exists for.  GFF3 carries the
-       edges between features and never the schema those edges satisfy, so it
-       has to be told; a tabular document states its hierarchy in its metadata
-       and so reads back knowing nothing about it.  The same register, the same
-       absence of an explicit hierarchy, opposite outcomes. *)
+    Testing.check_raises "reading it under a fixed GFF3 vocabulary is refused"
+      (fun () ->
+        ignore
+          (A.GFF3.to_string joined
+           |> A.GFF3.of_string ~hierarchy:(A.Format.dialect_of A.Format.GFF3 "broad")));
+    (* GFF3's own default is open, and reads it back in the shape its [Parent=]
+       edges state. *)
+    Testing.check_string "under GFF3's open default it reads back as its edges say"
+      ~expected:"annotation->source->CDS"
+      (let back = A.GFF3.to_string joined |> A.GFF3.of_string in
+       match feature_at back "CDS" with
+       | Some (path, _) -> A.Annotation.path_to_string path
+       | None -> "(no CDS)");
+    (* What the tabular format keeps that GFF3 cannot is the schema.  GFF3 carries
+       the edges between features and never the schema they satisfy, so an open
+       read admits whatever the edges show; a tabular document states its hierarchy
+       in its metadata, and reads back held to it without being told. *)
     Testing.check_string "a tabular document reads back without being told its hierarchy"
       ~expected:"annotation->source->CDS"
       (let back = A.Tabular.to_string joined |> A.Tabular.of_string in
@@ -1016,7 +1026,38 @@ let test_translation () =
       (fun () -> ignore (A.Translation.of_string "source\tregion\n"));
     Testing.check_raises ~re:"unknown directive"
       "and so is a directive it does not know"
-      (fun () -> ignore (A.Translation.of_string "#genbank\t#gff3\n#nonesuch\tx\n")))
+      (fun () -> ignore (A.Translation.of_string "#genbank\t#gff3\n#nonesuch\tx\n"));
+    (* One path at a time, for a caller that declares paths rather than holds
+       features: a NailIt index deriving one format's column from another's. *)
+    let path ?drop_levels p =
+      match
+        A.Translation.path ?drop_levels
+          (Option.get (A.Translation.builtin ~from:"genbank" ~into:"gff3")) p
+      with
+      | None -> "(no row)"
+      | Some None -> "(dropped)"
+      | Some (Some p) -> String.concat "->" p in
+    Testing.check_string "path translates one path as the table does" ~expected:"gene->mRNA->CDS"
+      (path [ "source"; "CDS" ]);
+    Testing.check_string "leaving out a level it is asked to drop"
+      ~expected:"gene->CDS->mature_protein_region_of_CDS"
+      (path ~drop_levels:[ "mRNA" ] [ "source"; "mat_peptide" ]);
+    Testing.check_string "and answering nothing for a path with no row" ~expected:"(no row)"
+      (path [ "nonesuch" ]);
+    let complete ?drop_levels ~into category =
+      match A.Translation.complete ?drop_levels ~into category with
+      | None -> "(none)"
+      | Some p -> String.concat "->" p in
+    Testing.check_string "complete spells a category's standard path in GFF3"
+      ~expected:"gene->mRNA->CDS" (complete ~into:"gff3" "CDS");
+    Testing.check_string "without the mRNA when asked" ~expected:"gene->CDS"
+      (complete ~drop_levels:[ "mRNA" ] ~into:"gff3" "CDS");
+    Testing.check_string "but never without the category itself" ~expected:"gene->mRNA->CDS"
+      (complete ~drop_levels:[ "CDS" ] ~into:"gff3" "CDS");
+    Testing.check_string "in GTF" ~expected:"gene->transcript->CDS" (complete ~into:"gtf" "CDS");
+    Testing.check_string "and in GenBank" ~expected:"source->CDS" (complete ~into:"genbank" "CDS");
+    Testing.check_string "and nothing for a category no table names" ~expected:"(none)"
+      (complete ~into:"gff3" "nonesuch"))
 
 let test_tabular () =
   Testing.section "Tabular format" (fun () ->
@@ -1966,7 +2007,8 @@ let test_format_dispatch () =
 
 let test_hierarchy () =
   Testing.section "Hierarchy" (fun () ->
-    let h = A.GFF3.default_hierarchy in
+    (* A fixed vocabulary: GFF3's own default is open, and admits everything. *)
+    let h = A.Format.dialect_of A.Format.GFF3 "broad" in
     Testing.check_string "of_string and to_string are inverse"
       ~expected:(A.Hierarchy.to_string h)
       (A.Hierarchy.to_string (A.Hierarchy.of_string (A.Hierarchy.to_string h)));
@@ -2003,6 +2045,151 @@ let test_hierarchy () =
       ~expected:"(gene (exon))" (A.Hierarchy.to_string built);
     Testing.check_string "and its accessors agree" ~expected:"gene"
       (String.concat "," (List.map A.Hierarchy.name (A.Hierarchy.children built))))
+
+(* What [f] printed on stderr, beside what it returned: the GFF3 reader reports
+   its repairs there. *)
+let with_stderr f =
+  let path = Filename.temp_file "BiOCamLib_Tests_" ".stderr" in
+  flush stderr;
+  let saved = Unix.dup Unix.stderr in
+  let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_TRUNC ] 0o600 in
+  Unix.dup2 fd Unix.stderr;
+  Unix.close fd;
+  let restore () =
+    flush stderr;
+    Unix.dup2 saved Unix.stderr;
+    Unix.close saved in
+  Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
+    let result = Fun.protect ~finally:restore f in
+    result, In_channel.with_open_bin path In_channel.input_all)
+
+(* GFF3 as files write it.  The file's own [Parent=] links are its structure, so the
+   default hierarchy is open and records what it was shown; column 9 is repaired
+   where it breaks the specification, and every repair is reported. *)
+
+let test_gff3_as_written () =
+  Testing.section "GFF3 as files write it" (fun () ->
+    let attr ann category key =
+      match feature_at ann category with
+      | Some (_, f) ->
+        (match A.Annotation.attr_get ann f key with
+         | Some vs -> String.concat "|" vs
+         | None -> "(absent)")
+      | None -> "(no " ^ category ^ ")" in
+    let path_of ann category =
+      match feature_at ann category with
+      | Some (path, _) -> A.Annotation.path_to_string path
+      | None -> "(no " ^ category ^ ")" in
+    (* The wildcard. *)
+    let broad = A.Format.dialect_of A.Format.GFF3 "broad" in
+    Testing.check_bool "GFF3's default hierarchy is open" ~expected:true
+      (A.Hierarchy.is_open A.GFF3.default_hierarchy);
+    Testing.check_bool "and a dialect is not" ~expected:false (A.Hierarchy.is_open broad);
+    Testing.check_bool "a [*] admits any category, and anything beneath it" ~expected:true
+      (A.Hierarchy.validate (A.Hierarchy.of_string "*")
+         ~path:[ "annotation"; "nonesuch"; "anything"; "at_all" ]);
+    Testing.check_bool "including what a named sibling does not" ~expected:true
+      (A.Hierarchy.validate (A.Hierarchy.of_string "*, (gene (CDS))")
+         ~path:[ "annotation"; "gene"; "mRNA" ]);
+    Testing.check_bool "while a [*] further down admits nothing above it" ~expected:false
+      (A.Hierarchy.validate (A.Hierarchy.of_string "(gene (*))")
+         ~path:[ "annotation"; "region" ]);
+    Testing.check_string "merge adds what the second has to what the first has"
+      ~expected:"(gene (mRNA, CDS)), region"
+      (A.Hierarchy.to_string
+         (A.Hierarchy.merge (A.Hierarchy.of_string "(gene (mRNA))")
+            (A.Hierarchy.of_string "(gene (CDS)), region")));
+    Testing.check_string "and of_paths builds a hierarchy from the paths it is given"
+      ~expected:"(gene ((mRNA (CDS)), CDS)), region"
+      (A.Hierarchy.to_string
+         (A.Hierarchy.of_paths
+            [ [ "gene"; "mRNA"; "CDS" ]; [ "gene"; "CDS" ]; [ "region" ]; [ "gene" ] ]));
+    (* NCBI's GFF3 for a norovirus, reduced: a region, a gene whose CDS carries its
+       mature peptides, a UTR at the top level, and a partial feature. *)
+    let ncbi =
+      gff3 [
+        "seq1\tGenbank\tregion\t1\t30\t.\t+\t.\tID=seq1:1..30;gbkey=Src;mol_type=genomic RNA";
+        "seq1\tGenbank\tfive_prime_UTR\t1\t3\t.\t+\t.\tID=id-seq1:1..3;gbkey=5'UTR";
+        "seq1\tGenbank\tgene\t4\t27\t.\t+\t.\tID=gene-ORF1;Name=ORF1;gbkey=Gene";
+        "seq1\tGenbank\tCDS\t4\t27\t.\t+\t0\tID=cds-X;Parent=gene-ORF1;start_range=.,4;partial=true";
+        "seq1\tGenbank\tmature_protein_region_of_CDS\t7\t15\t.\t+\t.\tID=id-X:7..15;Parent=cds-X;product=p48" ] in
+    let ann = A.GFF3.of_string ncbi in
+    Testing.check_string "an open read takes its structure from the file's Parent= links"
+      ~expected:"annotation->gene->CDS->mature_protein_region_of_CDS"
+      (path_of ann "mature_protein_region_of_CDS");
+    Testing.check_string "and a feature with no parent sits at the top"
+      ~expected:"annotation->five_prime_UTR" (path_of ann "five_prime_UTR");
+    (* A "." that is a value, and not the whole column, is data.  The lexer once
+       swallowed it and refused NCBI's partial features. *)
+    Testing.check_string "a lone '.' inside column 9 is a value" ~expected:".|4"
+      (attr ann "CDS" "start_range");
+    Testing.check_string "while a '.' that is the whole column is no attributes" ~expected:"(absent)"
+      (attr (A.GFF3.of_string (gff3 [ "chr1\tx\tgene\t1\t10\t.\t+\t.\t." ])) "gene" "ID");
+    Testing.check_string "an unencoded space is part of the value" ~expected:"genomic RNA"
+      (attr ann "region" "mol_type");
+    (* The register describes itself, and stays open. *)
+    let recorded = A.Annotation.hierarchy ann in
+    Testing.check_bool "the register's hierarchy is still open after the read" ~expected:true
+      (A.Hierarchy.is_open recorded);
+    Testing.check_string "and records what the read found beneath a gene" ~expected:"CDS"
+      (String.concat "," (A.Hierarchy.children_of recorded ~path:[ "annotation"; "gene" ]));
+    let again =
+      A.GFF3.read ann
+        (gff3 [ "seq2\tx\tgene\t1\t10\t.\t+\t.\tID=g2";
+                "seq2\tx\tmRNA\t1\t10\t.\t+\t.\tID=t2;Parent=g2" ]) in
+    Testing.check_string "so a second read into it admits a gene->mRNA the first never showed"
+      ~expected:"CDS,mRNA"
+      (String.concat ","
+         (A.Hierarchy.children_of (A.Annotation.hierarchy again) ~path:[ "annotation"; "gene" ]));
+    Testing.check_raises ~re:"not valid under hierarchy"
+      "a hierarchy the register's paths do not fit is refused"
+      (fun () -> A.Annotation.with_hierarchy ann (A.Hierarchy.of_string "gene, region"));
+    Testing.check_raises "a fixed vocabulary still refuses what it has no place for"
+      (fun () -> A.GFF3.of_string ~hierarchy:broad ncbi);
+    (* Attribute order is the file's. *)
+    Testing.check_string "attributes keep the order they were written in"
+      ~expected:"ID=g1;Zeta=1;Alpha=2;Mid=3"
+      (let text =
+         A.GFF3.of_string (gff3 [ "chr1\tx\tgene\t1\t10\t.\t+\t.\tID=g1;Zeta=1;Alpha=2;Mid=3" ])
+         |> A.GFF3.to_string in
+       match
+         List.find_opt (fun l -> count_substring "\tgene\t" l > 0) (String.split_on_char '\n' text)
+       with
+       | Some line -> List.nth (String.split_on_char '\t' line) 8
+       | None -> "(no gene row)");
+    (* Repairs, each reported.  This library once wrote the first two itself. *)
+    let repaired row =
+      with_stderr (fun () -> A.GFF3.of_string (gff3 [ "chr1\tx\tgene\t1\t10\t.\t+\t.\t" ^ row ])) in
+    let reports text = count_substring "GFF3 line 2: " text in
+    let quoted, said =
+      repaired "ID=g1;note=\"similar to Bov2.b3; earlystop codon\";product=p1" in
+    Testing.check_string "a raw ';' before something that cannot be an attribute stays in the value"
+      ~expected:"\"similar to Bov2.b3; earlystop codon\"" (attr quoted "gene" "note");
+    Testing.check_string "the quotes being data, and kept" ~expected:"p1" (attr quoted "gene" "product");
+    Testing.check_int "and the repair is reported, with its line" ~expected:1 (reports said);
+    let bare, said = repaired "ID=g1;pseudo;product=p1" in
+    Testing.check_string "a bare key is present with no value" ~expected:"" (attr bare "gene" "pseudo");
+    Testing.check_int "which is reported too" ~expected:1 (reports said);
+    let raw, said = repaired "ID=g1;note=a=b & c;product=50% done" in
+    Testing.check_string "a raw '=' or '&' inside a value is part of it" ~expected:"a=b & c"
+      (attr raw "gene" "note");
+    Testing.check_string "and so is a '%' that starts no escape" ~expected:"50% done"
+      (attr raw "gene" "product");
+    Testing.check_int "each reported" ~expected:3 (reports said);
+    let _, said = with_stderr (fun () -> A.GFF3.of_string ncbi) in
+    Testing.check_string "while a compliant file reads without a word" ~expected:"" said;
+    (* The writer.  Interior spaces go out as they are, the ends escaped. *)
+    let spaced =
+      A.GFF3.of_string
+        (gff3 [ "chr1\tx\tgene\t1\t10\t.\t+\t.\tID=g1;product=hypothetical protein;note=%20edge%20" ]) in
+    let written = A.GFF3.to_string spaced in
+    Testing.check "an interior space is written unencoded"
+      (fun () -> count_substring "product=hypothetical protein" written = 1);
+    Testing.check "a leading or trailing one is escaped"
+      (fun () -> count_substring "note=%20edge%20" written = 1);
+    Testing.check_string "and both read back as they were" ~expected:"hypothetical protein/ edge "
+      (let back = A.GFF3.of_string written in
+       attr back "gene" "product" ^ "/" ^ attr back "gene" "note"))
 
 (* GTF, whose hierarchy is implicit in [gene_id] and [transcript_id] rather
    than in a parent link.  That is the whole difference from GFF3, so the
@@ -2204,6 +2391,7 @@ let run () =
   test_binary_io ();
   test_format_dispatch ();
   test_hierarchy ();
+  test_gff3_as_written ();
   test_gtf ();
   test_writer_compliance ();
   test_translation ();

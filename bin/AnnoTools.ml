@@ -167,7 +167,9 @@ let () =
       [ "--hierarchy" ],
         Some "<gff3|gtf|genbank> <S-expression>",
         [ "set the hierarchy to use for subsequent input operations";
-          " in the named format" ],
+          " in the named format.  A '*' admits any category, and";
+          " anything beneath it: '*' alone takes a file's structure";
+          " as the file states it, which is GFF3's default" ],
         TA.Optional,
         (fun _ ->
           let fmt = TA.get_parameter () |> A.Format.of_string |> overridable "--hierarchy" in
@@ -177,8 +179,9 @@ let () =
         Some "<gff3|gtf|genbank> <name>",
         [ "switch subsequent input operations in the named format";
           " to one of its built-in dialects.  Currently only GFF3";
-          " ships more than one dialect ('standard' and";
-          " 'gencode')." ],
+          " ships more than one: 'standard', which is '*', and";
+          " 'broad' and 'gencode', which check a file against a";
+          " fixed vocabulary." ],
         TA.Optional,
         (fun _ ->
           let fmt = TA.get_parameter () |> A.Format.of_string |> overridable "--dialect" in
@@ -614,7 +617,12 @@ let () =
       let target =
         match mode with
         | Mode.Replace -> A.Annotation.create (hierarchy_of fmt)
-        | Mode.Add -> !current in
+        | Mode.Add ->
+          (* The format's hierarchy is merged into the register's, rather than the
+             register's imposed on the file: a GFF3 added to a GenBank register is
+             then read as it is shaped, and whatever is held already stays valid. *)
+          A.Annotation.with_hierarchy !current
+            (A.Hierarchy.merge (A.Annotation.hierarchy !current) (hierarchy_of fmt)) in
       current := F.read_from_file target path
     in
     let read_reference mode path =

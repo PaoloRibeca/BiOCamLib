@@ -168,6 +168,15 @@ module Hierarchy:
     include module type of Annotations_Base.Hierarchy
     val of_string: string -> t
     val of_file: string -> t
+    (* A [*] where a category would go admits any category there, and anything
+       beneath it.  [of_string "*"] is therefore the hierarchy that takes a file's
+       structure as the file states it, which is GFF3's default. *)
+    val is_open: t -> bool
+    (* Every path of either, under the root of the first, in order of first
+       appearance. *)
+    val merge: t -> t -> t
+    (* The hierarchy made of these paths, each written without the root. *)
+    val of_paths: string list list -> t
   end
 = struct
     include Annotations_Base.Hierarchy
@@ -176,6 +185,29 @@ module Hierarchy:
       parse_with ~what:(Printf.sprintf "hierarchy %S" s)
         Annotations_Parse.hierarchy Annotations_Lex.hierarchy lexbuf
     let of_file path = of_string (read_file path)
+    let wildcard = "*"
+    let rec is_open t =
+      List.exists (fun c -> name c = wildcard || is_open c) (children t)
+    let rec merge a b =
+      node (name a)
+        (List.fold_left
+           (fun kids y ->
+             if List.exists (fun x -> name x = name y) kids then
+               List.map (fun x -> if name x = name y then merge x y else x) kids
+             else
+               kids @ [ y ])
+           (children a) (children b))
+    let of_paths paths =
+      let rec insert t = function
+        | [] -> t
+        | category :: rest ->
+          let kids = children t in
+          if List.exists (fun x -> name x = category) kids then
+            node (name t)
+              (List.map (fun x -> if name x = category then insert x rest else x) kids)
+          else
+            node (name t) (kids @ [ insert (node category []) rest ]) in
+      List.fold_left insert (node implicit_root_name []) paths
   end
 
 (* The broad GFF3 feature vocabulary.  It lives here rather than in the GFF3

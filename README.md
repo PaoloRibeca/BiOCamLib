@@ -348,11 +348,17 @@ Reloading is dominated by I/O (no parsing), which on GENCODE-class inputs can be
 
 Annotation files are notoriously fragile, with each major format having its quirks and a number of sometimes quite divergent dialects. `AnnoTools` provides configurable parsing and validation by associating each format to a description of the same in terms of one of more *hierarchies* of features. Hierarchies can be redefined by the user, providing a general way to describe and validate content even when the annotation schema used is not entirely standard.
 
-`AnnoTools` ships with default annotation schemas for Genbank and GTF, according to their respective standards. GFF3 input is interpreted under a built-in *standard* hierarchy by default. `AnnoTools` also provides a second built-in GFF3 dialect for the GENCODE schema, which collapses every transcript biotype into the single type `transcript` and adds the `stop_codon_redefined_as_selenocysteine` child of `CDS`; switch to it via
+`AnnoTools` ships with default annotation schemas for GenBank and GTF, according to their respective standards. GFF3 is different, as a GFF3 file states its own structure: each feature names its parent with `Parent=`. So GFF3 input is read by default under the *open* hierarchy `*`, which admits whatever the file's links say &mdash; NCBI's GFF3, with its `region` rows, its mature peptides beneath their CDS and its repeats at the top level, reads as it is written. The register then records the structure it was actually shown, and stays open, so that a second GFF3 read into it is as permissive as the first. To hold GFF3 input to a fixed vocabulary instead, pick one of the two built-in dialects that have one: `broad`, a gene &rarr; mRNA or transcript &rarr; exon, CDS, UTR schema with the common non-coding RNAs, plus `pseudogene` and `region`; or `gencode`, the GENCODE schema, which collapses every transcript biotype into the single type `transcript` and adds the `stop_codon_redefined_as_selenocysteine` child of `CDS`:
 ```bash
 AnnoTools --dialect gff3 gencode --from-gff3 gencode.v47.basic.annotation.gff3 -o gencode_v47
 ```
-The `--dialect` and `--hierarchy` overrides are *sticky*: they apply to every subsequent input operation in the named format until another `--dialect` or `--hierarchy` replaces them. To revert to a format's default, just say `--dialect <fmt> standard`. A custom hierarchy can be pinned via `--hierarchy <fmt> "<S-expression>"`.
+A file with a feature the vocabulary has no place for is then refused, naming the path it could not place. The `--dialect` and `--hierarchy` overrides are *sticky*: they apply to every subsequent input operation in the named format until another `--dialect` or `--hierarchy` replaces them. To revert to a format's default, just say `--dialect <fmt> standard`. A custom hierarchy can be pinned via `--hierarchy <fmt> "<S-expression>"`, in which a `*` admits any category at that point, and anything beneath it: `"(gene (*)), region"` accepts any child of a gene, and nothing at the top level but genes and regions.
+
+GFF3 reserves four characters in its ninth column &mdash; `;` `=` `&` `,` &mdash; and wants them percent-encoded inside a value. Many files leave some of them raw, and `AnnoTools` reads such a file anyway: it repairs what it can and reports each repair on standard error, with its line number (the first ten repairs, and then how many more there were):
+```
+(AnnoTools): GFF3 line 26: an unescaped ';' in the value of 'note' was read as part of it
+```
+A `;` followed by something that cannot be an attribute &mdash; it has no `=`, and is not a bare key &mdash; is taken as part of the value before it, as in `note=similar to Bov2.b3; earlystop codon`. A bare key such as `pseudo` is an attribute present with an empty value. A raw `=` or `&` inside a value, and a `%` that starts no escape, are read as themselves. A raw comma cannot be told from the separator between values, and is always read as one. Quotes mean nothing in GFF3, and are kept as part of the value. A compliant file is read without a word. On output, `AnnoTools` percent-encodes the four reserved characters, and a space only at either end of a value: the specification allows spaces, and interior ones are written as they are, as nearly every GFF3 file writes them.
 
 Once loaded, the annotation (and an annotation combined with a reference sequence when the latter has been added to the register) can be validated. So
 ```bash
@@ -547,8 +553,8 @@ default is just `--dialect <fmt> standard`\.
 
 | Option | Argument(s) | Effect | Note(s) |
 |-|-|-|-|
-| `--hierarchy` | `gff3`&#124;`gtf`&#124;`genbank` _S-expression_ |  set the hierarchy to use for subsequent input operations  in the named format |  |
-| `--dialect` | `gff3`&#124;`gtf`&#124;`genbank` _name_ |  switch subsequent input operations in the named format  to one of its built-in dialects\.  Currently only GFF3  ships more than one dialect \(`standard` and  `gencode`\)\. |  |
+| `--hierarchy` | `gff3`&#124;`gtf`&#124;`genbank` _S-expression_ |  set the hierarchy to use for subsequent input operations  in the named format\.  A `*` admits any category, and  anything beneath it: `*` alone takes a file's structure  as the file states it, which is GFF3's default |  |
+| `--dialect` | `gff3`&#124;`gtf`&#124;`genbank` _name_ |  switch subsequent input operations in the named format  to one of its built-in dialects\.  Currently only GFF3  ships more than one: `standard`, which is `*`, and  `broad` and `gencode`, which check a file against a  fixed vocabulary\. |  |
 
 
 Annotation input\.

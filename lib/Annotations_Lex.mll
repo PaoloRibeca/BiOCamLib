@@ -222,8 +222,8 @@ rule hierarchy = parse
    Format:  KEY=v1,v2;KEY=v3;...
    KEY is a non-empty run of bytes other than [= ; ,].  VALUE is
    a non-empty run of bytes other than [; ,], with %HH escapes
-   decoded eagerly.  An attribute string of "." or "" yields the
-   empty list. *)
+   decoded eagerly.  An attribute string that is all "." or empty
+   never reaches this lexer. *)
 and gff_attributes = parse
 | [' ' '\t']+
   { gff_attributes lexbuf }
@@ -233,11 +233,10 @@ and gff_attributes = parse
   { Annotations_Parse.Attr_SEMI }
 | ','
   { Annotations_Parse.Attr_COMMA }
-| '.'
-  { (* The GFF3 spec uses "." for an empty attribute string; we
-       just consume it and let the surrounding grammar produce
-       an empty list. *)
-    gff_attributes lexbuf }
+(* No rule for '.': GFF3's empty column is a "." that is the WHOLE column, and
+   [GFF3.parse_attributes] answers that itself.  A rule here swallowed a "."
+   anywhere, so a value that is one -- NCBI marks a partial feature with
+   [start_range=.,1] -- vanished and left the grammar a stray comma. *)
 (* A space belongs to the token rather than separating two of them: GFF3
    permits it unencoded in a value, and [product=hypothetical protein] is
    ordinary in third-party files.  Skipping it split that into two values, and

@@ -476,9 +476,16 @@ module Hierarchy:
         let rec walk n = function
           | [] -> Some n
           | x :: rest ->
-            (match List.find_opt (fun c -> c.name = x) n.children with
-             | None -> None
-             | Some c -> walk c rest) in
+            let named =
+              match List.find_opt (fun c -> c.name = x) n.children with
+              | Some c -> walk c rest
+              | None -> None in
+            (match named with
+             | Some _ -> named
+             (* A [*] admits any category here, and anything beneath it: also what a
+                sibling of the same name does not, as when an open hierarchy has
+                recorded [gene] and is then shown a [gene->mRNA]. *)
+             | None -> List.find_opt (fun c -> c.name = "*") n.children) in
         walk t rest
       | _ -> None
     let children_of t ~path =
@@ -535,6 +542,10 @@ module Annotation:
     type t
     val create: Hierarchy.t -> t
     val hierarchy: t -> Hierarchy.t
+    (* The same register under a wider hierarchy, as a reader that takes a file's
+       structure from the file needs.  Every path the register already holds has
+       to remain valid under it, and one that would not raises. *)
+    val with_hierarchy: t -> Hierarchy.t -> t
     val paths: t -> Path.Table.t
     val seqs: t -> Seq.Table.t
     val attr_keys: t -> AttrKey.Table.t
@@ -766,5 +777,12 @@ module Annotation:
     let fold_paths f init t =
       fold (fun ~path feature acc ->
         f ~path:(Path.to_list t.paths path) feature acc) init t
+    let with_hierarchy t hierarchy =
+      iter_paths (fun ~path _ ->
+        if not (Hierarchy.validate hierarchy ~path) then
+          Exception.raise __FUNCTION__ Algorithm
+            (Printf.sprintf "Path %s, held by the register, is not valid under hierarchy %s"
+               (path_to_string path) (Hierarchy.to_string hierarchy))) t;
+      { t with hierarchy }
   end
 
