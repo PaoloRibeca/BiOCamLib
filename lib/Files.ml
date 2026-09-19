@@ -812,6 +812,14 @@ module Reads:
         val seq_length: t -> int
         (* Arguments to the function are read id, segment id, payload *)
         val iter: (Iterator.ret_t -> unit) -> t -> unit
+        (* Adds sequences directly (single-end, no name or quality), for an in-memory read set *)
+        val add_sequences: t -> string array -> unit
+        (* The packed blob, the number of stored segments, one segment's (first base, length) span, and
+            the sequence over an arbitrary base range -- for a consumer that reads the packed form *)
+        val data: t -> (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+        val num_segments: t -> int
+        val segment_span: t -> int -> int * int
+        val sub: t -> int -> int -> string
       end
   end
 = struct
@@ -962,6 +970,14 @@ module Reads:
         val seq_length: t -> int
         (* Arguments to the function are read id, segment id, payload *)
         val iter: (Iterator.ret_t -> unit) -> t -> unit
+        (* Adds sequences directly (single-end, no name or quality), for an in-memory read set *)
+        val add_sequences: t -> string array -> unit
+        (* The packed blob, the number of stored segments, one segment's (first base, length) span, and
+            the sequence over an arbitrary base range -- for a consumer that reads the packed form *)
+        val data: t -> (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+        val num_segments: t -> int
+        val segment_span: t -> int -> int * int
+        val sub: t -> int -> int -> string
       end
     = struct
         type template_t =
@@ -1048,14 +1064,24 @@ module Reads:
           end;
           if store.keep_names then
             Tools.ArrayStack.push store.names read.Base.Read.tag
-        (* Reconstructs one segment faithfully from the packed blob, exceptions and optional side stores *)
-        let get_segment store i =
-          let n_seg = Tools.ArrayStack.length store.seg_starts in
+        (* The packed blob, for a consumer that reads the packed form directly *)
+        let data store = store.packed
+        let num_segments store = Tools.ArrayStack.length store.seg_starts
+        (* Segment i's (first base, length) span in the packed blob *)
+        let segment_span store i =
           let s = Tools.ArrayStack.get store.seg_starts i in
-          let e = if i + 1 < n_seg then Tools.ArrayStack.get store.seg_starts (i + 1) else store.n_bases in
-          let seq = Bytes.create (e - s) in
-          for j = 0 to e - s - 1 do
-            let p = s + j in
+          let e =
+            if i + 1 < Tools.ArrayStack.length store.seg_starts then
+              Tools.ArrayStack.get store.seg_starts (i + 1)
+            else
+              store.n_bases in
+          s, e - s
+        (* The sequence over an arbitrary base range [start, start + len), with the non-ACGT bases in
+            that range overlaid from the exceptions *)
+        let sub store start len =
+          let seq = Bytes.create len in
+          for j = 0 to len - 1 do
+            let p = start + j in
             let byte = p / 4 and shift = (p land 3) * 2 in
             Bytes.set seq j bases.((Bigarray.Array1.get store.packed byte lsr shift) land 3)
           done;
@@ -1063,12 +1089,19 @@ module Reads:
           let lo = ref 0 and hi = ref n_exc in
           while !lo < !hi do
             let mid = (!lo + !hi) / 2 in
-            if Tools.ArrayStack.get store.exc_pos mid < s then lo := mid + 1 else hi := mid
+            if Tools.ArrayStack.get store.exc_pos mid < start then lo := mid + 1 else hi := mid
           done;
-          while !lo < n_exc && Tools.ArrayStack.get store.exc_pos !lo < e do
-            Bytes.set seq (Tools.ArrayStack.get store.exc_pos !lo - s) (Tools.ArrayStack.get store.exc_chr !lo);
+          let stop = start + len in
+          while !lo < n_exc && Tools.ArrayStack.get store.exc_pos !lo < stop do
+            Bytes.set seq (Tools.ArrayStack.get store.exc_pos !lo - start) (Tools.ArrayStack.get store.exc_chr !lo);
             incr lo
           done;
+          Bytes.to_string seq
+        (* Reconstructs one segment faithfully, with its qualities and name when those were kept *)
+        let get_segment store i =
+          let n_seg = Tools.ArrayStack.length store.seg_starts in
+          let s, len = segment_span store i in
+          let seq = sub store s len in
           let qua =
             if store.keep_quals then begin
               let q_s = Tools.ArrayStack.get store.qua_starts i in
@@ -1078,8 +1111,15 @@ module Reads:
             end else
               "" in
           { Base.Read.tag = (if store.keep_names then Tools.ArrayStack.get store.names i else "");
-            seq = Bytes.to_string seq;
+            seq;
             qua }
+        (* Adds sequences directly as single-end segments (no name or quality), for an in-memory set *)
+        let add_sequences store seqs =
+          Array.iter
+            (fun seq ->
+              Tools.ArrayStack.push store.kinds 0;
+              add_segment store { Base.Read.tag = ""; seq; qua = "" })
+            seqs
         (* Walks templates in insertion order, reconstructing each; the index is the template's, the one
             a filter is aligned to *)
         let iter_templates f store =
