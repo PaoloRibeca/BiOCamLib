@@ -801,6 +801,7 @@ module Reads:
         val unmarked: int
         type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
         val empty: t
+        val create: ?keep_names:bool -> ?keep_qualities:bool -> unit -> t
         val length: t -> int
         val add_from_file: ?linter:Base.linter_t -> ?compression:bool -> ?verbose:bool ->
                            t -> reads_t -> unit
@@ -950,6 +951,7 @@ module Reads:
         val unmarked: int
         type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
         val empty: t
+        val create: ?keep_names:bool -> ?keep_qualities:bool -> unit -> t
         val length: t -> int
         val add_from_file: ?linter:Base.linter_t -> ?compression:bool -> ?verbose:bool ->
                            t -> reads_t -> unit
@@ -965,42 +967,167 @@ module Reads:
         type template_t =
           | SingleEndRead of Base.Read.t
           | PairedEndRead of Base.Read.t * Base.Read.t
-        type t = template_t Tools.ArrayStack.t
+        type packed_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+        (* Reads are held two bits per base in one growable off-heap blob, four bases to a byte, every
+            segment end to end; `seg_starts` gives each segment's first base, so segment i spans bases
+            [seg_starts.(i), seg_starts.(i + 1)), with `n_bases` as the final bound. A base that is not
+            ACGT keeps a placeholder in the blob and its real character in the parallel `exc_pos`/`exc_chr`
+            arrays, so any read reconstructs faithfully. Qualities and names are kept only when the
+            constructor asks: the assembler, which never writes reads back, skips both and stores nothing
+            but the packed sequence, which is all its index needs *)
+        type t = {
+          keep_names: bool;
+          keep_quals: bool;
+          mutable packed: packed_t;
+          mutable n_bases: int;
+          seg_starts: int Tools.ArrayStack.t;
+          exc_pos: int Tools.ArrayStack.t;
+          exc_chr: char Tools.ArrayStack.t;
+          qua_starts: int Tools.ArrayStack.t;
+          quals: Buffer.t;
+          names: string Tools.ArrayStack.t;
+          kinds: int Tools.ArrayStack.t (* One entry per template: 0 single-end, 1 paired-end *)
+        }
         let singleton = 0
         let selected = 1
         let unmarked = 2
         type filter_t = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-        let empty = Tools.ArrayStack.empty ()
-        let iter f =
+        let bases = [| 'A'; 'C'; 'G'; 'T' |]
+        let code = function
+          | 'A' -> 0 | 'C' -> 1 | 'G' -> 2 | 'T' -> 3
+          | _ -> -1
+        let create ?(keep_names = true) ?(keep_qualities = true) () =
+          { keep_names;
+            keep_quals = keep_qualities;
+            packed = Bigarray.Array1.create Bigarray.Int8_unsigned Bigarray.C_layout 0;
+            n_bases = 0;
+            seg_starts = Tools.ArrayStack.empty ();
+            exc_pos = Tools.ArrayStack.empty ();
+            exc_chr = Tools.ArrayStack.empty ();
+            qua_starts = Tools.ArrayStack.empty ();
+            quals = Buffer.create 16;
+            names = Tools.ArrayStack.empty ();
+            kinds = Tools.ArrayStack.empty () }
+        let empty = create ()
+        (* Grows the blob so it can hold at least the requested number of bytes, doubling as it goes *)
+        let ensure store n_bytes =
+          let cap = Bigarray.Array1.dim store.packed in
+          if n_bytes > cap then begin
+            let n_cap = max n_bytes (max 16 (cap * 2)) in
+            let grown = Bigarray.Array1.create Bigarray.Int8_unsigned Bigarray.C_layout n_cap in
+            Bigarray.Array1.fill grown 0;
+            if cap > 0 then
+              Bigarray.Array1.blit store.packed (Bigarray.Array1.sub grown 0 cap);
+            store.packed <- grown
+          end
+        (* Appends one read as a new segment: its sequence always, its qualities and name only when kept *)
+        let add_segment store read =
+          let seq = read.Base.Read.seq in
+          let l = String.length seq in
+          Tools.ArrayStack.push store.seg_starts store.n_bases;
+          ensure store ((store.n_bases + l + 3) / 4);
+          String.iteri
+            (fun j ch ->
+              let p = store.n_bases + j in
+              let c = code ch in
+              let c =
+                if c < 0 then begin
+                  Tools.ArrayStack.push store.exc_pos p;
+                  Tools.ArrayStack.push store.exc_chr ch;
+                  0
+                end else
+                  c in
+              let byte = p / 4 and shift = (p land 3) * 2 in
+              Bigarray.Array1.set store.packed byte
+                (Bigarray.Array1.get store.packed byte lor (c lsl shift)))
+            seq;
+          store.n_bases <- store.n_bases + l;
+          if store.keep_quals then begin
+            Tools.ArrayStack.push store.qua_starts (Buffer.length store.quals);
+            Buffer.add_string store.quals read.Base.Read.qua
+          end;
+          if store.keep_names then
+            Tools.ArrayStack.push store.names read.Base.Read.tag
+        (* Reconstructs one segment faithfully from the packed blob, exceptions and optional side stores *)
+        let get_segment store i =
+          let n_seg = Tools.ArrayStack.length store.seg_starts in
+          let s = Tools.ArrayStack.get store.seg_starts i in
+          let e = if i + 1 < n_seg then Tools.ArrayStack.get store.seg_starts (i + 1) else store.n_bases in
+          let seq = Bytes.create (e - s) in
+          for j = 0 to e - s - 1 do
+            let p = s + j in
+            let byte = p / 4 and shift = (p land 3) * 2 in
+            Bytes.set seq j bases.((Bigarray.Array1.get store.packed byte lsr shift) land 3)
+          done;
+          let n_exc = Tools.ArrayStack.length store.exc_pos in
+          let lo = ref 0 and hi = ref n_exc in
+          while !lo < !hi do
+            let mid = (!lo + !hi) / 2 in
+            if Tools.ArrayStack.get store.exc_pos mid < s then lo := mid + 1 else hi := mid
+          done;
+          while !lo < n_exc && Tools.ArrayStack.get store.exc_pos !lo < e do
+            Bytes.set seq (Tools.ArrayStack.get store.exc_pos !lo - s) (Tools.ArrayStack.get store.exc_chr !lo);
+            incr lo
+          done;
+          let qua =
+            if store.keep_quals then begin
+              let q_s = Tools.ArrayStack.get store.qua_starts i in
+              let q_e =
+                if i + 1 < n_seg then Tools.ArrayStack.get store.qua_starts (i + 1) else Buffer.length store.quals in
+              if q_e > q_s then Buffer.sub store.quals q_s (q_e - q_s) else ""
+            end else
+              "" in
+          { Base.Read.tag = (if store.keep_names then Tools.ArrayStack.get store.names i else "");
+            seq = Bytes.to_string seq;
+            qua }
+        (* Walks templates in insertion order, reconstructing each; the index is the template's, the one
+            a filter is aligned to *)
+        let iter_templates f store =
+          let seg = ref 0 in
           Tools.ArrayStack.riteri
-            (fun templ_i -> function
+            (fun t_i kind ->
+              if kind = 0 then begin
+                let read = get_segment store !seg in
+                incr seg;
+                f t_i (SingleEndRead read)
+              end else begin
+                let read1 = get_segment store !seg in
+                let read2 = get_segment store (!seg + 1) in
+                seg := !seg + 2;
+                f t_i (PairedEndRead (read1, read2))
+              end)
+            store.kinds
+        let length store = Tools.ArrayStack.length store.kinds
+        let seq_length store = store.n_bases
+        let iter f store =
+          iter_templates
+            (fun t_i -> function
               | SingleEndRead segm ->
-                f (templ_i, 0, segm)
+                f (t_i, 0, segm)
               | PairedEndRead (segm1, segm2) ->
-                f (templ_i, 0, segm1);
-                f (templ_i, 1, segm2))
-        let length = Tools.ArrayStack.length
-        let seq_length store =
-          let res = ref 0 in
-          iter (fun (_, _, segm) -> res := !res + String.length segm.seq) store;
-          !res
+                f (t_i, 0, segm1);
+                f (t_i, 1, segm2))
+            store
         let add_from_file ?(linter = Sequences.Lint.dnaize ~keep_lowercase:false ~keep_dashes:false)
                           ?(compression = true) ?(verbose = false) store file =
           iter_se_pe ~linter ~compression ~verbose
             (fun (_, _, read) ->
-              SingleEndRead read |> Tools.ArrayStack.push store)
+              Tools.ArrayStack.push store.kinds 0;
+              add_segment store read)
             (fun (_, _, read1) (_, _, read2) ->
-              PairedEndRead (read1, read2) |> Tools.ArrayStack.push store)
+              Tools.ArrayStack.push store.kinds 1;
+              add_segment store read1;
+              add_segment store read2)
             file;
           if verbose then
             Printf.eprintf "(%s): %d reads in store so far (total length %d)\n%!"
-              __FUNCTION__ (Tools.ArrayStack.length store) (seq_length store)
+              __FUNCTION__ (length store) (seq_length store)
         let raise_invalid_filter_length __FUNCTION__ num_reads len =
           Exception.raise __FUNCTION__ Algorithm
             (Printf.sprintf
               "Filter length must be zero or the same as the number of reads, %d (found %d)" num_reads len)
         let to_fast ?(verbose = false) store filter prefix =
-          let len = Tools.ArrayStack.length store and f_len = Bigarray.Array1.dim filter in
+          let len = length store and f_len = Bigarray.Array1.dim filter in
           (* The filter can be empty *)
           if f_len <> len && f_len <> 0 then
             raise_invalid_filter_length __FUNCTION__ len f_len;
@@ -1013,7 +1140,7 @@ module Reads:
           and output2 = [| open_out (prefix ^ "_PE_1.fastq"); open_out (prefix ^ "_PE_2.fastq") |] in
           if verbose then
             Printf.eprintf "(%s): Writing %d reads...%!" __FUNCTION__ len;
-          Tools.ArrayStack.riteri begin
+          iter_templates begin
             if f_len <> 0 then
               (fun i -> function
                 | SingleEndRead segm ->
@@ -1042,14 +1169,14 @@ module Reads:
           if verbose then
             Printf.eprintf " done.\n%!"
         let to_tabular ?(verbose = false) store filter path =
-          let len = Tools.ArrayStack.length store and f_len = Bigarray.Array1.dim filter in
+          let len = length store and f_len = Bigarray.Array1.dim filter in
           (* The filter can be empty *)
           if f_len <> len && f_len <> 0 then
             raise_invalid_filter_length __FUNCTION__ len f_len;
           let output = open_out path in
           if verbose then
             Printf.eprintf "(%s): Writing %d reads...%!" __FUNCTION__ len;
-          Tools.ArrayStack.riteri begin
+          iter_templates begin
             if f_len <> 0 then
               (fun i -> function
                 | SingleEndRead segm ->
