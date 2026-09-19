@@ -413,9 +413,42 @@ let test_bigarray_vectors () =
        String.concat "," !seen))
 
 
+(* Group-varint coding. *)
+
+let test_group_varint () =
+  Testing.section "Group-varint coding" (fun () ->
+    let module GV = Numbers.GroupVarint in
+    let roundtrip a =
+      let buf = Buffer.create 16 in
+      GV.encode buf a;
+      let b = Buffer.to_bytes buf in
+      let seen = ref [] in
+      GV.decode b 0 (Bytes.length b) (fun x -> List.accum seen x);
+      List.rev !seen = Array.to_list a in
+    Testing.check_bool "the empty sequence round-trips" ~expected:true (roundtrip [||]);
+    Testing.check_bool "a single zero round-trips" ~expected:true (roundtrip [| 0 |]);
+    Testing.check_bool "a short even-length sequence round-trips" ~expected:true (roundtrip [| 1; 2; 3; 4 |]);
+    Testing.check_bool "an odd-length sequence round-trips (lone last value)" ~expected:true
+      (roundtrip [| 0; 255; 256; 65535; 65536 |]);
+    Testing.check_bool "values needing five to eight bytes round-trip" ~expected:true
+      (roundtrip [| 1 lsl 32; 1 lsl 40; 1 lsl 55; (1 lsl 62) - 1; 7 |]);
+    Testing.check_bool "a longer pseudo-random sequence round-trips" ~expected:true
+      (roundtrip (Array.init 1000 (fun i -> (i * 2654435761) land ((1 lsl 50) - 1))));
+    Testing.check_bool "concatenated encodings decode within their own byte ranges" ~expected:true
+      (let buf = Buffer.create 16 in
+       GV.encode buf [| 10; 20; 30 |];
+       let mid = Buffer.length buf in
+       GV.encode buf [| 999; 1000000 |];
+       let b = Buffer.to_bytes buf in
+       let s1 = ref [] and s2 = ref [] in
+       GV.decode b 0 mid (fun x -> List.accum s1 x);
+       GV.decode b mid (Bytes.length b) (fun x -> List.accum s2 x);
+       List.rev !s1 = [ 10; 20; 30 ] && List.rev !s2 = [ 999; 1000000 ]))
+
 let run () =
   test_online_stats ();
   test_frequencies ();
   test_scalars ();
   test_linear_fit ();
-  test_bigarray_vectors ()
+  test_bigarray_vectors ();
+  test_group_varint ()

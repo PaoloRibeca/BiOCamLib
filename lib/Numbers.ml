@@ -544,6 +544,66 @@ module LinearFit (V: Vector_t):
       m, prediction, V.map2 (fun y1 y2 -> N.(y1 - y2)) y prediction
   end
 
+(* Byte-aligned group-varint coding for sequences of non-negative integers, used to store the
+    inverted index's posting lists compactly. Values are taken two at a time: one control byte holds
+    two 4-bit fields, each the byte length (1-8) of the following value written little-endian, so a
+    value costs as many bytes as it needs and nothing is capped at 32 bits. A low field of 0 marks a
+    lone final value, so an odd-length sequence needs no separate count and decoding stops exactly at
+    the end of the byte range it was given *)
+module GroupVarint:
+  sig
+    (* Appends the group-varint encoding of the values (each >= 0) to the buffer *)
+    val encode: Buffer.t -> int array -> unit
+    (* Applies the function to each value encoded in bytes [lo, hi), in order *)
+    val decode: bytes -> int -> int -> (int -> unit) -> unit
+  end
+= struct
+    let byte_len x =
+      let rec loop n x = if x = 0 then n else loop (n + 1) (x lsr 8) in
+      if x = 0 then 1 else loop 0 x
+    let put buf x n =
+      for k = 0 to n - 1 do
+        Buffer.add_uint8 buf ((x lsr (8 * k)) land 0xff)
+      done
+    let encode buf a =
+      let m = Array.length a and i = ref 0 in
+      while !i < m do
+        let x = a.(!i) in
+        let l_x = byte_len x in
+        if !i + 1 < m then begin
+          let y = a.(!i + 1) in
+          let l_y = byte_len y in
+          Buffer.add_uint8 buf ((l_x lsl 4) lor l_y);
+          put buf x l_x;
+          put buf y l_y;
+          i := !i + 2
+        end else begin
+          Buffer.add_uint8 buf (l_x lsl 4);
+          put buf x l_x;
+          incr i
+        end
+      done
+    let get b p n =
+      let x = ref 0 in
+      for k = 0 to n - 1 do
+        x := !x lor (Bytes.get_uint8 b (p + k) lsl (8 * k))
+      done;
+      !x
+    let decode b lo hi f =
+      let p = ref lo in
+      while !p < hi do
+        let ctrl = Bytes.get_uint8 b !p in
+        let l_x = ctrl lsr 4 and l_y = ctrl land 0xf in
+        incr p;
+        f (get b !p l_x);
+        p := !p + l_x;
+        if l_y > 0 then begin
+          f (get b !p l_y);
+          p := !p + l_y
+        end
+      done
+  end
+
 (* Functor to wrap uniform numbers into comparable types *)
 module type ComparableScalar_t =
   sig
