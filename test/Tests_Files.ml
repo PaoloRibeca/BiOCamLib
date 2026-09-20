@@ -248,19 +248,22 @@ let test_gem_map () =
       "r_del\tTACGTA\t0:1:0:0:0+0\tctgA:+:141:20>1+19:::60\n" ^
       "r_ins\tTACGTA\t0:1:0:0:0+0\tctgA:-:141:20>1-20:::60\n" ^
       "r_none\tACGT\t0:0+0\t-\n" in
-    let read text ?qualities () =
+    let read ?qualities ?strata text =
       let seen = ref [] in
       with_file text (fun path ->
         let ic = open_in path in
         Fun.protect ~finally:(fun () -> close_in ic)
-          (fun () -> G.iter ?qualities (fun tag m -> List.accum seen (tag, m)) ic));
+          (fun () -> G.iter ?qualities ?strata (fun tag ~placements m -> List.accum seen (tag, placements, m)) ic));
       List.rev !seen in
-    let seen = read text () in
+    let seen = read text in
     let nth i = List.nth seen i in
-    let covered i = let _, m = nth i in G.Gigar.covered m.G.position m.G.gigar in
+    let covered i = let _, _, m = nth i in G.Gigar.covered m.G.position m.G.gigar in
+    let placements i = let _, n, _ = nth i in n in
     Testing.check_int "every placement is seen once, multimaps included and unmapped reads not"
       ~expected:6 (List.length seen);
-    Testing.check_string "the tag comes with each placement" ~expected:"r_motif" (fst (nth 2));
+    Testing.check_string "the tag comes with each placement" ~expected:"r_motif" (let tag, _, _ = nth 2 in tag);
+    Testing.check "each placement comes with how many the read has"
+      (fun () -> placements 0 = 1 && placements 1 = 2 && placements 2 = 2 && placements 3 = 1);
     Testing.check "a perfect read covers its whole length" (fun () -> covered 0 = [ 1, 60 ]);
     Testing.check "a read on a repeat is placed on both copies"
       (fun () -> covered 1 = [ 41, 30 ] && covered 2 = [ 111, 30 ]);
@@ -269,17 +272,40 @@ let test_gem_map () =
       (fun () -> covered 4 = [ 141, 40 ]);
     Testing.check "an insertion, '>1-', consumes no reference" (fun () -> covered 5 = [ 141, 40 ]);
     Testing.check "the contig and the strand are read"
-      (fun () -> let _, m = nth 0 and _, m' = nth 5 in m.G.contig = "ctgA" && m.G.forward && not m'.G.forward);
+      (fun () -> let _, _, m = nth 0 and _, _, m' = nth 5 in m.G.contig = "ctgA" && m.G.forward && not m'.G.forward);
     Testing.check "a splice breaks the covered span into two intervals"
       (fun () -> G.Gigar.covered 100 [ G.Gigar.Match 10; G.Gigar.Splice 5; G.Gigar.Match 3 ] = [ 100, 10; 115, 3 ]);
     Testing.check "a trim consumes no reference"
       (fun () -> G.Gigar.covered 7 [ G.Gigar.Trim 5; G.Gigar.Match 10; G.Gigar.Trim 2 ] = [ 7, 10 ]);
     Testing.check "records with qualities are read when the caller says so"
-      (fun () -> read "r\tACGT\tIIII\t1+0\tc:+:1:4\n" ~qualities:true () |> List.length = 1);
+      (fun () -> read ~qualities:true "r\tACGT\tIIII\t1+0\tc:+:1:4\n" |> List.length = 1);
     Testing.check_raises "a qualities column not announced is reported, not mistaken for counters"
-      (fun () -> read "r\tACGT\tIIII\t1+0\tc:+:1:4\n" ());
+      (fun () -> read "r\tACGT\tIIII\t1+0\tc:+:1:4\n");
     Testing.check_raises "an alignment string with junk in it is reported"
-      (fun () -> read "r\tACGT\t1+0\tc:+:1:2?2\n" ()))
+      (fun () -> read "r\tACGT\t1+0\tc:+:1:2?2\n");
+    (* Strata: a read placed once without errors and twice with one *)
+    let three = "r\tACGT\t1:2+0\tc:+:1:4:::0,c:+:11:4:::0,c:+:21:4:::0\n" in
+    Testing.check "without strata every placement is delivered, and the read knows all three"
+      (fun () -> match read three with [ _, 3, _; _, 3, _; _, 3, _ ] -> true | _ -> false);
+    Testing.check "the first stratum is the errorless placement alone, and the read knows one"
+      (fun () -> match read ~strata:1 three with [ _, 1, m ] -> m.G.position = 1 | _ -> false);
+    Testing.check "two strata are all three" (fun () -> List.length (read ~strata:2 three) = 3);
+    Testing.check "the first non-empty stratum counts, wherever it sits"
+      (fun () -> List.length (read ~strata:1 "r\tACGT\t0:0:2+0\tc:+:1:4:::0,c:+:11:4:::0\n") = 2);
+    Testing.check "the counts after the '+' are strata like the others"
+      (fun () -> List.length (read ~strata:1 "r\tACGT\t0:0+0:0:2\tc:+:1:4:::0,c:+:11:4:::0\n") = 2);
+    Testing.check "'AxB' is the count A repeated B times"
+      (fun () -> match read ~strata:1 "r\tACGT\t0x2:1:1+0\tc:+:1:4:::0,c:+:11:4:::0\n" with [ _, 1, _ ] -> true | _ -> false);
+    (* A pair: its placements count once with both mates, and are delivered with both *)
+    let pair = "p\tACGT GGCC\t1:1+0\tc:+:1:4::c:-:11:4:::0,c:+:21:4::c:-:31:4:::0\n" in
+    Testing.check "a placement of a pair is both its mates, counted once"
+      (fun () -> match read ~strata:1 pair with [ _, 1, m; _, 1, m' ] -> m.G.position = 1 && m'.G.position = 11 | _ -> false);
+    Testing.check "the strata of a pair are its pair placements"
+      (fun () -> match read ~strata:2 pair with [ _, 2, _; _, 2, _; _, 2, _; _, 2, _ ] -> true | _ -> false);
+    Testing.check_raises "counters that cannot be counted are reported"
+      (fun () -> read ~strata:1 "r\tACGT\t!\tc:+:1:4:::0\n");
+    Testing.check_raises "counters announcing no placement for a placed read are reported"
+      (fun () -> read "r\tACGT\t0:0+0\tc:+:1:4:::0\n"))
 
 let run () =
   test_quoted_path ();

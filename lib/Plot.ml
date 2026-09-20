@@ -179,7 +179,7 @@ include (
       let draw_w = 240. and draw_h = 120. in
       let ox = margin_lo and oy = margin_lo in
       let right = ox +. draw_w and top = oy +. draw_h in
-      let values = ref [] and marks = ref [] and max_v = ref 0 in
+      let values = ref [] and marks = ref [] and max_v = ref 0. in
       let old_name = ref "" and old_end = ref 0 and acc = ref 0 in
       List.iter
         (fun (name, lo, hi, v) ->
@@ -198,8 +198,8 @@ include (
       let values = Array.of_list (List.rev !values) in
       let n = Array.length values in
       let log2 x = log x /. log 2. in
-      let y_extent = if logarithmic then log2 (1. +. float_of_int !max_v) else float_of_int !max_v in
-      let transform v = if logarithmic then log2 (1. +. float_of_int v) else float_of_int v in
+      let y_extent = if logarithmic then log2 (1. +. !max_v) else !max_v in
+      let transform v = if logarithmic then log2 (1. +. v) else v in
       let sy_pos p = oy +. (if y_extent <= 0. then 0. else p /. y_extent *. draw_h) in
       let sy v = sy_pos (transform v) in
       let sx i = ox +. (if n <= 1 then 0. else float_of_int i /. float_of_int (n - 1) *. draw_w) in
@@ -277,7 +277,7 @@ include (
       x_label:string -> y_label:string ->
       x_seqs:(string * int) list -> y_seqs:(string * int) list ->
       segments:(int * int * int * int) list -> page
-    val depth: label:string -> ?logarithmic:bool -> (string * int * int * int) list -> page
+    val depth: label:string -> ?logarithmic:bool -> (string * int * int * float) list -> page
     val montage: columns:int -> page list -> page
     val to_pdf: string -> page list -> unit
   end

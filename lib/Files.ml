@@ -1275,10 +1275,18 @@ module Gem:
       position: int; (* 1-based, on the contig *)
       gigar: Gigar.atom_t list
     }
-    (* Applies the function to every placement of every read, with the read's tag. The records
-        carry a qualities column when the mapper was fed FASTQ, which the caller must say, as a
-        qualities string can look like anything. The path is only for error messages *)
-    val iter: ?qualities:bool -> ?path:string -> (string -> match_t -> unit) -> in_channel -> unit
+    (* Applies the function to every placement of every read, with the read's tag and the number
+        of the read's placements the iteration delivers, so that a read can be weighed among them.
+        The records carry a qualities column when the mapper was fed FASTQ, which the caller must
+        say, as a qualities string can look like anything. With strata given, only the placements
+        in the first that many non-empty strata of each read are delivered -- its best matches, a
+        stratum being all the placements with the same number of errors: the mapper lists the
+        placements in stratum order and counts them per stratum in the counters column, so those
+        are the first placements listed, as many as the counters say. The path is only for error
+        messages *)
+    val iter:
+      ?qualities:bool -> ?path:string -> ?strata:int -> (string -> placements:int -> match_t -> unit) ->
+        in_channel -> unit
   end
 = struct
     module Gigar =
@@ -1320,23 +1328,57 @@ module Gem:
       | Gem_Lex.Deletion n -> Gigar.Deletion n
       | Gem_Lex.Insertion n -> Gigar.Insertion n
       | Gem_Lex.Splice n -> Gigar.Splice n
-    let iter ?(qualities = false) ?(path = "-") f ic =
+    (* The counters column: how many placements the read has at each number of errors, from none
+        up, ':'-separated. A '+' marks the last stratum the mapper searched completely and separates
+        just the same, and 'AxB' stands for the count A repeated B times *)
+    let counters_of_string s =
+      let res = ref [] in
+      List.iter
+        (fun token ->
+          match String.index_opt token 'x' with
+          | None -> List.accum res (int_of_string token)
+          | Some i ->
+            let count = int_of_string (String.sub token 0 i)
+            and times = int_of_string (String.sub token (i + 1) (String.length token - i - 1)) in
+            for _ = 1 to times do
+              List.accum res count
+            done)
+        (String.split_on_char ':' (String.map (function '+' -> ':' | c -> c) s));
+      List.rev !res
+    (* How many placements the first strata non-empty strata hold *)
+    let kept_in strata counters =
+      let res = ref 0 and left = ref strata in
+      List.iter
+        (fun n ->
+          if n > 0 && !left > 0 then begin
+            res := !res + n;
+            decr left
+          end)
+        counters;
+      !res
+    (* What an alignment string is followed by *)
+    type follows_t =
+      | Mate (* The read's other mate, of the same placement *)
+      | Placement (* The read's next placement *)
+      | Done
+    let iter ?(qualities = false) ?(path = "-") ?strata f ic =
       let lexbuf = Lexing.from_channel ic in
       let malformed comment =
         Exception.raise_malformed __FUNCTION__ lexbuf.Lexing.lex_curr_p.Lexing.pos_lnum "GEM MAP" path
           ~comment in
-      (* What follows an alignment string: one or three colons introduce a score, which is skipped,
-          two colons the read's other mate, a comma the next placement *)
-      let rec after placements = function
-        | Gem_Lex.Colons 2 | Gem_Lex.Comma -> placements ()
+      (* One or three colons introduce a score, which is skipped and what follows it classified in
+          turn; two colons say the other mate follows, a comma the next placement *)
+      let rec after = function
+        | Gem_Lex.Colons 2 -> Mate
+        | Gem_Lex.Comma -> Placement
         | Gem_Lex.Colons (1 | 3) ->
           Gem_Lex.score lexbuf;
           begin match Gem_Lex.gigar lexbuf with
-          | Gem_Lex.Sep sep -> after placements sep
+          | Gem_Lex.Sep sep -> after sep
           | Gem_Lex.Atom _ -> malformed "expected a separator after a score"
           end
         | Gem_Lex.Colons _ -> malformed "unexpected run of colons after an alignment string"
-        | Gem_Lex.Eol | Gem_Lex.Eof -> () in
+        | Gem_Lex.Eol | Gem_Lex.Eof -> Done in
       let rec records () =
         match Gem_Lex.tag lexbuf with
         | None -> ()
@@ -1347,15 +1389,30 @@ module Gem:
             if String.length quals <> String.length read then
               malformed "the qualities and the read differ in length -- is the input without qualities?"
           end;
+          let counters = Gem_Lex.field lexbuf in
           String.iter
             (function
               | '0' .. '9' | ':' | '+' | 'x' | '!' | '-' -> ()
               | _ -> malformed "the counters column is malformed -- does the input carry qualities?")
-            (Gem_Lex.field lexbuf);
+            counters;
           begin match Gem_Lex.maps lexbuf with
           | Gem_Lex.Unmapped -> ()
           | Gem_Lex.Mapped ->
-            let rec placements () =
+            (* The placements delivered are the first listed, as many as the counters say -- a
+                placement of a pair, both mates of it, counting once *)
+            let counters =
+              try
+                counters_of_string counters
+              with Failure _ ->
+                malformed "the counters column cannot be read as counts per stratum" in
+            let placements =
+              match strata with
+              | None -> List.fold_left (+) 0 counters
+              | Some strata -> kept_in strata counters in
+            if placements = 0 then
+              malformed "the counters announce no placement, yet the read has some";
+            let seen = ref 0 in
+            let rec next () =
               let contig = Gem_Lex.name lexbuf in
               let forward = Gem_Lex.strand lexbuf in
               let position = Gem_Lex.position lexbuf in
@@ -1367,9 +1424,15 @@ module Gem:
                   alignment ()
                 | Gem_Lex.Sep sep -> sep in
               let sep = alignment () in
-              f tag { contig; forward; position; gigar = List.rev !atoms };
-              after placements sep in
-            placements ()
+              if !seen < placements then
+                f tag ~placements { contig; forward; position; gigar = List.rev !atoms };
+              match after sep with
+              | Mate -> next ()
+              | Placement ->
+                incr seen;
+                next ()
+              | Done -> () in
+            next ()
           end;
           records () in
       try
