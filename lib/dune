@@ -1,7 +1,7 @@
 (menhir
  (modules Trees_Parse Annotations_Parse)
  (flags --dump --explain --automaton-graph --cmly))
-(ocamllex Trees_Lex Annotations_Lex)
+(ocamllex Trees_Lex Annotations_Lex Gem_Lex)
 
 ; Everything below the fourteen toplevel modules is private: the two [_Base]
 ; modules, the [Annotations] scaffolding, the five per-format modules, and the
@@ -41,6 +41,7 @@
    Annotations_Translation
    Annotations_Lex
    Annotations_Parse
+   Gem_Lex
    Trees_Base
    Trees_Lex
    Trees_Parse))

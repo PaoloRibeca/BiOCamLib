@@ -233,7 +233,56 @@ let test_compression () =
     ())
 
 
+(* GEM MAP reading. *)
+
+let test_gem_map () =
+  Testing.section "GEM MAP reading" (fun () ->
+    let module G = Files.Gem in
+    (* What gem3-mapper -F MAP wrote for a toy reference: a unique read, a read on a repeat placed
+       on both copies, a mismatch, a deletion ('>1+'), an insertion ('>1-') -- and an unmapped one.
+       The reads are abbreviated; the reader does not check them against the alignments. *)
+    let text =
+      "r_uniq\tGATTACA\t1:0:0:0:0:0+0\tctgA:+:1:60:::60\n" ^
+      "r_motif\tTTGGCC\t2:0:0:0:0+0\tctgA:+:41:30:::0,ctgA:+:111:30:::0\n" ^
+      "r_mism\tCAGTCA\t0:1:0:0:0+0\tctgA:+:71:20T19:::60\n" ^
+      "r_del\tTACGTA\t0:1:0:0:0+0\tctgA:+:141:20>1+19:::60\n" ^
+      "r_ins\tTACGTA\t0:1:0:0:0+0\tctgA:-:141:20>1-20:::60\n" ^
+      "r_none\tACGT\t0:0+0\t-\n" in
+    let read text ?qualities () =
+      let seen = ref [] in
+      with_file text (fun path ->
+        let ic = open_in path in
+        Fun.protect ~finally:(fun () -> close_in ic)
+          (fun () -> G.iter ?qualities (fun tag m -> List.accum seen (tag, m)) ic));
+      List.rev !seen in
+    let seen = read text () in
+    let nth i = List.nth seen i in
+    let covered i = let _, m = nth i in G.Gigar.covered m.G.position m.G.gigar in
+    Testing.check_int "every placement is seen once, multimaps included and unmapped reads not"
+      ~expected:6 (List.length seen);
+    Testing.check_string "the tag comes with each placement" ~expected:"r_motif" (fst (nth 2));
+    Testing.check "a perfect read covers its whole length" (fun () -> covered 0 = [ 1, 60 ]);
+    Testing.check "a read on a repeat is placed on both copies"
+      (fun () -> covered 1 = [ 41, 30 ] && covered 2 = [ 111, 30 ]);
+    Testing.check "a mismatch consumes one reference base" (fun () -> covered 3 = [ 71, 40 ]);
+    Testing.check "a deletion, '>1+', consumes the reference base the read lacks"
+      (fun () -> covered 4 = [ 141, 40 ]);
+    Testing.check "an insertion, '>1-', consumes no reference" (fun () -> covered 5 = [ 141, 40 ]);
+    Testing.check "the contig and the strand are read"
+      (fun () -> let _, m = nth 0 and _, m' = nth 5 in m.G.contig = "ctgA" && m.G.forward && not m'.G.forward);
+    Testing.check "a splice breaks the covered span into two intervals"
+      (fun () -> G.Gigar.covered 100 [ G.Gigar.Match 10; G.Gigar.Splice 5; G.Gigar.Match 3 ] = [ 100, 10; 115, 3 ]);
+    Testing.check "a trim consumes no reference"
+      (fun () -> G.Gigar.covered 7 [ G.Gigar.Trim 5; G.Gigar.Match 10; G.Gigar.Trim 2 ] = [ 7, 10 ]);
+    Testing.check "records with qualities are read when the caller says so"
+      (fun () -> read "r\tACGT\tIIII\t1+0\tc:+:1:4\n" ~qualities:true () |> List.length = 1);
+    Testing.check_raises "a qualities column not announced is reported, not mistaken for counters"
+      (fun () -> read "r\tACGT\tIIII\t1+0\tc:+:1:4\n" ());
+    Testing.check_raises "an alignment string with junk in it is reported"
+      (fun () -> read "r\tACGT\t1+0\tc:+:1:2?2\n" ()))
+
 let run () =
   test_quoted_path ();
   test_sequence_readers ();
-  test_compression ()
+  test_compression ();
+  test_gem_map ()

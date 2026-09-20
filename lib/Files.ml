@@ -1244,3 +1244,137 @@ module Reads:
       end
   end
 
+(* The GEM mapper's own MAP format, what gem3-mapper writes with -F MAP: one record per read, its
+    tag, sequence, optionally qualities, the counts of its placements by number of errors, and then
+    the placements themselves -- every one of them, on the read's own line, which is what SAM cannot
+    say without a workaround. A placement is contig:strand:position:GIGAR, the GIGAR being GEM's
+    own alignment string, and multimaps are comma-separated.
+   The reader streams: it holds one field or one placement at a time and never a line, so a read
+    landing on a repeat, whose line lists every copy, costs no more memory than any other *)
+module Gem:
+  sig
+    module Gigar:
+      sig
+        type atom_t =
+          | Match of int
+          | Mismatch of char (* The reference base *)
+          | Trim of int
+          | Deletion of int (* '>n+': reference bases the read lacks *)
+          | Insertion of int (* '>n-': read bases the reference lacks *)
+          | Splice of int (* Reference bases skipped over *)
+        (* The reference intervals, as (start, length) pairs in the same 1-based coordinate, that an
+            alignment starting at the given position covers. Matches, mismatches and deletions
+            consume reference; trims and insertions do not; a splice skips reference and starts a
+            new interval *)
+        val covered: int -> atom_t list -> (int * int) list
+      end
+    (* One placement of a read *)
+    type match_t = {
+      contig: string;
+      forward: bool;
+      position: int; (* 1-based, on the contig *)
+      gigar: Gigar.atom_t list
+    }
+    (* Applies the function to every placement of every read, with the read's tag. The records
+        carry a qualities column when the mapper was fed FASTQ, which the caller must say, as a
+        qualities string can look like anything. The path is only for error messages *)
+    val iter: ?qualities:bool -> ?path:string -> (string -> match_t -> unit) -> in_channel -> unit
+  end
+= struct
+    module Gigar =
+      struct
+        type atom_t =
+          | Match of int
+          | Mismatch of char
+          | Trim of int
+          | Deletion of int
+          | Insertion of int
+          | Splice of int
+        let covered position atoms =
+          let res = ref [] and start = ref position and len = ref 0 in
+          List.iter
+            (function
+              | Match n | Deletion n -> len := !len + n
+              | Mismatch _ -> incr len
+              | Trim _ | Insertion _ -> ()
+              | Splice n ->
+                if !len > 0 then
+                  List.accum res (!start, !len);
+                start := !start + !len + n;
+                len := 0)
+            atoms;
+          if !len > 0 then
+            List.accum res (!start, !len);
+          List.rev !res
+      end
+    type match_t = {
+      contig: string;
+      forward: bool;
+      position: int;
+      gigar: Gigar.atom_t list
+    }
+    let atom_of_lex = function
+      | Gem_Lex.Match n -> Gigar.Match n
+      | Gem_Lex.Mismatch c -> Gigar.Mismatch c
+      | Gem_Lex.Trim n -> Gigar.Trim n
+      | Gem_Lex.Deletion n -> Gigar.Deletion n
+      | Gem_Lex.Insertion n -> Gigar.Insertion n
+      | Gem_Lex.Splice n -> Gigar.Splice n
+    let iter ?(qualities = false) ?(path = "-") f ic =
+      let lexbuf = Lexing.from_channel ic in
+      let malformed comment =
+        Exception.raise_malformed __FUNCTION__ lexbuf.Lexing.lex_curr_p.Lexing.pos_lnum "GEM MAP" path
+          ~comment in
+      (* What follows an alignment string: one or three colons introduce a score, which is skipped,
+          two colons the read's other mate, a comma the next placement *)
+      let rec after placements = function
+        | Gem_Lex.Colons 2 | Gem_Lex.Comma -> placements ()
+        | Gem_Lex.Colons (1 | 3) ->
+          Gem_Lex.score lexbuf;
+          begin match Gem_Lex.gigar lexbuf with
+          | Gem_Lex.Sep sep -> after placements sep
+          | Gem_Lex.Atom _ -> malformed "expected a separator after a score"
+          end
+        | Gem_Lex.Colons _ -> malformed "unexpected run of colons after an alignment string"
+        | Gem_Lex.Eol | Gem_Lex.Eof -> () in
+      let rec records () =
+        match Gem_Lex.tag lexbuf with
+        | None -> ()
+        | Some tag ->
+          let read = Gem_Lex.field lexbuf in
+          if qualities then begin
+            let quals = Gem_Lex.field lexbuf in
+            if String.length quals <> String.length read then
+              malformed "the qualities and the read differ in length -- is the input without qualities?"
+          end;
+          String.iter
+            (function
+              | '0' .. '9' | ':' | '+' | 'x' | '!' | '-' -> ()
+              | _ -> malformed "the counters column is malformed -- does the input carry qualities?")
+            (Gem_Lex.field lexbuf);
+          begin match Gem_Lex.maps lexbuf with
+          | Gem_Lex.Unmapped -> ()
+          | Gem_Lex.Mapped ->
+            let rec placements () =
+              let contig = Gem_Lex.name lexbuf in
+              let forward = Gem_Lex.strand lexbuf in
+              let position = Gem_Lex.position lexbuf in
+              let atoms = ref [] in
+              let rec alignment () =
+                match Gem_Lex.gigar lexbuf with
+                | Gem_Lex.Atom atom ->
+                  List.accum atoms (atom_of_lex atom);
+                  alignment ()
+                | Gem_Lex.Sep sep -> sep in
+              let sep = alignment () in
+              f tag { contig; forward; position; gigar = List.rev !atoms };
+              after placements sep in
+            placements ()
+          end;
+          records () in
+      try
+        records ()
+      with Gem_Lex.Error what ->
+        malformed what
+  end
+
