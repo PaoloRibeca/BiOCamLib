@@ -187,6 +187,41 @@ let bedgraph_of text = let _, _, b = consensus_of text in b
 
 let stats_of text = let st, _, _ = consensus_of text in st
 
+(* The consensus from summaries delivered by a function rather than read from a
+   pileup: the same lines summarised and handed over must give the same
+   consensus, track and statistics as reading them, whatever hands them over. *)
+
+let consensus_via_summaries text =
+  let seq_path = Filename.temp_file "BiOCamLib_Tests_" ".fasta"
+  and bg_path = Filename.temp_file "BiOCamLib_Tests_" ".bedgraph" in
+  Fun.protect ~finally:(fun () -> List.iter Sys.remove [ seq_path; bg_path ]) (fun () ->
+    let seq_oc = open_out seq_path and bg_oc = open_out bg_path in
+    let lines = String.split_on_char '\n' text |> List.filter (fun l -> l <> "") in
+    let stats =
+      Fun.protect ~finally:(fun () -> close_out seq_oc; close_out bg_oc) (fun () ->
+        Consensus.Mpileup.from_summaries ~sequence:seq_oc ~bedgraph:bg_oc
+          (fun f -> List.iter (fun line -> f (Mpileup.summarize line)) lines)) in
+    stats, read_file seq_path, read_file bg_path)
+
+let test_from_summaries () =
+  Testing.section "Consensus from summaries" (fun () ->
+    let text =
+      pileup
+        [ [ "chr"; "1"; "A"; "4"; "...."; "IIII" ];
+          [ "chr"; "2"; "C"; "4"; ".+2GG.+2GG.+2GG.+2GG"; "IIII" ];
+          [ "chr"; "3"; "G"; "4"; ".-1T.-1T.-1T."; "IIII" ];
+          [ "chr"; "4"; "T"; "4"; "***."; "IIII" ];
+          [ "chr"; "5"; "A"; "0"; "*"; "*" ];
+          [ "chr2"; "1"; "G"; "2"; ".,"; "II" ] ] in
+    let stats, sequence, bedgraph = consensus_of text
+    and stats', sequence', bedgraph' = consensus_via_summaries text in
+    Testing.check "the consensus is the same whoever delivers the summaries"
+      (fun () -> sequence = sequence');
+    Testing.check "and so is the track" (fun () -> bedgraph = bedgraph');
+    Testing.check "and so are the statistics" (fun () -> stats = stats');
+    Testing.check_string "and it is the one the lines describe, insertion and deletion included"
+      ~expected:">chr\nACGGGN\n>chr2\nG\n" sequence')
+
 let test_from_mpileup () =
   Testing.section "Consensus from a pileup" (fun () ->
     (* The plain case: whatever most reads said, one character per position. *)
@@ -373,6 +408,7 @@ let run () =
   test_remove_tips ();
   test_of_alignment ();
   test_from_mpileup ();
+  test_from_summaries ();
   test_bedgraph ();
   test_insertions ();
   test_ties ();

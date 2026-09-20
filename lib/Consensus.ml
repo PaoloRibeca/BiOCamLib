@@ -466,12 +466,14 @@ include (
                 chosen
               end
           end
-        (* Build a consensus sequence, and the depth track beside it, from a
-           pileup.  Both are written as the pileup is read, one sequence at a
-           time, so that neither is ever held whole beyond the sequence in hand *)
-        let from_mpileup ?(insertion_min_fraction = 0.6) ?(insertion_min_depth = 2)
-            ?(multiple_insertions = false) ?(seed = 0) ?(verbose = false) ?(quality_offset = 33)
-            ~sequence ~bedgraph input =
+        (* Build a consensus sequence, and the depth track beside it, from the
+           summaries of a pileup's positions, delivered in order by whoever has
+           them -- a pileup read line by line, or the mapper's own output walked
+           against the draft.  Both are written as the summaries come, one
+           sequence at a time, so that neither is ever held whole beyond the
+           sequence in hand *)
+        let from_summaries ?(insertion_min_fraction = 0.6) ?(insertion_min_depth = 2)
+            ?(multiple_insertions = false) ?(seed = 0) ?(verbose = false) ~sequence ~bedgraph iter =
           if insertion_min_fraction <= 0. then
             Exception.raise __FUNCTION__ Initialize
               (Printf.sprintf "Argument 'insertion_min_fraction' must be positive (found %g)"
@@ -481,7 +483,7 @@ include (
               (Printf.sprintf "Argument 'insertion_min_depth' must be at least 1 (found %d)"
                 insertion_min_depth);
           let random = Random.State.make [| seed |] and curr_seq_name = ref ""
-          and curr_seq = Buffer.create 1048576 and curr_bg = ref [] and line_number = ref 0
+          and curr_seq = Buffer.create 1048576 and curr_bg = ref []
           and positions = ref 0 and ambiguities = ref 0 and written = ref 0 in
           let add_to_bg length value =
             match !curr_bg with
@@ -510,13 +512,9 @@ include (
             Buffer.clear curr_seq;
             curr_bg := [] in
           let open_insertions = ref StringMap.empty in
-          begin try
-            while true do
-              incr line_number;
-              let line =
-                input_line input
-                  |> Mpileup'.summarize ~quality_offset ~line_number:!line_number
-                  |> of_summary in
+          iter
+            (fun summary ->
+              let line = of_summary summary in
               if line.seq <> !curr_seq_name then begin
                 output_current ();
                 (* An insertion still open at the end of one sequence has nothing
@@ -587,12 +585,22 @@ include (
                 Buffer.add_string curr_seq to_be_output;
                 add_to_bg (String.length to_be_output) payl.OpenInsertions.acc;
                 incr written
-              end
-            done
-          with End_of_file ->
-            output_current ()
-          end;
+              end);
+          output_current ();
           { positions = !positions; ambiguities = !ambiguities; insertions = !written }
+        (* The same from a pileup read line by line *)
+        let from_mpileup ?insertion_min_fraction ?insertion_min_depth ?multiple_insertions ?seed
+            ?verbose ?(quality_offset = 33) ~sequence ~bedgraph input =
+          let line_number = ref 0 in
+          from_summaries ?insertion_min_fraction ?insertion_min_depth ?multiple_insertions ?seed
+            ?verbose ~sequence ~bedgraph
+            (fun f ->
+              try
+                while true do
+                  incr line_number;
+                  input_line input |> Mpileup'.summarize ~quality_offset ~line_number:!line_number |> f
+                done
+              with End_of_file -> ())
       end
   end: sig
     module Alignment:
@@ -641,6 +649,14 @@ include (
           ?insertion_min_fraction:float -> ?insertion_min_depth:int ->
           ?multiple_insertions:bool -> ?seed:int -> ?verbose:bool -> ?quality_offset:int ->
           sequence:out_channel -> bedgraph:out_channel -> in_channel -> stats_t
+        (* The same from the summaries of the positions, in order, delivered by
+           the function given -- by whoever has them, a pileup or the mapper's
+           own output walked against the draft (Mpileup.Gem.iter) *)
+        val from_summaries:
+          ?insertion_min_fraction:float -> ?insertion_min_depth:int ->
+          ?multiple_insertions:bool -> ?seed:int -> ?verbose:bool ->
+          sequence:out_channel -> bedgraph:out_channel -> ((Mpileup.Summary.t -> unit) -> unit) ->
+          stats_t
       end
   end
 )
