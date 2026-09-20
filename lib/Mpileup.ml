@@ -386,10 +386,52 @@ include (
           skips: int;
           genotypes: Genotype.t list
         }
+        (* One line per position, the genotypes sorted by symbol, each as
+           symbol:kind:count and, for a base, its qualities as quality=times
+           pairs -- a form two pileups can be compared in whatever wrote them *)
+        let to_string t =
+          let kind = function
+            | Genotype.Base -> 'B'
+            | Genotype.Short_indel -> 'S'
+            | Genotype.Long_indel -> 'L' in
+          let genotypes =
+            List.sort (fun (a: Genotype.t) (b: Genotype.t) -> compare a.symbol b.symbol) t.genotypes
+              |> List.map
+                (fun (g: Genotype.t) ->
+                  let quals = Buffer.create 64 in
+                  Option.iter (Qualities.iter (fun q c -> Printf.bprintf quals ",%d=%d" q c)) g.qualities;
+                  Printf.sprintf "%s:%c:%d%s" g.symbol (kind g.kind) g.count (Buffer.contents quals)) in
+          Printf.sprintf "%s\t%d\t%c\t%d\t%d\t%d\t%d\t%s" t.seq t.pos t.reference t.depth t.voting t.gaps
+            t.skips (String.concat " " genotypes)
       end
     let base_index = function
       | 'A' -> 0 | 'C' -> 1 | 'G' -> 2 | 'T' -> 3 | 'N' -> 4 | _ -> -1
     let base_of_index = [| 'A'; 'C'; 'G'; 'T'; 'N' |]
+    (* The list the model consumes, built the same way from a line and from the
+       mapper's placements: the bases in a fixed order, each with its qualities,
+       then the indels, which have none *)
+    let genotypes_of counts quals indels =
+      let acc = ref [] in
+      List.iter
+        (fun (symbol, count) ->
+          List.accum acc
+            { Genotype.symbol; count;
+              kind =
+                if String.length symbol = 2 then
+                  Genotype.Short_indel
+                else
+                  Genotype.Long_indel;
+              qualities = None })
+        indels;
+      for i = 4 downto 0 do
+        if counts.(i) <> 0 then
+          List.accum acc
+            { Genotype.symbol = String.make 1 base_of_index.(i);
+              kind = Genotype.Base;
+              count = counts.(i);
+              qualities = quals.(i) }
+      done;
+      !acc
     (* One line.  [quality_offset] is 33 for everything written this century;
        [line_number], when given, goes in front of whatever turns out to be
        wrong, a pileup being long enough that the number is most of the
@@ -503,28 +545,7 @@ include (
             (Printf.sprintf "Depth column says %d, the bases column holds %d"
                depth n_calls)
       end;
-      let genotypes =
-        let acc = ref [] in
-        List.iter
-          (fun (symbol, count) ->
-            List.accum acc
-              { Genotype.symbol; count;
-                kind =
-                  if String.length symbol = 2 then
-                    Genotype.Short_indel
-                  else
-                    Genotype.Long_indel;
-                qualities = None })
-          !indels;
-        for i = 4 downto 0 do
-          if counts.(i) <> 0 then
-            List.accum acc
-              { Genotype.symbol = String.make 1 base_of_index.(i);
-                kind = Genotype.Base;
-                count = counts.(i);
-                qualities = Some quals.(i) }
-        done;
-        !acc in
+      let genotypes = genotypes_of counts (Array.map Option.some quals) !indels in
       { Summary.seq; pos; reference; depth; voting = !voting;
         gaps = !gaps; skips = !skips; genotypes }
     (* Back out again, which is what says the reading kept everything: the case
@@ -584,6 +605,236 @@ include (
                 f (of_line ?quality_offset ~line_number:!n line)
             done
           with End_of_file -> ())
+    (* THE SAME SUMMARIES FROM THE MAPPER'S OWN OUTPUT.  gem3-mapper -F MAP says
+       where every read went and, through its alignment string, what the read
+       had to say at each position it covers; walking that against the reference
+       gives what samtools mpileup would have written, with no SAM in between.
+       The records are not in reference order, so every position of the
+       reference keeps what the reads said about it until the input is over, and
+       the summaries are then delivered in order, one per position, uncovered
+       ones included as mpileup -a writes them.
+       What a read says follows the pileup: a base it aligns, with its quality,
+       or a gap where it carries a deletion, and an insertion or a deletion as an
+       indel attached to the base before it on the forward strand -- the bases of
+       an insertion carrying no quality, as in the format, and an indel before
+       the read's first forward base attaching to nothing, as the format cannot
+       say it.  A read on the reverse strand has its alignment string in its own
+       direction, so it is walked forward while the reference is walked back from
+       the far end of the span, its bases complemented, and an indel's sequence
+       is written the forward way.  Every placement the reader delivers counts,
+       so a read on several copies of a repeat votes at each of them; the strata
+       to keep are the reader's business.  What a read says is checked against
+       the reference as it goes -- a matched base must be the reference's, a
+       mismatch letter the reference base as the read sees it -- so that a
+       reference other than the one the reads were mapped to is refused rather
+       than counted. *)
+    module Gem =
+      struct
+        (* What the reads say about one position, as they said it: two bytes per
+           call, the base or the gap or the skip with the strand, and the
+           quality, in a buffer that grows as calls come.  A histogram per base
+           would be wider than most positions ever need, and a record per call
+           would be the rubbish summarize exists not to make *)
+        type cell_t = {
+          mutable calls: Bytes.t;
+          mutable n: int
+        }
+        let gap_code = 5 and skip_code = 6
+        let complement = function
+          | 'A' -> 'T' | 'C' -> 'G' | 'G' -> 'C' | 'T' -> 'A' | c -> c
+        let iter ?(qualities = false) ?strata ?(quality_offset = 33) ?missing_quality ?(path = "-")
+            ?strand ~reference f ic =
+          let malformed message = Exception.raise __FUNCTION__ IO_Format message in
+          (* The reference as the reads were mapped to it, and a cell per position *)
+          let contigs =
+            Array.map
+              (fun (name, sequence) ->
+                let sequence = String.uppercase_ascii sequence in
+                name, sequence,
+                Array.init (String.length sequence + 1) (fun _ -> { calls = Bytes.empty; n = 0 }),
+                Hashtbl.create 16)
+              reference in
+          let index = Hashtbl.create (Array.length contigs) in
+          Array.iteri (fun i (name, _, _, _) -> Hashtbl.replace index name i) contigs;
+          let record cells pos code s quality =
+            let cell = cells.(pos) in
+            if 2 * cell.n + 2 > Bytes.length cell.calls then begin
+              let bigger = Bytes.create (max 32 (2 * Bytes.length cell.calls)) in
+              Bytes.blit cell.calls 0 bigger 0 (2 * cell.n);
+              cell.calls <- bigger
+            end;
+            Bytes.unsafe_set cell.calls (2 * cell.n) (Char.unsafe_chr (code lor (s lsl 3)));
+            Bytes.unsafe_set cell.calls (2 * cell.n + 1) (Char.unsafe_chr quality);
+            cell.n <- cell.n + 1
+          and note_indel indels pos symbol s =
+            let key = symbol, s in
+            let seen = Option.value ~default:[] (Hashtbl.find_opt indels pos) in
+            let seen =
+              match List.assoc_opt key seen with
+              | Some n -> (key, n + 1) :: List.remove_assoc key seen
+              | None -> (key, 1) :: seen in
+            Hashtbl.replace indels pos seen in
+          Files.Gem.iter ~qualities ?strata ~path
+            (fun read ~placements:_ m ->
+              let tag = read.Files.Gem.tag in
+              let name, sequence, cells, indels =
+                match Hashtbl.find_opt index m.Files.Gem.contig with
+                | Some i -> contigs.(i)
+                | None ->
+                  Printf.sprintf "read '%s' is placed on '%s', which the reference does not contain"
+                    tag m.Files.Gem.contig
+                  |> malformed in
+              let len = String.length sequence in
+              let bases = String.uppercase_ascii read.Files.Gem.sequence in
+              let quality_at i =
+                match read.Files.Gem.qualities, missing_quality with
+                | Some quals, _ -> Char.code quals.[i] - quality_offset
+                | None, Some quality -> quality
+                | None, None ->
+                  malformed "the records carry no qualities and no quality was supplied for them" in
+              let forward = m.Files.Gem.forward in
+              let s = if forward then 0 else 1 in
+              let span =
+                List.fold_left
+                  (fun acc -> function
+                    | Files.Gem.Gigar.Match n | Files.Gem.Gigar.Deletion n | Files.Gem.Gigar.Splice n ->
+                      acc + n
+                    | Files.Gem.Gigar.Mismatch _ -> acc + 1
+                    | Files.Gem.Gigar.Trim _ | Files.Gem.Gigar.Insertion _ -> acc)
+                  0 m.Files.Gem.gigar in
+              let first = m.Files.Gem.position and last = m.Files.Gem.position + span - 1 in
+              if first < 1 || last > len then
+                Printf.sprintf "read '%s' is placed over %d-%d of '%s', which is %d long" tag first last
+                  name len
+                  |> malformed;
+              (* The read is walked in its own direction; the reference goes with it on the
+                 forward strand and against it on the reverse, from the far end of the span *)
+              let i = ref 0 and r = ref (if forward then first else last) and consumed = ref 0
+              and d = if forward then 1 else -1 in
+              let base_at i =
+                let c = bases.[i] in
+                if forward then c else complement c in
+              let vote () =
+                let base = base_at !i in
+                let code = base_index base in
+                if code < 0 then
+                  Printf.sprintf "read '%s' carries a base this reader does not know, %C" tag base
+                    |> malformed;
+                let quality = quality_at !i in
+                if quality < 0 || quality >= Qualities.range then
+                  Printf.sprintf "read '%s' carries a quality of %d, outside 0..%d" tag quality
+                    (Qualities.range - 1)
+                    |> malformed;
+                record cells !r code s quality;
+                incr i;
+                r := !r + d;
+                incr consumed in
+              List.iter
+                (function
+                  | Files.Gem.Gigar.Match n ->
+                    for _ = 1 to n do
+                      let base = base_at !i and expected = sequence.[!r - 1] in
+                      if base <> expected && expected <> 'N' then
+                        Printf.sprintf "read '%s' matches %C at %s:%d, where the reference has %C"
+                          tag base name !r expected
+                          |> malformed;
+                      vote ()
+                    done
+                  | Files.Gem.Gigar.Mismatch letter ->
+                    let letter = if forward then letter else complement letter in
+                    if letter <> sequence.[!r - 1] then
+                      Printf.sprintf "read '%s' mismatches %C at %s:%d, where the reference has %C" tag
+                        letter name !r sequence.[!r - 1]
+                        |> malformed;
+                    vote ()
+                  | Files.Gem.Gigar.Trim n ->
+                    i := !i + n
+                  | Files.Gem.Gigar.Insertion n ->
+                    (* After the base before it on the forward strand: the last consumed going
+                       forward, the next to be consumed going back *)
+                    let inserted = String.sub bases !i n in
+                    let inserted = if forward then inserted else Sequences.Lint.rc inserted in
+                    if forward && !consumed > 0 then
+                      note_indel indels (!r - 1) ("+" ^ inserted) s
+                    else if not forward && !consumed < span then
+                      note_indel indels !r ("+" ^ inserted) s;
+                    i := !i + n
+                  | Files.Gem.Gigar.Deletion n ->
+                    let lo, hi = if forward then !r, !r + n - 1 else !r - n + 1, !r in
+                    if lo < 1 || hi > len then
+                      Printf.sprintf "read '%s' deletes %d-%d of '%s', which is %d long" tag lo hi name len
+                        |> malformed;
+                    let deleted = String.sub sequence (lo - 1) n in
+                    if forward && !consumed > 0 then
+                      note_indel indels (!r - 1) ("-" ^ deleted) s
+                    else if not forward && !consumed + n < span then
+                      note_indel indels (!r - n) ("-" ^ deleted) s;
+                    for pos = lo to hi do
+                      record cells pos gap_code s 0
+                    done;
+                    r := !r + d * n;
+                    consumed := !consumed + n
+                  | Files.Gem.Gigar.Splice n ->
+                    let lo, hi = if forward then !r, !r + n - 1 else !r - n + 1, !r in
+                    if lo < 1 || hi > len then
+                      Printf.sprintf "read '%s' skips %d-%d of '%s', which is %d long" tag lo hi name len
+                        |> malformed;
+                    for pos = lo to hi do
+                      record cells pos skip_code s 0
+                    done;
+                    r := !r + d * n;
+                    consumed := !consumed + n)
+                m.Files.Gem.gigar)
+            ic;
+          (* Then every position, in order, counted as summarize counts a line *)
+          let wanted s =
+            match strand with
+            | None -> true
+            | Some (Sequences.Types.Forward _) -> s = 0
+            | Some (Sequences.Types.Reverse _) -> s = 1 in
+          Array.iter
+            (fun (name, sequence, cells, indels) ->
+              for pos = 1 to String.length sequence do
+                let cell = cells.(pos) in
+                let counts = Array.make 5 0 and quals = Array.make 5 None
+                and voting = ref 0 and gaps = ref 0 and skips = ref 0 in
+                for k = 0 to cell.n - 1 do
+                  let b = Char.code (Bytes.unsafe_get cell.calls (2 * k)) in
+                  let code = b land 7 and s = b lsr 3 in
+                  if wanted s then
+                    if code = gap_code then
+                      incr gaps
+                    else if code = skip_code then
+                      incr skips
+                    else begin
+                      counts.(code) <- counts.(code) + 1;
+                      let quality = Char.code (Bytes.unsafe_get cell.calls (2 * k + 1)) in
+                      begin match quals.(code) with
+                      | Some q -> Qualities.add q quality
+                      | None ->
+                        let q = Qualities.make () in
+                        Qualities.add q quality;
+                        quals.(code) <- Some q
+                      end;
+                      incr voting
+                    end
+                done;
+                let indels =
+                  List.fold_left
+                    (fun acc ((symbol, s), n) ->
+                      if wanted s then
+                        match List.assoc_opt symbol acc with
+                        | Some m -> (symbol, m + n) :: List.remove_assoc symbol acc
+                        | None -> (symbol, n) :: acc
+                      else
+                        acc)
+                    [] (Option.value ~default:[] (Hashtbl.find_opt indels pos)) in
+                f { Summary.seq = name; pos; reference = sequence.[pos - 1];
+                    depth = !voting + !gaps + !skips; voting = !voting; gaps = !gaps; skips = !skips;
+                    genotypes = genotypes_of counts quals indels }
+              done)
+            contigs
+      end
   end: sig
     module Call:
       sig
@@ -663,6 +914,10 @@ include (
           skips: int;
           genotypes: Genotype.t list
         }
+        (* One line per position, the genotypes sorted by symbol, each as
+           symbol:kind:count and, for a base, its qualities as quality=times
+           pairs -- a form two pileups can be compared in whatever wrote them *)
+        val to_string: t -> string
       end
     val empty: t
     val of_line: ?quality_offset:int -> ?line_number:int -> string -> t
@@ -677,5 +932,25 @@ include (
        whatever goes wrong *)
     val iter_string: ?quality_offset:int -> (t -> unit) -> string -> unit
     val iter: ?quality_offset:int -> (t -> unit) -> string -> unit
+    (* The summaries of every position of the reference, in order, from the GEM
+       mapper's own output (gem3-mapper -F MAP) rather than from a pileup: each
+       placement of each read is walked against the reference and counted as
+       summarize counts a line.  [reference] is the sequences the reads were
+       mapped to, by name; [qualities] and [strata] are the reader's, the
+       records carrying qualities when the mapper was fed FASTQ, and the first
+       that many non-empty strata of each read being counted -- every placement
+       the reader delivers votes, whichever copy of a repeat it is on;
+       [missing_quality] stands in for records without qualities, which are
+       refused otherwise; [strand] keeps only the reads on it, gaps included,
+       which a pileup could not tell apart.  What the reads say is checked
+       against the reference, so a reference other than the one they were mapped
+       to is refused *)
+    module Gem:
+      sig
+        val iter:
+          ?qualities:bool -> ?strata:int -> ?quality_offset:int -> ?missing_quality:int ->
+          ?path:string -> ?strand:Sequences.Types.strand_t -> reference:(string * string) array ->
+          (Summary.t -> unit) -> in_channel -> unit
+      end
   end
 )

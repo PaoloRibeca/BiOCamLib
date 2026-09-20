@@ -1268,6 +1268,13 @@ module Gem:
             new interval *)
         val covered: int -> atom_t list -> (int * int) list
       end
+    (* One end of a read as the record carries it: the read itself, or one mate of a pair, with
+        its qualities when the mapper was fed FASTQ *)
+    type read_t = {
+      tag: string;
+      sequence: string;
+      qualities: string option
+    }
     (* One placement of a read *)
     type match_t = {
       contig: string;
@@ -1275,17 +1282,17 @@ module Gem:
       position: int; (* 1-based, on the contig *)
       gigar: Gigar.atom_t list
     }
-    (* Applies the function to every placement of every read, with the read's tag and the number
-        of the read's placements the iteration delivers, so that a read can be weighed among them.
-        The records carry a qualities column when the mapper was fed FASTQ, which the caller must
-        say, as a qualities string can look like anything. With strata given, only the placements
-        in the first that many non-empty strata of each read are delivered -- its best matches, a
-        stratum being all the placements with the same number of errors: the mapper lists the
-        placements in stratum order and counts them per stratum in the counters column, so those
-        are the first placements listed, as many as the counters say. The path is only for error
-        messages *)
+    (* Applies the function to every placement of every read, with the end of the read the
+        placement is of and the number of the read's placements the iteration delivers, so that a
+        read can be weighed among them. The records carry a qualities column when the mapper was
+        fed FASTQ, which the caller must say, as a qualities string can look like anything. With
+        strata given, only the placements in the first that many non-empty strata of each read
+        are delivered -- its best matches, a stratum being all the placements with the same number
+        of errors: the mapper lists the placements in stratum order and counts them per stratum in
+        the counters column, so those are the first placements listed, as many as the counters
+        say. The path is only for error messages *)
     val iter:
-      ?qualities:bool -> ?path:string -> ?strata:int -> (string -> placements:int -> match_t -> unit) ->
+      ?qualities:bool -> ?path:string -> ?strata:int -> (read_t -> placements:int -> match_t -> unit) ->
         in_channel -> unit
   end
 = struct
@@ -1315,6 +1322,11 @@ module Gem:
             List.accum res (!start, !len);
           List.rev !res
       end
+    type read_t = {
+      tag: string;
+      sequence: string;
+      qualities: string option
+    }
     type match_t = {
       contig: string;
       forward: bool;
@@ -1383,12 +1395,27 @@ module Gem:
         match Gem_Lex.tag lexbuf with
         | None -> ()
         | Some tag ->
-          let read = Gem_Lex.field lexbuf in
-          if qualities then begin
-            let quals = Gem_Lex.field lexbuf in
-            if String.length quals <> String.length read then
-              malformed "the qualities and the read differ in length -- is the input without qualities?"
-          end;
+          let sequence = Gem_Lex.field lexbuf in
+          let quals =
+            if qualities then begin
+              let quals = Gem_Lex.field lexbuf in
+              if String.length quals <> String.length sequence then
+                malformed "the qualities and the read differ in length -- is the input without qualities?";
+              Some quals
+            end else
+              None in
+          (* The ends of the read: one, or the two mates of a pair, which the record joins with a
+              space in the read and in the qualities alike *)
+          let ends =
+            let sequences = String.split_on_char ' ' sequence in
+            let qualities =
+              match quals with
+              | None -> List.map (fun _ -> None) sequences
+              | Some quals -> String.split_on_char ' ' quals |> List.map Option.some in
+            if List.length qualities <> List.length sequences then
+              malformed "the qualities and the read differ in their mates";
+            List.map2 (fun sequence qualities -> { tag; sequence; qualities }) sequences qualities
+              |> Array.of_list in
           let counters = Gem_Lex.field lexbuf in
           String.iter
             (function
@@ -1412,7 +1439,8 @@ module Gem:
             if placements = 0 then
               malformed "the counters announce no placement, yet the read has some";
             let seen = ref 0 in
-            let rec next () =
+            (* One end of a placement, the mate saying which end of the read it is *)
+            let rec next mate =
               let contig = Gem_Lex.name lexbuf in
               let forward = Gem_Lex.strand lexbuf in
               let position = Gem_Lex.position lexbuf in
@@ -1424,15 +1452,17 @@ module Gem:
                   alignment ()
                 | Gem_Lex.Sep sep -> sep in
               let sep = alignment () in
+              if mate >= Array.length ends then
+                malformed "a placement has more ends than the read has mates";
               if !seen < placements then
-                f tag ~placements { contig; forward; position; gigar = List.rev !atoms };
+                f ends.(mate) ~placements { contig; forward; position; gigar = List.rev !atoms };
               match after sep with
-              | Mate -> next ()
+              | Mate -> next (mate + 1)
               | Placement ->
                 incr seen;
-                next ()
+                next 0
               | Done -> () in
-            next ()
+            next 0
           end;
           records () in
       try

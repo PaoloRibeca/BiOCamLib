@@ -253,7 +253,8 @@ let test_gem_map () =
       with_file text (fun path ->
         let ic = open_in path in
         Fun.protect ~finally:(fun () -> close_in ic)
-          (fun () -> G.iter ?qualities ?strata (fun tag ~placements m -> List.accum seen (tag, placements, m)) ic));
+          (fun () ->
+            G.iter ?qualities ?strata (fun read ~placements m -> List.accum seen (read.G.tag, placements, m)) ic));
       List.rev !seen in
     let seen = read text in
     let nth i = List.nth seen i in
@@ -302,6 +303,14 @@ let test_gem_map () =
       (fun () -> match read ~strata:1 pair with [ _, 1, m; _, 1, m' ] -> m.G.position = 1 && m'.G.position = 11 | _ -> false);
     Testing.check "the strata of a pair are its pair placements"
       (fun () -> match read ~strata:2 pair with [ _, 2, _; _, 2, _; _, 2, _; _, 2, _ ] -> true | _ -> false);
+    Testing.check "each end of a pair comes with its own mate's bases and qualities"
+      (fun () ->
+        let seen = ref [] in
+        with_file "p\tACGT GGCC\tIIII JJJJ\t1+0\tc:+:1:4::c:-:11:4:::0\n" (fun path ->
+          let ic = open_in path in
+          Fun.protect ~finally:(fun () -> close_in ic)
+            (fun () -> G.iter ~qualities:true (fun r ~placements:_ _ -> List.accum seen (r.G.sequence, r.G.qualities)) ic));
+        List.rev !seen = [ "ACGT", Some "IIII"; "GGCC", Some "JJJJ" ]);
     Testing.check_raises "counters that cannot be counted are reported"
       (fun () -> read ~strata:1 "r\tACGT\t!\tc:+:1:4:::0\n");
     Testing.check_raises "counters announcing no placement for a placed read are reported"

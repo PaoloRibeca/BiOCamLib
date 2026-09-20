@@ -395,6 +395,74 @@ let test_agreement () =
     Testing.check_string "and a position with no reads says nothing" ~expected:""
       (show_genotypes (summarize (line [ "polio"; "106"; "T"; "0"; "*"; "*" ]))))
 
+(* The same summaries from the mapper's own output.  The reads below are the
+   ones the hand-written pileup describes, so the generator is held to what
+   summarize makes of that pileup, position for position: a forward read, a
+   forward mismatch, a reverse mismatch -- the letter being the reference as the
+   read sees it, complemented -- an insertion and a deletion on the forward
+   strand, an insertion on the reverse strand, written the forward way after
+   the base before it on the forward strand, and a pair, whose mates count each. *)
+
+let test_gem () =
+  Testing.section "Pileup from GEM MAP" (fun () ->
+    let reference = [| "c", "AACCGGTTAA" |] in
+    let map =
+      "r1\tAACCGG\tIIIIII\t1+0\tc:+:1:6:::60\n" ^
+      "r2\tAAGCGG\tIIIIII\t0:1+0\tc:+:1:2C3:::60\n" ^
+      "r3\tTTAGCC\tJJJJJJ\t0:1+0\tc:-:5:3A2:::60\n" ^
+      "r4\tAACCTGGTT\tIIIIIIIII\t0:1+0\tc:+:1:4>1-4:::60\n" ^
+      "r5\tAACCTTAA\tIIIIIIII\t0:0:1+0\tc:+:1:4>2+4:::60\n" ^
+      "r6\tTTAAGCCGG\tJJJJJJJJJ\t0:1+0\tc:-:3:4>1-4:::60\n" ^
+      "p\tAACC TTAA\tIIII JJJJ\t1+0\tc:+:1:4::c:-:7:4:::0\n" in
+    let pileup =
+      [ line [ "c"; "1"; "A"; "5"; "^!.^!.^!.^!.^!."; "IIIII" ];
+        line [ "c"; "2"; "A"; "5"; "....."; "IIIII" ];
+        line [ "c"; "3"; "C"; "6"; ".G...^!,"; "IIIIIJ" ];
+        line [ "c"; "4"; "C"; "6"; "...+1T.-2GG.$,"; "IIIIIJ" ];
+        line [ "c"; "5"; "G"; "6"; "..^!,.*,"; "IIJI!J" ];
+        line [ "c"; "6"; "G"; "6"; "..,.*,+1c"; "IIJI!J" ];
+        line [ "c"; "7"; "T"; "5"; "c..,^!,"; "JIIJJ" ];
+        line [ "c"; "8"; "T"; "5"; ",.$.,,"; "JIIJJ" ];
+        line [ "c"; "9"; "A"; "4"; ",.,,"; "JIJJ" ];
+        line [ "c"; "10"; "A"; "4"; ",$.$,$,$"; "JIJJ" ] ] in
+    let from_map ?(qualities = true) ?missing_quality ?strand ?(reference = reference) text =
+      let path = Filename.temp_file "BiOCamLib_Tests_" ".map" in
+      Fun.protect ~finally:(fun () -> Sys.remove path)
+        (fun () ->
+          let oc = open_out path in
+          output_string oc text;
+          close_out oc;
+          let ic = open_in path and acc = ref [] in
+          Fun.protect ~finally:(fun () -> close_in ic)
+            (fun () ->
+              M.Gem.iter ~qualities ?missing_quality ?strand ~reference (fun u -> List.accum acc u) ic);
+          List.rev !acc) in
+    let shown = List.map M.Summary.to_string in
+    let expected = List.map (fun l -> summarize l) pileup and got = from_map map in
+    Testing.check "what the reads say is what the pileup says, position by position, qualities and all"
+      (fun () -> shown got = shown expected);
+    Testing.check_string "a reverse read's mismatch is complemented and keeps its quality"
+      ~expected:"C:1@41 T:4@40.5" (show_genotypes (List.nth got 6));
+    Testing.check_string "a reverse read's insertion is written the forward way, after the base before it"
+      ~expected:"G:5@40.4 +C:1" (show_genotypes (List.nth got 5));
+    Testing.check_string "a deletion's positions are gaps that count in the depth but do not vote"
+      ~expected:"depth 6, voting 5, gaps 1"
+      (let u = List.nth got 4 in
+       Printf.sprintf "depth %d, voting %d, gaps %d" u.M.Summary.depth u.M.Summary.voting u.M.Summary.gaps);
+    Testing.check_string "the reads of one strand can be kept alone, their gaps with them"
+      ~expected:"forward depth 4, gaps 1; reverse depth 2, gaps 0"
+      (let f = List.nth (from_map ~strand:Sequences.Types.forward map) 4
+       and r = List.nth (from_map ~strand:Sequences.Types.reverse map) 4 in
+       Printf.sprintf "forward depth %d, gaps %d; reverse depth %d, gaps %d" f.M.Summary.depth
+         f.M.Summary.gaps r.M.Summary.depth r.M.Summary.gaps);
+    Testing.check_raises "a reference the reads were not mapped to is refused"
+      (fun () -> from_map ~reference:[| "c", "AACCGGTTAT" |] map);
+    Testing.check_raises "records without qualities are refused unless a quality is given for them"
+      (fun () -> from_map ~qualities:false "r1\tAACCGG\t1+0\tc:+:1:6:::60\n");
+    Testing.check_string "and take the one given"
+      ~expected:"A:1@20"
+      (show_genotypes (List.hd (from_map ~qualities:false ~missing_quality:20 "r1\tAACCGG\t1+0\tc:+:1:6:::60\n"))))
+
 let run () =
   test_columns ();
   test_calls ();
@@ -403,4 +471,5 @@ let run () =
   test_iteration ();
   test_summary ();
   test_qualities ();
-  test_agreement ()
+  test_agreement ();
+  test_gem ()
