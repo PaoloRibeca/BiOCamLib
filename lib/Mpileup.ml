@@ -609,10 +609,17 @@ include (
        where every read went and, through its alignment string, what the read
        had to say at each position it covers; walking that against the reference
        gives what samtools mpileup would have written, with no SAM in between.
-       The records are not in reference order, so every position of the
-       reference keeps what the reads said about it until the input is over, and
-       the summaries are then delivered in order, one per position, uncovered
-       ones included as mpileup -a writes them.
+       The records come in the reads' order and a pileup goes in the reference's,
+       so what each placement says is kept in a compact form -- where it starts,
+       one call per position it covers, two bytes, and its indels, the tag, the
+       sequence and the qualities being dropped -- and sorted by where it starts
+       once the input is over; the placements then reach cells that live only
+       while some placement still covers them, and the summaries come out in
+       order, one per position, uncovered ones included as mpileup -a writes
+       them.  The sort is where the memory goes, and it can be bounded: past a
+       budget what has been kept is sorted and written to a temporary file, a
+       run, and the runs are merged when the input is over, so that the input
+       can be a pipe whatever its size.
        What a read says follows the pileup: a base it aligns, with its quality,
        or a gap where it carries a deletion, and an insertion or a deletion as an
        indel attached to the base before it on the forward strand -- the bases of
@@ -630,210 +637,392 @@ include (
        than counted. *)
     module Gem =
       struct
-        (* What the reads say about one position, as they said it: two bytes per
-           call, the base or the gap or the skip with the strand, and the
-           quality, in a buffer that grows as calls come.  A histogram per base
-           would be wider than most positions ever need, and a record per call
-           would be the rubbish summarize exists not to make *)
-        type cell_t = {
-          mutable calls: Bytes.t;
-          mutable n: int
-        }
         let gap_code = 5 and skip_code = 6
         let complement = function
           | 'A' -> 'T' | 'C' -> 'G' | 'G' -> 'C' | 'T' -> 'A' | c -> c
+        (* Where a placement starts on its contig and how many positions it covers: every one
+           of them gets exactly one call, a vote, a gap or a skip *)
+        let extent m =
+          let span =
+            List.fold_left
+              (fun acc -> function
+                | Files.Gem.Gigar.Match n | Files.Gem.Gigar.Deletion n | Files.Gem.Gigar.Splice n ->
+                  acc + n
+                | Files.Gem.Gigar.Mismatch _ -> acc + 1
+                | Files.Gem.Gigar.Trim _ | Files.Gem.Gigar.Insertion _ -> acc)
+              0 m.Files.Gem.gigar in
+          m.Files.Gem.position, span
+        (* One placement walked against its contig: what the read says at each position it
+           covers goes to [record] as (position, code, strand, quality) and each indel to
+           [note_indel] as (position, symbol, strand) *)
+        let walk ~where ~quality_offset ~missing_quality ~record ~note_indel (name, sequence) read
+            m =
+          let malformed message = Exception.raise where IO_Format message in
+          let tag = read.Files.Gem.tag in
+          let len = String.length sequence in
+          let bases = String.uppercase_ascii read.Files.Gem.sequence in
+          let quality_at i =
+            match read.Files.Gem.qualities, missing_quality with
+            | Some quals, _ -> Char.code quals.[i] - quality_offset
+            | None, Some quality -> quality
+            | None, None ->
+              malformed "the records carry no qualities and no quality was supplied for them" in
+          let forward = m.Files.Gem.forward in
+          let s = if forward then 0 else 1 in
+          let first, span = extent m in
+          let last = first + span - 1 in
+          if first < 1 || last > len then
+            Printf.sprintf "read '%s' is placed over %d-%d of '%s', which is %d long" tag first
+              last name len
+              |> malformed;
+          (* The read is walked in its own direction; the reference goes with it on the forward
+             strand and against it on the reverse, from the far end of the span *)
+          let i = ref 0 and r = ref (if forward then first else last) and consumed = ref 0
+          and d = if forward then 1 else -1 in
+          let base_at i =
+            let c = bases.[i] in
+            if forward then c else complement c in
+          let vote () =
+            let base = base_at !i in
+            let code = base_index base in
+            if code < 0 then
+              Printf.sprintf "read '%s' carries a base this reader does not know, %C" tag base
+                |> malformed;
+            let quality = quality_at !i in
+            if quality < 0 || quality >= Qualities.range then
+              Printf.sprintf "read '%s' carries a quality of %d, outside 0..%d" tag quality
+                (Qualities.range - 1)
+                |> malformed;
+            record !r code s quality;
+            incr i;
+            r := !r + d;
+            incr consumed in
+          List.iter
+            (function
+              | Files.Gem.Gigar.Match n ->
+                for _ = 1 to n do
+                  let base = base_at !i and expected = sequence.[!r - 1] in
+                  if base <> expected && expected <> 'N' then
+                    Printf.sprintf "read '%s' matches %C at %s:%d, where the reference has %C" tag
+                      base name !r expected
+                      |> malformed;
+                  vote ()
+                done
+              | Files.Gem.Gigar.Mismatch letter ->
+                let letter = if forward then letter else complement letter in
+                if letter <> sequence.[!r - 1] then
+                  Printf.sprintf "read '%s' mismatches %C at %s:%d, where the reference has %C" tag
+                    letter name !r sequence.[!r - 1]
+                    |> malformed;
+                vote ()
+              | Files.Gem.Gigar.Trim n ->
+                i := !i + n
+              | Files.Gem.Gigar.Insertion n ->
+                (* After the base before it on the forward strand: the last consumed going
+                   forward, the next to be consumed going back *)
+                let inserted = String.sub bases !i n in
+                let inserted = if forward then inserted else Sequences.Lint.rc inserted in
+                if forward && !consumed > 0 then
+                  note_indel (!r - 1) ("+" ^ inserted) s
+                else if not forward && !consumed < span then
+                  note_indel !r ("+" ^ inserted) s;
+                i := !i + n
+              | Files.Gem.Gigar.Deletion n ->
+                let lo, hi = if forward then !r, !r + n - 1 else !r - n + 1, !r in
+                if lo < 1 || hi > len then
+                  Printf.sprintf "read '%s' deletes %d-%d of '%s', which is %d long" tag lo hi name
+                    len
+                    |> malformed;
+                let deleted = String.sub sequence (lo - 1) n in
+                if forward && !consumed > 0 then
+                  note_indel (!r - 1) ("-" ^ deleted) s
+                else if not forward && !consumed + n < span then
+                  note_indel (!r - n) ("-" ^ deleted) s;
+                for pos = lo to hi do
+                  record pos gap_code s 0
+                done;
+                r := !r + d * n;
+                consumed := !consumed + n
+              | Files.Gem.Gigar.Splice n ->
+                let lo, hi = if forward then !r, !r + n - 1 else !r - n + 1, !r in
+                if lo < 1 || hi > len then
+                  Printf.sprintf "read '%s' skips %d-%d of '%s', which is %d long" tag lo hi name
+                    len
+                    |> malformed;
+                for pos = lo to hi do
+                  record pos skip_code s 0
+                done;
+                r := !r + d * n;
+                consumed := !consumed + n)
+            m.Files.Gem.gigar
+        (* WHAT IS KEPT OF A PLACEMENT, laid end to end in a store: the contig, where it starts,
+           how many positions it covers and the record's own length, four bytes each; one call
+           per position, two bytes, the base or the gap or the skip with the strand, and the
+           quality; then each indel as its offset from the start, its strand, its symbol's length
+           and the symbol.  Some 20 bytes and 2 per position, against the tag, the sequence and
+           the qualities of the record it came from *)
+        let header_length = 16
+        type store_t = {
+          mutable bytes: Bytes.t;
+          mutable length: int;
+          mutable index: int array;
+          mutable count: int
+        }
+        let get_int32 bytes at = Bytes.get_int32_le bytes at |> Int32.to_int
+        let set_int32 bytes at n = Bytes.set_int32_le bytes at (Int32.of_int n)
+        (* Room for [n] more bytes, doubling the store unless a budget says how far *)
+        let reserve ?budget store n =
+          if store.length + n > Bytes.length store.bytes then begin
+            let target = max (store.length + n) (2 * Bytes.length store.bytes) in
+            let target =
+              match budget with
+              | Some b -> max (store.length + n) (min target b)
+              | None -> target in
+            let bigger = Bytes.create target in
+            Bytes.blit store.bytes 0 bigger 0 store.length;
+            store.bytes <- bigger
+          end
+        let key bytes at = get_int32 bytes at, get_int32 bytes (at + 4)
+        (* The records of the store in the reference's order *)
+        let sorted store =
+          let index = Array.sub store.index 0 store.count in
+          Array.sort (fun a b -> compare (key store.bytes a) (key store.bytes b)) index;
+          index
+        (* A CELL is what the reads have said at one position, counted as summarize counts a
+           line: the bases, each with its qualities, the gaps, the skips and the indels.  It
+           lives from the first placement reaching its position to the last, then becomes the
+           position's summary *)
+        type cell_t = {
+          mutable counts: int array;
+          mutable quals: Qualities.t option array;
+          mutable gaps: int;
+          mutable skips: int;
+          mutable indels: (string * int) list
+        }
+        let empty_cell () =
+          { counts = Array.make 5 0; quals = Array.make 5 None; gaps = 0; skips = 0; indels = [] }
+        let summary_of name sequence pos cell =
+          let voting = Array.fold_left ( + ) 0 cell.counts in
+          { Summary.seq = name; pos; reference = sequence.[pos - 1];
+            depth = voting + cell.gaps + cell.skips; voting; gaps = cell.gaps; skips = cell.skips;
+            genotypes = genotypes_of cell.counts cell.quals (List.sort compare cell.indels) }
+        (* The live cells, in a ring from the earliest position some placement still covers;
+           every slot beyond the live ones holds a cell nothing has touched *)
+        type ring_t = {
+          mutable cells: cell_t array;
+          mutable head: int;
+          mutable live: int
+        }
+        let ring_get ring k =
+          let size = Array.length ring.cells in
+          if k >= size then begin
+            let bigger = Array.init (max (k + 1) (2 * size)) (fun _ -> empty_cell ()) in
+            for i = 0 to ring.live - 1 do
+              bigger.(i) <- ring.cells.((ring.head + i) mod size)
+            done;
+            ring.cells <- bigger;
+            ring.head <- 0
+          end;
+          if k >= ring.live then
+            ring.live <- k + 1;
+          ring.cells.((ring.head + k) mod Array.length ring.cells)
+        let ring_pop ring =
+          if ring.live = 0 then
+            empty_cell ()
+          else begin
+            let cell = ring.cells.(ring.head) in
+            ring.cells.(ring.head) <- empty_cell ();
+            ring.head <- (ring.head + 1) mod Array.length ring.cells;
+            ring.live <- ring.live - 1;
+            cell
+          end
         let iter ?(qualities = false) ?strata ?(quality_offset = 33) ?missing_quality ?(path = "-")
-            ?strand ~reference f ic =
+            ?strand ?memory ?(verbose = false) ~reference f ic =
           let malformed message = Exception.raise __FUNCTION__ IO_Format message in
-          (* The reference as the reads were mapped to it, and a cell per position *)
+          (* The reference as the reads were mapped to it *)
           let contigs =
-            Array.map
-              (fun (name, sequence) ->
-                let sequence = String.uppercase_ascii sequence in
-                name, sequence,
-                Array.init (String.length sequence + 1) (fun _ -> { calls = Bytes.empty; n = 0 }),
-                Hashtbl.create 16)
-              reference in
+            Array.map (fun (name, sequence) -> name, String.uppercase_ascii sequence) reference in
           let index = Hashtbl.create (Array.length contigs) in
-          Array.iteri (fun i (name, _, _, _) -> Hashtbl.replace index name i) contigs;
-          let record cells pos code s quality =
-            let cell = cells.(pos) in
-            if 2 * cell.n + 2 > Bytes.length cell.calls then begin
-              let bigger = Bytes.create (max 32 (2 * Bytes.length cell.calls)) in
-              Bytes.blit cell.calls 0 bigger 0 (2 * cell.n);
-              cell.calls <- bigger
-            end;
-            Bytes.unsafe_set cell.calls (2 * cell.n) (Char.unsafe_chr (code lor (s lsl 3)));
-            Bytes.unsafe_set cell.calls (2 * cell.n + 1) (Char.unsafe_chr quality);
-            cell.n <- cell.n + 1
-          and note_indel indels pos symbol s =
-            let key = symbol, s in
-            let seen = Option.value ~default:[] (Hashtbl.find_opt indels pos) in
-            let seen =
-              match List.assoc_opt key seen with
-              | Some n -> (key, n + 1) :: List.remove_assoc key seen
-              | None -> (key, 1) :: seen in
-            Hashtbl.replace indels pos seen in
-          Files.Gem.iter ~qualities ?strata ~path
-            (fun read ~placements:_ m ->
-              let tag = read.Files.Gem.tag in
-              let name, sequence, cells, indels =
-                match Hashtbl.find_opt index m.Files.Gem.contig with
-                | Some i -> contigs.(i)
-                | None ->
-                  Printf.sprintf "read '%s' is placed on '%s', which the reference does not contain"
-                    tag m.Files.Gem.contig
-                  |> malformed in
-              let len = String.length sequence in
-              let bases = String.uppercase_ascii read.Files.Gem.sequence in
-              let quality_at i =
-                match read.Files.Gem.qualities, missing_quality with
-                | Some quals, _ -> Char.code quals.[i] - quality_offset
-                | None, Some quality -> quality
-                | None, None ->
-                  malformed "the records carry no qualities and no quality was supplied for them" in
-              let forward = m.Files.Gem.forward in
-              let s = if forward then 0 else 1 in
-              let span =
-                List.fold_left
-                  (fun acc -> function
-                    | Files.Gem.Gigar.Match n | Files.Gem.Gigar.Deletion n | Files.Gem.Gigar.Splice n ->
-                      acc + n
-                    | Files.Gem.Gigar.Mismatch _ -> acc + 1
-                    | Files.Gem.Gigar.Trim _ | Files.Gem.Gigar.Insertion _ -> acc)
-                  0 m.Files.Gem.gigar in
-              let first = m.Files.Gem.position and last = m.Files.Gem.position + span - 1 in
-              if first < 1 || last > len then
-                Printf.sprintf "read '%s' is placed over %d-%d of '%s', which is %d long" tag first last
-                  name len
-                  |> malformed;
-              (* The read is walked in its own direction; the reference goes with it on the
-                 forward strand and against it on the reverse, from the far end of the span *)
-              let i = ref 0 and r = ref (if forward then first else last) and consumed = ref 0
-              and d = if forward then 1 else -1 in
-              let base_at i =
-                let c = bases.[i] in
-                if forward then c else complement c in
-              let vote () =
-                let base = base_at !i in
-                let code = base_index base in
-                if code < 0 then
-                  Printf.sprintf "read '%s' carries a base this reader does not know, %C" tag base
-                    |> malformed;
-                let quality = quality_at !i in
-                if quality < 0 || quality >= Qualities.range then
-                  Printf.sprintf "read '%s' carries a quality of %d, outside 0..%d" tag quality
-                    (Qualities.range - 1)
-                    |> malformed;
-                record cells !r code s quality;
-                incr i;
-                r := !r + d;
-                incr consumed in
-              List.iter
-                (function
-                  | Files.Gem.Gigar.Match n ->
-                    for _ = 1 to n do
-                      let base = base_at !i and expected = sequence.[!r - 1] in
-                      if base <> expected && expected <> 'N' then
-                        Printf.sprintf "read '%s' matches %C at %s:%d, where the reference has %C"
-                          tag base name !r expected
-                          |> malformed;
-                      vote ()
-                    done
-                  | Files.Gem.Gigar.Mismatch letter ->
-                    let letter = if forward then letter else complement letter in
-                    if letter <> sequence.[!r - 1] then
-                      Printf.sprintf "read '%s' mismatches %C at %s:%d, where the reference has %C" tag
-                        letter name !r sequence.[!r - 1]
-                        |> malformed;
-                    vote ()
-                  | Files.Gem.Gigar.Trim n ->
-                    i := !i + n
-                  | Files.Gem.Gigar.Insertion n ->
-                    (* After the base before it on the forward strand: the last consumed going
-                       forward, the next to be consumed going back *)
-                    let inserted = String.sub bases !i n in
-                    let inserted = if forward then inserted else Sequences.Lint.rc inserted in
-                    if forward && !consumed > 0 then
-                      note_indel indels (!r - 1) ("+" ^ inserted) s
-                    else if not forward && !consumed < span then
-                      note_indel indels !r ("+" ^ inserted) s;
-                    i := !i + n
-                  | Files.Gem.Gigar.Deletion n ->
-                    let lo, hi = if forward then !r, !r + n - 1 else !r - n + 1, !r in
-                    if lo < 1 || hi > len then
-                      Printf.sprintf "read '%s' deletes %d-%d of '%s', which is %d long" tag lo hi name len
-                        |> malformed;
-                    let deleted = String.sub sequence (lo - 1) n in
-                    if forward && !consumed > 0 then
-                      note_indel indels (!r - 1) ("-" ^ deleted) s
-                    else if not forward && !consumed + n < span then
-                      note_indel indels (!r - n) ("-" ^ deleted) s;
-                    for pos = lo to hi do
-                      record cells pos gap_code s 0
-                    done;
-                    r := !r + d * n;
-                    consumed := !consumed + n
-                  | Files.Gem.Gigar.Splice n ->
-                    let lo, hi = if forward then !r, !r + n - 1 else !r - n + 1, !r in
-                    if lo < 1 || hi > len then
-                      Printf.sprintf "read '%s' skips %d-%d of '%s', which is %d long" tag lo hi name len
-                        |> malformed;
-                    for pos = lo to hi do
-                      record cells pos skip_code s 0
-                    done;
-                    r := !r + d * n;
-                    consumed := !consumed + n)
-                m.Files.Gem.gigar)
-            ic;
-          (* Then every position, in order, counted as summarize counts a line *)
+          Array.iteri (fun i (name, _) -> Hashtbl.replace index name i) contigs;
           let wanted s =
             match strand with
             | None -> true
             | Some (Sequences.Types.Forward _) -> s = 0
             | Some (Sequences.Types.Reverse _) -> s = 1 in
-          Array.iter
-            (fun (name, sequence, cells, indels) ->
-              for pos = 1 to String.length sequence do
-                let cell = cells.(pos) in
-                let counts = Array.make 5 0 and quals = Array.make 5 None
-                and voting = ref 0 and gaps = ref 0 and skips = ref 0 in
-                for k = 0 to cell.n - 1 do
-                  let b = Char.code (Bytes.unsafe_get cell.calls (2 * k)) in
-                  let code = b land 7 and s = b lsr 3 in
-                  if wanted s then
-                    if code = gap_code then
-                      incr gaps
-                    else if code = skip_code then
-                      incr skips
-                    else begin
-                      counts.(code) <- counts.(code) + 1;
-                      let quality = Char.code (Bytes.unsafe_get cell.calls (2 * k + 1)) in
-                      begin match quals.(code) with
-                      | Some q -> Qualities.add q quality
-                      | None ->
-                        let q = Qualities.make () in
-                        Qualities.add q quality;
-                        quals.(code) <- Some q
-                      end;
-                      incr voting
-                    end
+          (* THE INPUT, PLACEMENT BY PLACEMENT, INTO THE STORE -- and out of it into runs when a
+             budget says the store is full *)
+          let store =
+            { bytes = Bytes.create 65536; length = 0; index = Array.make 1024 0; count = 0 }
+          and runs = ref [] and placements = ref 0 in
+          let spill () =
+            let path = Filename.temp_file "BiOCamLib_Mpileup_Gem_" ".run" in
+            List.accum runs path;
+            let oc = open_out_bin path in
+            Array.iter (fun at -> output oc store.bytes at (get_int32 store.bytes (at + 12)))
+              (sorted store);
+            close_out oc;
+            store.length <- 0;
+            store.count <- 0 in
+          let keep read m =
+            let i =
+              match Hashtbl.find_opt index m.Files.Gem.contig with
+              | Some i -> i
+              | None ->
+                Printf.sprintf "read '%s' is placed on '%s', which the reference does not contain"
+                  read.Files.Gem.tag m.Files.Gem.contig
+                |> malformed in
+            let first, span = extent m in
+            let at = store.length in
+            reserve ?budget:memory store (header_length + 2 * span);
+            set_int32 store.bytes at i;
+            set_int32 store.bytes (at + 4) first;
+            set_int32 store.bytes (at + 8) span;
+            store.length <- at + header_length + 2 * span;
+            walk ~where:__FUNCTION__ ~quality_offset ~missing_quality
+              ~record:(fun pos code s quality ->
+                let k = at + header_length + 2 * (pos - first) in
+                Bytes.unsafe_set store.bytes k (Char.unsafe_chr (code lor (s lsl 3)));
+                Bytes.unsafe_set store.bytes (k + 1) (Char.unsafe_chr quality))
+              ~note_indel:(fun pos symbol s ->
+                let n = String.length symbol in
+                reserve ?budget:memory store (9 + n);
+                set_int32 store.bytes store.length (pos - first);
+                Bytes.set_int8 store.bytes (store.length + 4) s;
+                set_int32 store.bytes (store.length + 5) n;
+                Bytes.blit_string symbol 0 store.bytes (store.length + 9) n;
+                store.length <- store.length + 9 + n)
+              contigs.(i) read m;
+            set_int32 store.bytes (at + 12) (store.length - at);
+            if store.count = Array.length store.index then begin
+              let bigger = Array.make (2 * store.count) 0 in
+              Array.blit store.index 0 bigger 0 store.count;
+              store.index <- bigger
+            end;
+            store.index.(store.count) <- at;
+            store.count <- store.count + 1;
+            incr placements;
+            match memory with
+            | Some budget when store.length + 8 * store.count >= budget -> spill ()
+            | _ -> () in
+          (* THE CELLS, FED IN THE REFERENCE'S ORDER; every position before the placement at hand
+             is over, and is delivered on the way to it *)
+          let ring = { cells = Array.init 256 (fun _ -> empty_cell ()); head = 0; live = 0 }
+          and contig = ref (-1) and base = ref 1 in
+          let deliver i pos =
+            let name, sequence = contigs.(i) in
+            f (summary_of name sequence pos (ring_pop ring)) in
+          let reach i pos =
+            while !contig < i do
+              if !contig >= 0 then
+                for p = !base to String.length (snd contigs.(!contig)) do
+                  deliver !contig p
                 done;
-                let indels =
-                  List.fold_left
-                    (fun acc ((symbol, s), n) ->
-                      if wanted s then
-                        match List.assoc_opt symbol acc with
-                        | Some m -> (symbol, m + n) :: List.remove_assoc symbol acc
-                        | None -> (symbol, n) :: acc
-                      else
-                        acc)
-                    [] (Option.value ~default:[] (Hashtbl.find_opt indels pos)) in
-                f { Summary.seq = name; pos; reference = sequence.[pos - 1];
-                    depth = !voting + !gaps + !skips; voting = !voting; gaps = !gaps; skips = !skips;
-                    genotypes = genotypes_of counts quals indels }
-              done)
-            contigs
+              incr contig;
+              base := 1
+            done;
+            while !base < pos do
+              deliver i !base;
+              incr base
+            done in
+          let apply bytes at =
+            let i = get_int32 bytes at and first = get_int32 bytes (at + 4)
+            and span = get_int32 bytes (at + 8) and length = get_int32 bytes (at + 12) in
+            reach i first;
+            for k = 0 to span - 1 do
+              let b = Char.code (Bytes.unsafe_get bytes (at + header_length + 2 * k)) in
+              let code = b land 7 and s = b lsr 3 in
+              if wanted s then begin
+                let cell = ring_get ring k in
+                if code = gap_code then
+                  cell.gaps <- cell.gaps + 1
+                else if code = skip_code then
+                  cell.skips <- cell.skips + 1
+                else begin
+                  cell.counts.(code) <- cell.counts.(code) + 1;
+                  let quality =
+                    Char.code (Bytes.unsafe_get bytes (at + header_length + 2 * k + 1)) in
+                  match cell.quals.(code) with
+                  | Some q -> Qualities.add q quality
+                  | None ->
+                    let q = Qualities.make () in
+                    Qualities.add q quality;
+                    cell.quals.(code) <- Some q
+                end
+              end
+            done;
+            let p = ref (at + header_length + 2 * span) in
+            while !p < at + length do
+              let offset = get_int32 bytes !p and s = Bytes.get_int8 bytes (!p + 4)
+              and n = get_int32 bytes (!p + 5) in
+              if wanted s then begin
+                let cell = ring_get ring offset and symbol = Bytes.sub_string bytes (!p + 9) n in
+                cell.indels <-
+                  (match List.assoc_opt symbol cell.indels with
+                   | Some m -> (symbol, m + 1) :: List.remove_assoc symbol cell.indels
+                   | None -> (symbol, 1) :: cell.indels)
+              end;
+              p := !p + 9 + n
+            done in
+          Fun.protect
+            ~finally:(fun () -> List.iter (fun path -> try Sys.remove path with _ -> ()) !runs)
+            (fun () ->
+              Files.Gem.iter ~qualities ?strata ~path (fun read ~placements:_ m -> keep read m) ic;
+              if !runs = [] then begin
+                if verbose then
+                  Printf.eprintf "(%s): Sorting %d %s in memory\n%!" __FUNCTION__ !placements
+                    (String.pluralize_int "placement" !placements);
+                Array.iter (apply store.bytes) (sorted store)
+              end else begin
+                (* What is left joins the runs, and the runs are merged: the earliest head among
+                   them goes next, each run reading on as its head goes *)
+                if store.count > 0 then
+                  spill ();
+                if verbose then
+                  Printf.eprintf "(%s): Merging %d %s from %d %s within a budget of %d bytes\n%!"
+                    __FUNCTION__ !placements (String.pluralize_int "placement" !placements)
+                    (List.length !runs) (String.pluralize_int "run" (List.length !runs))
+                    (Option.get memory);
+                let runs =
+                  List.map (fun path -> open_in_bin path, ref (Bytes.create 65536), ref true) !runs
+                    |> Array.of_list in
+                let advance (ic, buf, alive) =
+                  match really_input ic !buf 0 header_length with
+                  | () ->
+                    let length = get_int32 !buf 12 in
+                    if Bytes.length !buf < length then begin
+                      let bigger = Bytes.create (max length (2 * Bytes.length !buf)) in
+                      Bytes.blit !buf 0 bigger 0 header_length;
+                      buf := bigger
+                    end;
+                    really_input ic !buf header_length (length - header_length)
+                  | exception End_of_file -> alive := false in
+                Fun.protect ~finally:(fun () -> Array.iter (fun (ic, _, _) -> close_in ic) runs)
+                  (fun () ->
+                    Array.iter advance runs;
+                    let rec merge () =
+                      let next = ref (-1) in
+                      Array.iteri
+                        (fun j (_, buf, alive) ->
+                          if !alive then
+                            if !next < 0 then
+                              next := j
+                            else begin
+                              let (_, b, _) = runs.(!next) in
+                              if compare (key !buf 0) (key !b 0) < 0 then
+                                next := j
+                            end)
+                        runs;
+                      if !next >= 0 then begin
+                        let run = runs.(!next) in
+                        let (_, buf, _) = run in
+                        apply !buf 0;
+                        advance run;
+                        merge ()
+                      end in
+                    merge ())
+              end;
+              (* Whatever the reads did not reach, to the reference's end *)
+              reach (Array.length contigs) 1)
       end
   end: sig
     module Call:
@@ -944,13 +1133,20 @@ include (
        refused otherwise; [strand] keeps only the reads on it, gaps included,
        which a pileup could not tell apart.  What the reads say is checked
        against the reference, so a reference other than the one they were mapped
-       to is refused *)
+       to is refused.
+       Without [memory] everything the reads say is kept until the input is
+       over, at two bytes a call and a cell a position; with it, in bytes, the
+       calls are first counted in a pass that keeps one count per position, the
+       reference is cut into windows whose cells fit the budget, and each window
+       is filled by a pass of its own, so the input, read once more than there
+       are windows, must then be a file, named by [path]; [verbose] says how
+       many passes it took *)
     module Gem:
       sig
         val iter:
           ?qualities:bool -> ?strata:int -> ?quality_offset:int -> ?missing_quality:int ->
-          ?path:string -> ?strand:Sequences.Types.strand_t -> reference:(string * string) array ->
-          (Summary.t -> unit) -> in_channel -> unit
+          ?path:string -> ?strand:Sequences.Types.strand_t -> ?memory:int -> ?verbose:bool ->
+          reference:(string * string) array -> (Summary.t -> unit) -> in_channel -> unit
       end
   end
 )

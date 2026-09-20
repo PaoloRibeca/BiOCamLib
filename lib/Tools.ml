@@ -694,6 +694,10 @@ module Argv:
     val get_parameter_float_non_neg: unit -> float
     val get_parameter_int_percentage: unit -> int
     val get_parameter_float_fraction: unit -> float
+    (* A size in bytes, written as a number with an optional K, M, G or T suffix (powers of
+       1024); the parser alone, for a command line read by hand *)
+    val size_of_string: string -> int
+    val get_parameter_size: unit -> int
     (* Consumes and returns all the parameters which are left on the command line *)
     val get_remaining_parameters: unit -> string array
     (* Makes a textual separator between groups of options *)
@@ -835,6 +839,26 @@ module Argv:
     let get_parameter_float_fraction =
       template_get __FUNCTION__ " float between 0 and 1 as "
       (template_filter get_parameter_float (fun x -> x >= 0. && x <= 1.))
+    (* A size in bytes as a command line writes it: a number, a fraction allowed, with K, M, G or
+       T after it for the powers of 1024 -- 512M, 2G, 1.5G -- or nothing for bytes *)
+    let size_of_string s =
+      let s = String.trim s in
+      let len = String.length s in
+      let unit_, digits =
+        match if len = 0 then ' ' else Char.uppercase_ascii s.[len - 1] with
+        | 'K' -> 1024., len - 1
+        | 'M' -> 1048576., len - 1
+        | 'G' -> 1073741824., len - 1
+        | 'T' -> 1099511627776., len - 1
+        | _ -> 1., len in
+      let x =
+        match float_of_string_opt (String.sub s 0 digits) with
+        | Some x when x >= 1. && x <= float_of_int max_int -> x *. unit_
+        | _ -> Exception.raise __FUNCTION__ IO_Format (Printf.sprintf "'%s' is not a size" s) in
+      int_of_float x
+    let get_parameter_size =
+      template_get __FUNCTION__ " size, in bytes or with a K, M, G or T suffix, as "
+        (fun () -> get_parameter () |> size_of_string)
     let get_remaining_parameters () =
       let len = Array.length !_argv in
       let res = Array.sub !_argv (!_i + 1) (len - !_i - 1) in

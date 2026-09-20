@@ -535,10 +535,22 @@ let test_argv_parse () =
       (not (contains "<n>" md)))
 
 
+let test_size () =
+  Testing.section "Sizes on the command line" (fun () ->
+    Testing.check_string "bytes as they are, and the powers of 1024 by their letters"
+      ~expected:"512 1024 2097152 3221225472 1099511627776"
+      (List.map (fun s -> TA.size_of_string s |> string_of_int) [ "512"; "1k"; "2M"; "3G"; "1T" ]
+        |> String.concat " ");
+    Testing.check_string "a fraction is allowed" ~expected:"1610612736"
+      (TA.size_of_string "1.5G" |> string_of_int);
+    Testing.check_raises "and nothing else is" (fun () -> TA.size_of_string "many");
+    Testing.check_raises "nor is nothing" (fun () -> TA.size_of_string "0"))
+
 let run () =
   test_arraystack ();
   test_trie ();
   test_multimap ();
   test_transitive_closure ();
   test_argv ();
-  test_argv_parse ()
+  test_argv_parse ();
+  test_size ()

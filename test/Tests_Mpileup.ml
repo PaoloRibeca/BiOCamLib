@@ -425,7 +425,8 @@ let test_gem () =
         line [ "c"; "8"; "T"; "5"; ",.$.,,"; "JIIJJ" ];
         line [ "c"; "9"; "A"; "4"; ",.,,"; "JIJJ" ];
         line [ "c"; "10"; "A"; "4"; ",$.$,$,$"; "JIJJ" ] ] in
-    let from_map ?(qualities = true) ?missing_quality ?strand ?(reference = reference) text =
+    let from_map ?(qualities = true) ?missing_quality ?strand ?memory ?(reference = reference)
+        text =
       let path = Filename.temp_file "BiOCamLib_Tests_" ".map" in
       Fun.protect ~finally:(fun () -> Sys.remove path)
         (fun () ->
@@ -435,12 +436,23 @@ let test_gem () =
           let ic = open_in path and acc = ref [] in
           Fun.protect ~finally:(fun () -> close_in ic)
             (fun () ->
-              M.Gem.iter ~qualities ?missing_quality ?strand ~reference (fun u -> List.accum acc u) ic);
+              M.Gem.iter ~qualities ?missing_quality ?strand ?memory ~reference
+                (fun u -> List.accum acc u) ic);
           List.rev !acc) in
     let shown = List.map M.Summary.to_string in
     let expected = List.map (fun l -> summarize l) pileup and got = from_map map in
     Testing.check "what the reads say is what the pileup says, position by position, qualities and all"
       (fun () -> shown got = shown expected);
+    Testing.check "the same within a budget that sends every placement to a run of its own"
+      (fun () -> shown (from_map ~memory:1 map) = shown expected);
+    Testing.check "and within one that holds a few placements at a time"
+      (fun () -> shown (from_map ~memory:60 map) = shown expected);
+    Testing.check "a second contig the reads do not reach is delivered empty, position by position"
+      (fun () ->
+        let got = from_map ~reference:[| "c", "AACCGGTTAA"; "d", "GATTACA" |] map in
+        List.length got = 17
+        && List.for_all (fun (u: M.Summary.t) -> u.seq = "d" && u.depth = 0)
+             (List.filteri (fun i _ -> i >= 10) got));
     Testing.check_string "a reverse read's mismatch is complemented and keeps its quality"
       ~expected:"C:1@41 T:4@40.5" (show_genotypes (List.nth got 6));
     Testing.check_string "a reverse read's insertion is written the forward way, after the base before it"
