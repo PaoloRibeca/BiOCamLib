@@ -290,12 +290,16 @@ include (
         let range = 128
         type t = int array
         let make () = Array.make range 0
-        let add t q =
+        let add ?(times = 1) t q =
           if q < 0 || q >= range then
             Exception.raise __FUNCTION__ IO_Format
               (Printf.sprintf "Quality %d is outside 0..%d" q (range - 1));
-          t.(q) <- t.(q) + 1
+          t.(q) <- t.(q) + times
         let cardinal t = Array.fold_left ( + ) 0 t
+        let sum t =
+          let acc = ref 0 in
+          Array.iteri (fun q c -> acc := !acc + q * c) t;
+          !acc
         (* Empty buckets are skipped, so a caller rebuilding a sparse structure
            from this pays for the qualities that are there rather than for the
            whole scale *)
@@ -324,15 +328,16 @@ include (
             !acc /. float_of_int (n - 1)
           end
         (* The mean of what is left after the lowest [fraction] of the
-           observations is dropped.  SiNPle drops the lowest quarter of a
-           variant's qualities before comparing it against the null, on the
-           grounds that sequencing errors sit there even in a real variant *)
+           observations is dropped, the count to drop rounded down.  SiNPle
+           drops the lowest quarter of a variant's qualities before comparing
+           it against the null, on the grounds that sequencing errors sit there
+           even in a real variant, and this is its rule to the observation *)
         let mean_above_fraction t fraction =
           let n = cardinal t in
           if n = 0 then
             0.
           else begin
-            let to_drop = int_of_float (ceil (fraction *. float_of_int n)) in
+            let to_drop = int_of_float (floor (fraction *. float_of_int n)) in
             let dropped = ref 0 and kept = ref 0 and acc = ref 0 in
             Array.iteri
               (fun q c ->
@@ -1064,8 +1069,11 @@ include (
       sig
         type t
         val make: unit -> t
-        val add: t -> int -> unit
+        (* One observation of the quality, or [times] of it *)
+        val add: ?times:int -> t -> int -> unit
         val cardinal: t -> int
+        (* The qualities added up, each as many times as it was seen *)
+        val sum: t -> int
         (* Over the qualities that are present, lowest first, each with the
            number of times it was seen.  Empty buckets are skipped *)
         val iter: (int -> int -> unit) -> t -> unit
@@ -1075,7 +1083,7 @@ include (
         val mean: t -> float
         val variance: t -> float
         (* The mean of what is left once the lowest [fraction] of the
-           observations has been dropped *)
+           observations has been dropped, their number rounded down *)
         val mean_above_fraction: t -> float -> float
       end
     module Genotype:

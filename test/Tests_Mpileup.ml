@@ -309,6 +309,17 @@ let test_qualities () =
       (M.Qualities.mean_above_fraction (of_list [ 10; 20; 30; 40 ]) 0.);
     Testing.check_float "and dropping everything leaves nothing" ~expected:0.
       (M.Qualities.mean_above_fraction (of_list [ 10; 20; 30; 40 ]) 1.);
+    (* A quarter of five is one and a quarter, and what is dropped is rounded
+       down, as SiNPle's model does *)
+    Testing.check_float "the count to drop is rounded down" ~expected:35.
+      (M.Qualities.mean_above_fraction (of_list [ 10; 20; 30; 40; 50 ]) 0.25);
+    Testing.check_int "the sum is over every observation" ~expected:80
+      (M.Qualities.sum (of_list [ 10; 20; 20; 30 ]));
+    Testing.check_string "an observation can be added several times over"
+      ~expected:"cardinal 3, sum 0"
+      (let q = M.Qualities.make () in
+       M.Qualities.add ~times:3 q 0;
+       Printf.sprintf "cardinal %d, sum %d" (M.Qualities.cardinal q) (M.Qualities.sum q));
     (* Iteration is what a caller rebuilding a sparse distribution needs, and
        it must offer the qualities that are there and only those: a walk over
        the whole scale would hand back a hundred-odd zeroes to be filtered. *)
