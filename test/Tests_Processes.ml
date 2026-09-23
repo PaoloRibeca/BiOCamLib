@@ -122,6 +122,117 @@ let test_process_stream_chunkwise () =
         Processes.Parallel.process_stream_chunkwise
           (fun () -> raise End_of_file) (fun x -> x) (fun _ -> ()) 0))
 
+(* A caller may end a section from its output function by raising Stop.  What
+   it has been handed is then exactly the results up to the one that stopped
+   it, in order, and the section returns at once even with a worker still busy
+   on a later item: the processes it forked are killed rather than waited for,
+   which is the whole point of stopping. *)
+
+let test_process_stream_chunkwise_stop () =
+  Testing.section "Parallel streams stopped early" (fun () ->
+    let stopped_at ~slow threads =
+      let next = ref 0 and acc = ref [] in
+      Processes.Parallel.process_stream_chunkwise
+        (fun () -> if !next >= 200 then raise End_of_file else (incr next; !next))
+        (fun x -> if x = slow then Unix.sleepf 60.; x * x)
+        (fun y -> List.accum acc y; if y = 100 then raise Processes.Parallel.Stop)
+        threads;
+      List.rev !acc in
+    let show l = List.map string_of_int l |> String.concat "," in
+    let expected = show (List.init 10 (fun i -> (i + 1) * (i + 1))) in
+    Testing.check_string "the results up to the stop come back, in order, and no more"
+      ~expected (show (stopped_at ~slow:0 4));
+    Testing.check_string "and so they do on one thread" ~expected (show (stopped_at ~slow:0 1));
+    let started = Unix.gettimeofday () in
+    let got = stopped_at ~slow:12 4 in
+    Testing.check_bool "a worker busy past the stop is killed, not waited for" ~expected:true
+      (Unix.gettimeofday () -. started < 30.);
+    Testing.check_string "and what came back is the same" ~expected (show got))
+
+(* Stopping, looked at harder, because this function runs nearly every tool
+   built on the library.  Wherever the stop falls, on any number of threads,
+   what comes back is the prefix up to it, in order.  Every process the
+   section forked is gone by the time it returns, whether it had finished its
+   work or was killed in the middle of it.  A caller that holds SIGTERM back
+   itself -- the signal the section uses to stop -- can still stop a section,
+   and keeps its own mask.  And many sections in a row, stopped or not, leave
+   nothing behind. *)
+
+let test_process_stream_chunkwise_stop_hard () =
+  Testing.section "Parallel streams stopped early, harder" (fun () ->
+    let pids_file = Filename.temp_file "BiOCamLib_Tests_" ".pids" in
+    Fun.protect ~finally:(fun () -> Sys.remove pids_file) (fun () ->
+      (* Each item notes the pid of the worker running it, in one write that a kill cannot
+         cut in half, so that every worker can be checked to be gone afterwards *)
+      let note_pid () =
+        let fd = Unix.openfile pids_file [ Unix.O_WRONLY; Unix.O_APPEND; Unix.O_CREAT ] 0o644 in
+        let line = Printf.sprintf "%d\n" (Unix.getpid ()) in
+        ignore (Unix.write_substring fd line 0 (String.length line));
+        Unix.close fd in
+      let workers_gone () =
+        let ic = open_in pids_file in
+        let rec read acc =
+          match input_line ic with
+          | line -> read (int_of_string line :: acc)
+          | exception End_of_file -> acc in
+        let pids = read [] in
+        close_in ic;
+        close_out (open_out pids_file);
+        pids <> []
+          && List.for_all
+              (fun pid ->
+                match Unix.kill pid 0 with
+                | () -> false
+                | exception Unix.Unix_error (Unix.ESRCH, _, _) -> true)
+              pids in
+      let run ~items ~stop_at ~slow threads =
+        let next = ref 0 and acc = ref [] in
+        Processes.Parallel.process_stream_chunkwise
+          (fun () -> if !next >= items then raise End_of_file else (incr next; !next))
+          (fun x -> note_pid (); if x = slow then Unix.sleepf 60.; x)
+          (fun y -> List.accum acc y; if y = stop_at then raise Processes.Parallel.Stop)
+          threads;
+        List.rev !acc in
+      let prefix k = List.init k (fun i -> i + 1) in
+      let failures = ref [] in
+      let expect what got expected =
+        if got <> expected then List.accum failures what in
+      List.iter
+        (fun threads ->
+          List.iter
+            (fun stop_at ->
+              let what = Printf.sprintf "stop at %d on %d threads" stop_at threads in
+              let got = run ~items:30 ~stop_at ~slow:0 threads in
+              expect what got (prefix (min stop_at 30));
+              if not (workers_gone ()) then
+                List.accum failures (what ^ " left a worker"))
+            [ 1; 2; 7; 29; 30; 31 ])
+        [ 1; 2; 4; 16 ];
+      Testing.check_string
+        "every stop point, and none, on 1, 2, 4 and 16 threads: the prefix, in order, and no worker left"
+        ~expected:"" (List.rev !failures |> String.concat "; ");
+      let started = Unix.gettimeofday () in
+      let got = run ~items:30 ~stop_at:3 ~slow:5 4 in
+      Testing.check_bool "a worker killed in the middle of an item is gone as well" ~expected:true
+        (got = prefix 3 && Unix.gettimeofday () -. started < 30. && workers_gone ());
+      let caller_mask = Unix.sigprocmask Unix.SIG_BLOCK [ Sys.sigterm ] in
+      let started = Unix.gettimeofday () in
+      let got = run ~items:30 ~stop_at:3 ~slow:5 4 in
+      let elapsed = Unix.gettimeofday () -. started in
+      let still_blocked = List.mem Sys.sigterm (Unix.sigprocmask Unix.SIG_BLOCK []) in
+      ignore (Unix.sigprocmask Unix.SIG_SETMASK caller_mask);
+      Testing.check_bool "a caller holding SIGTERM back can still stop, and keeps its mask"
+        ~expected:true (got = prefix 3 && elapsed < 30. && still_blocked && workers_gone ());
+      failures := [];
+      for i = 1 to 100 do
+        let stop_at = if i mod 2 = 0 then 1 + i mod 20 else 21 in
+        expect (Printf.sprintf "section %d" i) (run ~items:20 ~stop_at ~slow:0 4)
+          (prefix (min stop_at 20))
+      done;
+      Testing.check_string "a hundred sections in a row, stopped or not, are each exact"
+        ~expected:"" (List.rev !failures |> String.concat "; ");
+      Testing.check_bool "and leave no worker behind" ~expected:true (workers_gone ())))
+
 (* The line-wise wrapper over the same machinery, which takes channels rather
    than closures and is what a filter reading stdin actually calls. *)
 
@@ -154,4 +265,6 @@ let run () =
   test_spawn ();
   test_memory ();
   test_process_stream_chunkwise ();
+  test_process_stream_chunkwise_stop ();
+  test_process_stream_chunkwise_stop_hard ();
   test_process_stream_linewise ()

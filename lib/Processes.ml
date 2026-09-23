@@ -188,6 +188,10 @@ module Memory:
 module Parallel:
   sig
     val get_nproc: unit -> int
+    (* Raised by the output function of process_stream_chunkwise to end the section early: no
+       further result is delivered, the processes the section forked are killed and collected,
+       and the function returns as it does at the end of the stream *)
+    exception Stop
     (* The following functions can fail if the number of chunks/threads is not positive *)
     val process_stream_chunkwise: ?buffered_chunks_per_thread:int ->
       (* Beware: for everything to terminate properly, f shall raise End_of_file when done.
@@ -198,13 +202,12 @@ module Parallel:
       in_channel -> (Buffer.t -> int -> string -> unit) -> out_channel -> int -> unit
   end
 = struct
+    exception Stop
     let get_nproc () =
       try
-        (* nproc is GNU, and a Mac has none: there the shell answered 127 and a line
-           on stderr, and the handler below called the machine single-core without
-           saying so, which is the worst way to be wrong about how many cores there
-           are.  spawn_and_read_single_line goes through /bin/sh, so the fallback is
-           asked for in the command itself *)
+        (* nproc is GNU, and a Mac has none: there sysctl answers instead.  The command
+           goes through /bin/sh, so the fallback is asked for in the command itself, and
+           both are silenced so that the one that is missing says nothing on stderr *)
         Subprocess.spawn_and_read_single_line "nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null"
         |> int_of_string
       with _ ->
@@ -240,11 +243,30 @@ module Parallel:
         let i_2_w_pipes = Array.init threads (fun _ -> Unix.pipe ())
         and w_2_i_pipes = Array.init threads (fun _ -> Unix.pipe ()) in
         let workers = ref [] in
+        (* A SECTION STOPPED EARLY IS ENDED FROM HERE. The output process cannot reach the workers,
+           which are children of this process, so it tells this process, and this process kills
+           and collects every worker it forked before going itself. The signal is held back while
+           the workers are being forked, so that none can be forked after the handler has looked
+           for them and be left running *)
+        let previous_mask = Unix.sigprocmask Unix.SIG_BLOCK [ Sys.sigterm ] in
+        let previous_handler =
+          Sys.signal Sys.sigterm
+            (Sys.Signal_handle
+              (fun _ ->
+                List.iter (fun pid -> try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ())
+                  !workers;
+                List.iter (fun pid -> try ignore (Unix.waitpid [] pid) with Unix.Unix_error _ -> ())
+                  !workers;
+                Unix._exit 0)) in
         for i = 0 to red_threads do
           match Unix.fork () with
           | 0 -> (* Child *)
             (* I am a worker.
-               I only keep my own pipes open *)
+               The handler above is my parent's business: I run the caller's code, and get back
+               exactly the handling of the signal the caller had *)
+            Sys.set_signal Sys.sigterm previous_handler;
+            ignore (Unix.sigprocmask Unix.SIG_SETMASK previous_mask);
+            (* I only keep my own pipes open *)
             let i_2_w_pipe_in, w_2_i_pipe_out, o_2_w_pipe_in, w_2_o_pipe_out =
               let i_2_w_pipe_in = ref Unix.stdin and w_2_i_pipe_out = ref Unix.stdout
               and o_2_w_pipe_in = ref Unix.stdin and w_2_o_pipe_out = ref Unix.stdout in
@@ -279,7 +301,6 @@ module Parallel:
                (2) notify the output process that a result is ready
                (3) when the output process asks for it, post the result *)
             let probe_output () =
-              (*ignore (Unix.select [o_2_w_pipe_in] [] [] (-1.));*)
               ignore (input_byte o_2_w)
             and initial = ref true in
             while true do
@@ -327,6 +348,18 @@ module Parallel:
           | worker_pid -> (* Parent *)
             workers := worker_pid :: !workers
         done;
+        (* Every worker is known now, so a request to stop can be taken -- even where the caller
+           holds the signal back itself, this process being the section's and not the caller's *)
+        ignore (Unix.sigprocmask Unix.SIG_SETMASK (List.filter (( <> ) Sys.sigterm) previous_mask));
+        (* A request to stop interrupts whatever this process is waiting on. A wait so interrupted
+           is simply resumed, so that the handler, which ends the process, is what answers it, and
+           not an exception carrying this process back into the caller's code *)
+        let rec select_readable pipes =
+          try
+            let ready, _, _ = Unix.select pipes [] [] (-1.) in
+            ready
+          with Unix.Unix_error (Unix.EINTR, _, _) ->
+            select_readable pipes in
         (* I am the input process.
            I do not care about output process pipes *)
         close_pipes w_2_o_pipes;
@@ -342,7 +375,7 @@ module Parallel:
            (3) post the chunk to the correspondng pipe. The worker will consume it *)
         let chunk_id = ref 0 and off = ref 0 in
         while !off < threads do
-          let ready, _, _ = Unix.select w_2_i_pipes_for_select [] [] (-1.) in
+          let ready = select_readable w_2_i_pipes_for_select in
           List.iter
             (fun ready ->
               let w_id = Hashtbl.find w_2_i_dict ready in
@@ -364,7 +397,7 @@ module Parallel:
             ready
         done;
         (* Waiting to be switched off *)
-        ignore (Unix.select [fst w_2_i_pipes.(0)] [] [] (-1.));
+        ignore (select_readable [fst w_2_i_pipes.(0)]);
         close_pipes_out i_2_w_pipes;
         close_pipes_in w_2_i_pipes;
         (* THE WORKERS ARE COLLECTED BEFORE THIS PROCESS GOES, each by its own pid rather than by
@@ -382,76 +415,98 @@ module Parallel:
         and buffered_chunks = buffered_chunks_per_thread * threads
         and next = ref 0 and queue = ref IntMap.empty and buf = ref IntMap.empty
         and off = ref 0 in
-        while !off < threads do
-          (* Harvest new notifications *)
-          let ready, _, _ = Unix.select w_2_o_pipes_for_select [] [] (-1.) in
-          List.iter
-            (fun ready ->
-              let w_id = Hashtbl.find w_2_o_dict ready in
-              let chunk_id = input_binary_int w_2_o.(w_id) in
-              if chunk_id = -1 then (* EOF has been reached *)
-                incr off
-              else
-                if not (IntMap.mem chunk_id !queue) then
-                  queue := IntMap.add chunk_id w_id !queue
-                else
-                  assert (w_id = IntMap.find chunk_id !queue))
-            ready;
-          (* Fill the buffer *)
-          let available = ref (buffered_chunks - IntMap.cardinal !buf) in
-          assert (!available >= 0);
-          (* If the needed chunk is there, we always fetch it *)
-          if !queue <> IntMap.empty && fst (IntMap.min_binding !queue) = !next then
-            incr available;
-          while !available > 0 && !queue <> IntMap.empty do
-            let chunk_id, w_id = IntMap.min_binding !queue in
-            (* Tell the worker to send data *)
-            output_byte o_2_w.(w_id) 0;
-            flush o_2_w.(w_id);
-            assert (not (IntMap.mem chunk_id !buf));
-            buf := IntMap.add chunk_id (input_value w_2_o.(w_id):'b) !buf;
-            (* Tell the worker to send the next notification *)
-            output_byte o_2_w.(w_id) 0;
-            flush o_2_w.(w_id);
-            queue := IntMap.remove chunk_id !queue;
-            decr available
-          done;
-          (* Output at most as many chunks at the number of workers *)
-          available := threads;
-          while !available > 0 && !buf <> IntMap.empty do
-            let chunk_id, data = IntMap.min_binding !buf in
-            if chunk_id = !next then begin
+        (* The caller may stop the section from h, in which case it is left at once, whatever
+           is still being processed *)
+        let stopped =
+          try
+            while !off < threads do
+              (* Harvest new notifications *)
+              let ready, _, _ = Unix.select w_2_o_pipes_for_select [] [] (-1.) in
+              List.iter
+                (fun ready ->
+                  let w_id = Hashtbl.find w_2_o_dict ready in
+                  let chunk_id = input_binary_int w_2_o.(w_id) in
+                  if chunk_id = -1 then (* EOF has been reached *)
+                    incr off
+                  else
+                    if not (IntMap.mem chunk_id !queue) then
+                      queue := IntMap.add chunk_id w_id !queue
+                    else
+                      assert (w_id = IntMap.find chunk_id !queue))
+                ready;
+              (* Fill the buffer *)
+              let available = ref (buffered_chunks - IntMap.cardinal !buf) in
+              assert (!available >= 0);
+              (* If the needed chunk is there, we always fetch it *)
+              if !queue <> IntMap.empty && fst (IntMap.min_binding !queue) = !next then
+                incr available;
+              while !available > 0 && !queue <> IntMap.empty do
+                let chunk_id, w_id = IntMap.min_binding !queue in
+                (* Tell the worker to send data *)
+                output_byte o_2_w.(w_id) 0;
+                flush o_2_w.(w_id);
+                assert (not (IntMap.mem chunk_id !buf));
+                buf := IntMap.add chunk_id (input_value w_2_o.(w_id):'b) !buf;
+                (* Tell the worker to send the next notification *)
+                output_byte o_2_w.(w_id) 0;
+                flush o_2_w.(w_id);
+                queue := IntMap.remove chunk_id !queue;
+                decr available
+              done;
+              (* Output at most as many chunks at the number of workers *)
+              available := threads;
+              while !available > 0 && !buf <> IntMap.empty do
+                let chunk_id, data = IntMap.min_binding !buf in
+                if chunk_id = !next then begin
+                  h data;
+                  buf := IntMap.remove chunk_id !buf;
+                  incr next;
+                  decr available
+                end else
+                  available := 0 (* Force exit from the cycle *)
+              done
+            done;
+            (* There might be chunks left in the buffer *)
+            while !buf <> IntMap.empty do
+              let chunk_id, data = IntMap.min_binding !buf in
+              assert (chunk_id = !next);
               h data;
               buf := IntMap.remove chunk_id !buf;
-              incr next;
-              decr available
-            end else
-              available := 0 (* Force exit from the cycle *)
-          done
-        done;
-        (* There might be chunks left in the buffer *)
-        while !buf <> IntMap.empty do
-          let chunk_id, data = IntMap.min_binding !buf in
-          assert (chunk_id = !next);
-          h data;
-          buf := IntMap.remove chunk_id !buf;
-          incr next
-        done;
-        (* Switch off all the workers *)
-        for ii = 0 to red_threads do
-          output_byte o_2_w.(ii) 0;
-          flush o_2_w.(ii)
-        done;
-        close_pipes_out o_2_w_pipes;
-        close_pipes_in w_2_o_pipes;
-        (* AND THE INPUT PROCESS IS COLLECTED HERE, which is what keeps a long run from filling
-           the process table.  Every call forks one child from this side and, until now, left it
-           to become a zombie when it exited; a caller that opens a parallel section per unit of
-           work rather than once per run -- the Monte-Carlo clusterer opens one per epoch --
-           accumulates one for each, and was measured to hold eleven hundred of them.  They cost
-           nothing but a slot each, so nothing failed and nothing said anything, which is why it
-           went unnoticed for as long as it did *)
-        (try ignore (Unix.waitpid [] input_pid) with Unix.Unix_error _ -> ())
+              incr next
+            done;
+            false
+          with Stop ->
+            true in
+        (* AND THE INPUT PROCESS IS COLLECTED HERE.  Every call forks one child from this side,
+           and a caller that opens a parallel section per unit of work rather than once per run
+           -- the Monte-Carlo clusterer opens one per epoch -- would otherwise fill the process
+           table with them.  A wait a signal interrupts is resumed, as it must be before a
+           stopped section's pipes are closed *)
+        let rec collect_input_process () =
+          try
+            ignore (Unix.waitpid [] input_pid)
+          with
+          | Unix.Unix_error (Unix.EINTR, _, _) -> collect_input_process ()
+          | Unix.Unix_error _ -> () in
+        if stopped then begin
+          (* The input process kills and collects its workers, and then goes.
+             THE PIPES STAY OPEN UNTIL IT HAS GONE: a worker waiting on one that closed would read
+             the end of its input, and the exception would carry it out of its loop and on into
+             the caller's code, running it a second time *)
+          (try Unix.kill input_pid Sys.sigterm with Unix.Unix_error _ -> ());
+          collect_input_process ();
+          close_pipes_out o_2_w_pipes;
+          close_pipes_in w_2_o_pipes
+        end else begin
+          (* Switch off all the workers *)
+          for ii = 0 to red_threads do
+            output_byte o_2_w.(ii) 0;
+            flush o_2_w.(ii)
+          done;
+          close_pipes_out o_2_w_pipes;
+          close_pipes_in w_2_o_pipes;
+          collect_input_process ()
+        end
     let process_stream_linewise ?(buffered_chunks_per_thread = 10)
         ?(max_memory = 1_000_000_000) ?(string_buffer_memory = 16_777_216)
         ?(input_line = input_line) ?(verbose = true)
