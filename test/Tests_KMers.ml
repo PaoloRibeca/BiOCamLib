@@ -217,6 +217,16 @@ let test_levenshtein_balls () =
   Testing.section "Levenshtein balls" (fun () ->
     Testing.check_int "the ball knows its k" ~expected:3 B3.H.k;
     Testing.check_string "and its alphabet" ~expected:"ACGT" B3.H.alphabet;
+    (* A k-mer hashed where it sits in a longer string is the k-mer hashed on
+       its own, at every position a k-mer can start at; a position one cannot
+       start at is refused rather than read past the end. *)
+    let text = "ACGTTGCAACGGTA" in
+    Testing.check_bool "a k-mer hashed in place is the k-mer hashed on its own" ~expected:true
+      (List.for_all
+        (fun pos -> B3.H.encode_at text pos = B3.H.encode (String.sub text pos B3.H.k))
+        (List.init (String.length text - B3.H.k + 1) Fun.id));
+    Testing.check_raises "and a k-mer that would run past the end is refused"
+      (fun () -> B3.H.encode_at text (String.length text - B3.H.k + 1) |> ignore);
     let centre = "ACG" in
     (* A ball is everything WITHIN its radius, so the centre belongs to it at
        every radius including zero.  That is worth stating as a check rather

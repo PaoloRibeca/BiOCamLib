@@ -837,6 +837,9 @@ module type DNALevenshteinBall_t =
         val k: int
         val alphabet: string
         val encode: string -> t
+        (* The k characters of the string starting at the given position, taken where they are
+           rather than copied out first *)
+        val encode_at: string -> int -> t
         val encode_char: char -> int
       end
     (* Iterators all have repetitions *)
@@ -879,22 +882,30 @@ module MakeDNALevenshteinBall (Hash: DNALevenshteinHash_t) (K: IntParameter_t):
           | 'G' | 'g' -> 2
           | 'T' | 't' -> 3
           | _ -> -1
+        let encode_at s pos =
+          if pos < 0 || pos + k > String.length s then
+            Exception.raise __FUNCTION__ Initialize
+              (Printf.sprintf
+                "Invalid argument (a k-mer of length k=%d at position %d falls outside a string \
+                 of length %d)"
+                k pos (String.length s));
+          let res = ref Hash.zero in
+          for i = pos to pos + k - 1 do
+            let c = s.[i] in
+            let code = encode_char c in
+            if code < 0 then
+              Exception.raise __FUNCTION__ Initialize
+                (Printf.sprintf "Invalid argument (expected character in [ACGTacgt], found '%c')"
+                  c);
+            res := Hash.add_base !res code
+          done;
+          !res
         let encode s =
           if String.length s <> k then
             Exception.raise __FUNCTION__ Initialize
               (Printf.sprintf "Invalid argument (string length must be k=%d, found %d)" k
                 (String.length s));
-          let res = ref Hash.zero in
-          String.iter
-            (fun c ->
-              let code = encode_char c in
-              if code < 0 then
-                Exception.raise __FUNCTION__ Initialize
-                  (Printf.sprintf "Invalid argument (expected character in [ACGTacgt], found '%c')"
-                    c);
-              res := Hash.add_base !res code)
-            s;
-          !res
+          encode_at s 0
       end
     (* [n] fields of [b] bits each packed into an integer, the first the most significant.
        [low b n] masks the last [n] of them *)
