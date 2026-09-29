@@ -272,6 +272,32 @@ let test_genbank_round_trip () =
            String.starts_with ~prefix:"protein_hmm_match" l
            && String.length l > 17 && l.[17] = ' ')
          (String.Split.on_char_as_list '\n' (A.GenBank.to_string ann)));
+    (* The LOCUS line gives the length of the sequence, not where its last feature ends:
+       taken from the features, an annotation stopping short of the sequence's end would write
+       a LOCUS shorter than its own ORIGIN. *)
+    let locus_length ann =
+      List.find_map
+        (fun l ->
+          match String.Split.on_char_as_list ' ' l |> List.filter (( <> ) "") with
+          | "LOCUS" :: _ :: n :: _ -> Some n
+          | _ -> None)
+        (String.Split.on_char_as_list '\n' (A.GenBank.to_string ann))
+      |> Option.value ~default:"(no LOCUS)" in
+    let short_of_its_end =
+      let ann = A.Annotation.create (A.Hierarchy.of_string "(CDS)") in
+      let f =
+        { A.Annotation.empty_feature with
+          A.Annotation.seq = A.Annotation.intern_seq ann "chr";
+          intervals = [ A.Segment.make { T.low = 0; length = 15 } ] } in
+      A.Annotation.add ann ~path:[ "annotation"; "CDS" ] f in
+    Testing.check_string "a LOCUS is as long as the sequence its features stop short of"
+      ~expected:"30"
+      (A.Annotation.set_reference short_of_its_end
+         (Sequences.Reference.add_from_fasta_string ~linter:Fun.id Sequences.Reference.empty
+            ">chr\nACGTACGTACGTACGTACGTACGTACGTAC\n")
+       |> locus_length);
+    Testing.check_string "and, with no sequence, as long as its features reach"
+      ~expected:"15" (locus_length short_of_its_end);
     let round_trip feature_lines =
       let once = genbank feature_lines |> A.GenBank.of_string in
       A.GenBank.to_string once,

@@ -374,12 +374,26 @@ module GenBank:
     List.iter (fun seq ->
       let feats = List.rev
         (try Hashtbl.find by_seq seq with _ -> []) in
+      (* The sequence, where the reference holds it, written as ORIGIN below *)
+      let opt_seq =
+        match reference ann with
+        | Some r ->
+          (try Some (fst (Sequences.Reference.find r (Sequences.Types.Forward seq)))
+           with _ -> None)
+        | None -> None in
+      (* THE LOCUS LENGTH IS THE SEQUENCE'S, and features need not reach its ends: a record
+         whose last feature stops short of them would otherwise say it is shorter than its
+         own ORIGIN, which a reader of it takes the word of.  Only with no sequence to go by
+         is it where the furthest feature ends *)
       let total_len =
-        List.fold_left (fun acc (_, f) ->
-          List.fold_left
-            (fun acc (s : Segment.t) ->
-              max acc (s.span.low + s.span.length)) acc f.intervals
-        ) 0 feats in
+        match opt_seq with
+        | Some s -> String.length s
+        | None ->
+          List.fold_left (fun acc (_, f) ->
+            List.fold_left
+              (fun acc (s : Segment.t) ->
+                max acc (s.span.low + s.span.length)) acc f.intervals
+          ) 0 feats in
       (* The same hazard as the FEATURES key below: a locus name of sixteen
          characters or more would run into the length with nothing between *)
       Printf.bprintf buf "LOCUS       %s%d bp    DNA\n"
@@ -420,34 +434,26 @@ module GenBank:
           ) vs
         ) f
       ) feats;
-      (match reference ann with
-       | Some r ->
-         let opt_seq =
-           try
-             Some (fst (Sequences.Reference.find r
-                          (Sequences.Types.Forward seq)))
-           with _ -> None in
-         (match opt_seq with
-          | None -> ()
-          | Some s ->
-            Buffer.add_string buf "ORIGIN\n";
-            let n = String.length s in
-            let i = ref 0 in
-            while !i < n do
-              Printf.bprintf buf "%9d" (!i + 1);
-              let row_end = min n (!i + 60) in
-              let j = ref !i in
-              while !j < row_end do
-                if (!j - !i) mod 10 = 0 then
-                  Buffer.add_char buf ' ';
-                Buffer.add_char buf
-                  (Char.lowercase_ascii s.[!j]);
-                incr j
-              done;
-              Buffer.add_char buf '\n';
-              i := row_end
-            done)
-       | None -> ());
+      (match opt_seq with
+       | None -> ()
+       | Some s ->
+         Buffer.add_string buf "ORIGIN\n";
+         let n = String.length s in
+         let i = ref 0 in
+         while !i < n do
+           Printf.bprintf buf "%9d" (!i + 1);
+           let row_end = min n (!i + 60) in
+           let j = ref !i in
+           while !j < row_end do
+             if (!j - !i) mod 10 = 0 then
+               Buffer.add_char buf ' ';
+             Buffer.add_char buf
+               (Char.lowercase_ascii s.[!j]);
+             incr j
+           done;
+           Buffer.add_char buf '\n';
+           i := row_end
+         done);
       Buffer.add_string buf "//\n"
     ) order
   let to_string = to_string_via_buffer to_buffer
