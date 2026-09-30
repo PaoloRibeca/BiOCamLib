@@ -618,11 +618,13 @@ module Splits: Splits_base
         type t = IntZ.t
         (* The result is *not* in canonical form *)
         let of_string s = IntZ.of_string s [@@inline]
-        (* The result is *not* in canonical form *)
+        (* The result is *not* in canonical form.  A split is a set, so an element listed twice
+           is one element: its bit is set, not added, which would carry the repeat into the next
+           element up *)
         let of_list =
-          List.fold_left (fun res i -> IntZ.(res + (one lsl i))) IntZ.zero
+          List.fold_left (fun res i -> IntZ.(logor res (one lsl i))) IntZ.zero
         let of_array =
-          Array.fold_left (fun res i -> IntZ.(res + (one lsl i))) IntZ.zero
+          Array.fold_left (fun res i -> IntZ.(logor res (one lsl i))) IntZ.zero
         let of_intz x = x [@@inline]
         let to_intz x = x [@@inline]
         let to_string s = IntZ.to_string s [@@inline]

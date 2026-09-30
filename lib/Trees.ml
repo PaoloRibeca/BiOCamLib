@@ -372,11 +372,12 @@ module Splits:
   end
 
 (* Tree constructors -- the headline entry points for turning splits into a
-    tree.  [of_splits] takes an arbitrary weighted split register, runs the
-    compatibility filter, and returns (used_splits, tree, unused_splits).
-    [of_clades] builds a tree directly from a sparse, laminar-BY-CONSTRUCTION
-    family of clades (each = the leaf indices of its smaller side + a weight);
-    it does no weighted selection and RAISES on a non-laminar family.
+    tree.  [of_splits] takes an arbitrary weighted split register, keeps the
+    splits a greedy consensus keeps, and returns (used_splits, tree,
+    unused_splits).  [of_clades] builds a tree directly from a sparse,
+    laminar-BY-CONSTRUCTION family of clades (each = the leaf indices of its
+    smaller side + a weight); it does no weighted selection and RAISES on a
+    non-laminar family.
    They live HERE, not in [Splits]: a tree constructor is not a splits-register
     data operation (indeed [of_clades] never builds a register at all), and it
     sits conceptually above the splits parser.  They reach the split bitmasks
@@ -385,22 +386,34 @@ module Splits:
     representation stays encapsulated.  The shared union-find core and its
     helpers are sealed away by the signature below -- only [of_splits] and
     [of_clades] are exported. *)
-include (struct
-    module SplitsRMultimap = Tools.Multimap (RComparableFloat) (ComparableIntZ)
-    (* Iterate the indices of the SET bits of [mask], lowest first, in time
-       proportional to the popcount (not to the bit-width): we repeatedly read
-       the lowest set bit and clear it with [m land (m - 1)]. *)
+include (
+  struct
+    (* Iterate the indices of the SET bits of [mask], lowest first.  The mask is read as the
+       bytes of its magnitude, so the cost is one pass over its width in bytes, where an empty
+       byte costs a comparison, and one step per set bit: clearing the lowest bit of the mask
+       instead costs a whole-width operation per bit, about a hundred times more on a split of a
+       few thousand elements with half of them set *)
+    let lowest_bit_of_byte =
+      Array.init 256
+        (fun b ->
+          let rec lowest i = if i = 8 || b land (1 lsl i) <> 0 then i else lowest (i + 1) in
+          lowest 0)
     let iter_set_bits f mask =
-      let m = ref mask in
-      while not (IntZ.equal !m IntZ.zero) do
-        f (IntZ.trailing_zeros !m);
-        m := IntZ.(logand !m (!m - one))
+      let bytes = IntZ.to_bits mask in
+      for i = 0 to String.length bytes - 1 do
+        let b = ref (Char.code bytes.[i]) in
+        if !b <> 0 then begin
+          let base = i lsl 3 in
+          while !b <> 0 do
+            f (base + lowest_bit_of_byte.(!b));
+            b := !b land (!b - 1)
+          done
+        end
       done
-    (* Reconstruct a tree from a family of clades -- the smaller sides of a
-        set of splits.  [names] are the [n] leaves (index [i] <-> [names.(i)]);
-        [clades] is a list of [(tag, cardinality, weight, members)], where
-        [members f] applies [f] to every leaf index of that clade and [tag] is
-        an opaque caller label, used only to report which clades were dropped.
+    (* Reconstruct a tree from a laminar family of clades -- the smaller sides
+        of a set of compatible splits.  [names] are the [n] leaves (index [i] <->
+        [names.(i)]); [clades] is a list of [(cardinality, weight, members)],
+        where [members f] applies [f] to every leaf index of that clade.
        Clades are bucket-sorted by cardinality (smallest first) and merged
         with a union-find: when we reach a clade, every clade strictly inside
         it has already been collapsed to one group, so the distinct current
@@ -408,23 +421,16 @@ include (struct
         clade's weight goes on the edge ABOVE its node (the edge the split
         creates), carried as a per-group "stem" weight until the group is
         adopted by a larger clade or joined at the centre.
-       Compatibility is checked on the fly, for free: the union-find sets are
+       Laminarity is checked on the fly, for free: the union-find sets are
         disjoint, so the sizes of the distinct roots found inside a clade sum
         to AT LEAST the clade's cardinality, with equality iff every such root
         lies entirely within the clade.  A strict excess means some root
-        STRADDLES the clade boundary -- the clade is incompatible with what has
-        already been accepted -- and the handling depends on [strict]:
-         - [strict = false] (default): drop the clade, collect its [tag], and
-           return the dropped tags alongside the tree.  [of_splits] uses this --
-           its colour pre-filter can over-accept, and the dropped tags are
-           reconciled back into its unused-splits partition.
-         - [strict = true]: raise at once.  [of_clades] uses this -- its caller
-           promises a laminar family (e.g.\ a clustering dendrogram), so an
-           incompatible clade is a caller error, not something to paper over.
-       Returns [(tree, dropped_tags)] ([dropped_tags] is empty when [strict]).
+        STRADDLES the clade boundary, so the family was not laminar, and that
+        raises: [of_clades]' caller promises a laminar family, and [of_splits]
+        hands over only splits it has checked to be compatible.
        Cost is O(N alpha(n) + n + m), with N the total clade cardinality. *)
-    let assemble_clades ?(verbose = false) ?(strict = false) names n clades =
-      if n = 0 then Newick.leaf "", [] else begin
+    let assemble_clades names n clades =
+      if n = 0 then Newick.leaf "" else begin
         let uf = Array.init n (fun i -> i) and sz = Array.make n 1 in
         let rec find i =
           if uf.(i) = i then i else (let r = find uf.(i) in uf.(i) <- r; r) in
@@ -433,15 +439,15 @@ include (struct
         (* Counting sort of the clades by cardinality (keeping the true card) *)
         let buckets = Array.make (n + 1) [] in
         List.iter
-          (fun (tag, card, w, members) ->
+          (fun (card, w, members) ->
             let b = if card < 1 then 1 else if card > n then n else card in
-            buckets.(b) <- (tag, card, w, members) :: buckets.(b))
+            buckets.(b) <- (card, w, members) :: buckets.(b))
           clades;
         (* Per-clade dedup of roots via a monotone stamp, so no array resets *)
-        let mark = Array.make n (-1) and stamp = ref 0 and dropped = ref [] in
+        let mark = Array.make n (-1) and stamp = ref 0 in
         for k = 1 to n do
           List.iter
-            (fun (tag, card, w, members) ->
+            (fun (card, w, members) ->
               incr stamp;
               let reps = ref [] and total = ref 0 in
               members
@@ -452,14 +458,10 @@ include (struct
                     reps := r :: !reps;
                     total := !total + sz.(r)
                   end);
-              if !total <> card then begin
+              if !total <> card then
                 (* A root straddles the clade boundary: incompatible *)
-                if strict then
-                  Exception.raise __FUNCTION__ IO_Format
-                    "Clade family is not laminar (an incompatible clade was found)"
-                else
-                  List.accum dropped tag
-              end
+                Exception.raise __FUNCTION__ IO_Format
+                  "Clade family is not laminar (an incompatible clade was found)"
               else match !reps with
                 | [] | [_] ->
                   (* Clade already realised (duplicate): nothing to do *)
@@ -483,11 +485,6 @@ include (struct
                   stem.(root) <- Some w)
             buckets.(k)
         done;
-        let nd = List.length !dropped in
-        if verbose && nd > 0 then
-          Printf.eprintf
-            "(%s): dropped %d incompatible clade%s during reconstruction\n%!"
-            __FUNCTION__ nd (if nd = 1 then "" else "s");
         (* Leftover components -- including the never-merged reference leaf --
            are the branches at the unrooted centre *)
         incr stamp;
@@ -499,183 +496,219 @@ include (struct
             roots := r :: !roots
           end
         done;
-        let tree =
-          match !roots with
-          | [ r ] -> subtree.(r)
-          | rs ->
-            rs
-            |> List.rev_map (fun r -> Newick.edge ?length:stem.(r) (), subtree.(r))
-            |> Array.of_list |> Newick.join in
-        tree, !dropped
+        match !roots with
+        | [ r ] -> subtree.(r)
+        | rs ->
+          rs
+          |> List.rev_map (fun r -> Newick.edge ?length:stem.(r) (), subtree.(r))
+          |> Array.of_list |> Newick.join
       end
-    (* Compatibility check (Buneman): a candidate split is compatible with the
-        set of currently accepted splits iff AT MOST ONE existing colour class
-        has elements on both sides of the candidate.  Each colour class is the
-        equivalence class of elements under the accepted splits; a class
-        straddling the new split would force the existing tree to branch in
-        two independent places, which violates pairwise/joint compatibility.
-       A single straddling class is fine -- it just refines that branch by
-        one extra bit.  The previous implementation checked the weaker
-        "either side sees >= 2 colours" condition, which rejected genuine
-        refinements (e.g. the nested chain of splits emitted by the hdbscan
-        algorithm) and so under-built the tree.  Cost is O(n) per candidate,
-        same as before.
-       The split bitmasks are reached through the public [Splits] API: we
-        iterate with [Splits.iter] and project each split to its IntZ via
-        [Split.to_intz], and re-wrap accepted/rejected masks with [Split.of_intz]
-        when building the result registers.  [mask_complement] is recomputed
-        from the element count rather than read off the register. *)
+    (* A consensus of splits, greedily: the splits are taken in decreasing
+        weight, and each is kept iff it is compatible with every split kept
+        before it -- two bipartitions A|A' and B|B' being compatible when one of
+        their four intersections is empty.  Ties in weight go to the larger
+        smaller side, the most central split first, and then to the smaller
+        mask, which is there only to make the result deterministic.
+       Each split is tested exactly, and against the tree rather than against
+        the kept splits one by one.  A split is held as its side without element
+        0, a cluster of the tree rooted at element 0, and splits are compatible
+        iff their clusters are laminar -- any two nested or disjoint -- so the
+        kept splits are at every moment a rooted tree, built as they come: the
+        elements are its leaves and each kept split one of its nodes.  A cluster
+        C fits that tree iff each child of the lowest node u holding all of C
+        lies wholly inside C or wholly outside it, since a node below such a
+        child is inside or outside with it and a node above u holds all of C;
+        keeping C is then hanging the children of u that lie inside it from a
+        new node.  Only the nodes on the paths from the elements of C up to the
+        root are visited, each of them once: the subtree C induces, which is
+        usually a few times |C| and never more than the whole tree.  So a split
+        costs one pass over its mask in bytes, O(n / 8), plus the size of that
+        subtree, and at most O(n) whatever it is and however many splits have
+        been kept.  Once the tree is fully resolved no split can fit it but a
+        trivial one, and the rest are turned away unread.
+       The tree returned is built from the kept splits by [assemble_clades],
+        which puts the weight of each on its edge.  The split bitmasks are
+        reached through the public [Splits] API: [Splits.iter] and
+        [Split.to_intz] out of the register, [Split.of_intz] back into the two
+        registers returned. *)
     let of_splits ?(verbose = false) splits =
       let names = Splits.get_names splits in
       let num_elts = Array.length names in
       let mask_complement = IntZ.(one lsl num_elts - one) in
-      (* Sort splits in iteration order.  The colour-reconstruction loop
-          below right-shifts colours one bit at a time, undoing splits in
-          REVERSE-of-acceptance order: the LATEST-accepted split is
-          undone FIRST, merging the two leaf groups that were on its two
-          sides.  For the resulting tree to be correct, the LATEST-
-          accepted split must be the DEEPEST in the tree (e.g.\ a cherry
-          like {A, B}), and the FIRST-accepted split must be the most
-          CENTRAL (largest smaller-side cardinality).
-         The original implementation sorted only by weight; with equal
-          weights (e.g.\ all 1.0 from Newick-derived ensemble unions),
-          the iteration order was determined by the priority queue's
-          IntZ tiebreaking, which has no relation to tree depth.  The
-          result was a tree whose bipartitions did not match the input
-          splits even though every split was accepted as compatible
-          (Buneman's theorem guarantees compatibility, not order).
-         Fix: secondary sort key is the smaller-side cardinality
-          DESCENDING -- deepest (most central) splits first, cherries
-          last.  Tertiary key on the mask itself is purely for
-          deterministic output. *)
-      let sorted_arr = Array.make (Splits.cardinal splits) (IntZ.zero, 0., 0) in
-      let i = ref 0 in
+      let sorted_arr = Array.make (Splits.cardinal splits) (IntZ.zero, 0., 0) and i = ref 0 in
       Splits.iter
         (fun split weight ->
           let split = Splits.Split.to_intz split in
           let pop = IntZ.popcount split in
-          let smaller_side = min pop (num_elts - pop) in
-          sorted_arr.(!i) <- (split, weight, smaller_side);
+          sorted_arr.(!i) <- (split, weight, min pop (num_elts - pop));
           incr i)
         splits;
       Array.sort
         (fun (s1, w1, sz1) (s2, w2, sz2) ->
-          let c = Stdlib.compare w2 w1 in
+          let c = Float.compare w2 w1 in
           if c <> 0 then c
-          else let c = Stdlib.compare sz2 sz1 in
-               if c <> 0 then c
-               else IntZ.compare s1 s2)
+          else
+            let c = Int.compare sz2 sz1 in
+            if c <> 0 then c else IntZ.compare s1 s2)
         sorted_arr;
-      let red_num_elts = num_elts - 1 and colors = Array.make num_elts IntZ.zero and num_colors = ref 1
-      (* We partition splits based on their compatibility *)
-      and ok = ref SplitsRMultimap.empty and ok_weights = ref []
-      and ko = ref SplitsRMultimap.empty in
+      (* The tree of the kept splits: the elements 0 .. n - 1, the root n, and after it one node
+         per kept split.  Children hang in doubly linked lists, so a child moves in constant time *)
+      let root = num_elts and max_nodes = 2 * num_elts + 1 in
+      let parent = Array.make max_nodes (-1) and first = Array.make max_nodes (-1)
+      and next = Array.make max_nodes (-1) and prev = Array.make max_nodes (-1)
+      and size = Array.make max_nodes 1 and degree = Array.make max_nodes 0 in
+      let link p c =
+        parent.(c) <- p;
+        prev.(c) <- -1;
+        next.(c) <- first.(p);
+        if first.(p) >= 0 then prev.(first.(p)) <- c;
+        first.(p) <- c;
+        degree.(p) <- degree.(p) + 1
+      and unlink c =
+        let p = parent.(c) in
+        if prev.(c) >= 0 then next.(prev.(c)) <- next.(c) else first.(p) <- next.(c);
+        if next.(c) >= 0 then prev.(next.(c)) <- prev.(c);
+        degree.(p) <- degree.(p) - 1 in
+      for e = 0 to num_elts - 1 do
+        link root e
+      done;
+      size.(root) <- num_elts;
+      (* What one candidate needs, reset by stamping rather than by clearing: a node belongs to
+         the current candidate iff [stamp] holds its number.  [count] is how many of the
+         candidate's elements lie below a node, [ihead] and [inext] chain the visited children
+         of a visited node, and [order] and [stack] serve the walks *)
+      let stamp = Array.make max_nodes 0 and count = Array.make max_nodes 0
+      and ihead = Array.make max_nodes (-1) and inext = Array.make max_nodes (-1)
+      and order = Array.make max_nodes 0 and stack = Array.make max_nodes 0
+      and members = Array.make (max num_elts 1) 0 and candidate = ref 0 and free = ref (root + 1)
+      and resolving = ref 0 in
+      (* Hang the cluster held in [members.(0 .. s - 1)] if it fits the tree, and say whether *)
+      let fits s =
+        incr candidate;
+        let c = !candidate and visited = ref 0 in
+        (* The nodes on the paths up from the members, each visited once *)
+        for j = 0 to s - 1 do
+          let v = ref members.(j) in
+          while !v >= 0 && stamp.(!v) <> c do
+            stamp.(!v) <- c;
+            count.(!v) <- 0;
+            ihead.(!v) <- -1;
+            order.(!visited) <- !v;
+            incr visited;
+            v := parent.(!v)
+          done
+        done;
+        (* Every visited node but the root has a visited parent, since each walk went on up to
+           the root or to a node already visited *)
+        for k = 0 to !visited - 1 do
+          let v = order.(k) in
+          let p = parent.(v) in
+          if p >= 0 then begin
+            inext.(v) <- ihead.(p);
+            ihead.(p) <- v
+          end
+        done;
+        (* The counts, children first: the visited nodes in preorder from the root, read back *)
+        let top = ref 1 and seen = ref 0 in
+        stack.(0) <- root;
+        while !top > 0 do
+          decr top;
+          let v = stack.(!top) in
+          order.(!seen) <- v;
+          incr seen;
+          let w = ref ihead.(v) in
+          while !w >= 0 do
+            stack.(!top) <- !w;
+            incr top;
+            w := inext.(!w)
+          done
+        done;
+        for k = !seen - 1 downto 0 do
+          let v = order.(k) in
+          if v < num_elts then count.(v) <- 1;
+          let p = parent.(v) in
+          if p >= 0 then count.(p) <- count.(p) + count.(v)
+        done;
+        (* The lowest node holding every member: at most one child of a node holds them all *)
+        let u = ref root and descending = ref true in
+        while !descending do
+          let w = ref ihead.(!u) in
+          while !w >= 0 && count.(!w) <> s do
+            w := inext.(!w)
+          done;
+          if !w >= 0 then u := !w else descending := false
+        done;
+        (* It fits iff each child of that node holding a member holds nothing else *)
+        let inside = ref 0 and w = ref ihead.(!u) in
+        while !w >= 0 && count.(!w) = size.(!w) do
+          incr inside;
+          w := inext.(!w)
+        done;
+        let fit = !w < 0 in
+        (* With one child inside, or all of them, the cluster is a node already *)
+        if fit && !inside > 1 && !inside < degree.(!u) then begin
+          let node = !free in
+          incr free;
+          size.(node) <- s;
+          let w = ref ihead.(!u) in
+          while !w >= 0 do
+            let child = !w in
+            w := inext.(child);
+            unlink child;
+            link node child
+          done;
+          link !u node;
+          incr resolving
+        end;
+        fit in
+      (* The kept splits go into one register and the rest into another; the kept ones are
+         compatible, so their smaller sides are a laminar family and make the tree's clades *)
+      let kept = Splits.create names and rejected = Splits.create names and clades = ref [] in
       Array.iter
-        (fun (split, weight, _) ->
-          let add_split_to partition =
-            partition := SplitsRMultimap.add weight split !partition in
-          (* Do we need more splits? If colours are all different, we have found enough *)
-          if !num_colors >= num_elts then
-            add_split_to ko
-          else
-            (* Is the split compatible with current colours?  For each colour
-               class, record whether we have seen it on side 0, side 1, or
-               both.  We abort as soon as TWO classes are observed to
-               straddle the new split. *)
-            try
-              let straddle = IntZHashtbl.create 16 in
-              let straddling_count = ref 0 in
-              for i = 0 to red_num_elts do
-                let bit = IntZ.testbit split i in
-                let c = colors.(i) in
-                let s1, s0 =
-                  try IntZHashtbl.find straddle c
-                  with Not_found -> false, false in
-                let s1' = s1 || bit and s0' = s0 || not bit in
-                if not (s1 && s0) && s1' && s0' then begin
-                  incr straddling_count;
-                  if !straddling_count > 1 then
-                    raise_notrace Exit
-                end;
-                IntZHashtbl.replace straddle c (s1', s0')
-              done;
-              (* Compatible split - we update colours and their number *)
-              for i = 0 to red_num_elts do
-                colors.(i) <- IntZ.(colors.(i) lsl 1 + if testbit split i then one else zero)
-              done;
-              num_colors := Array.to_seq colors |> IntZSet.of_seq |> IntZSet.cardinal;
-              add_split_to ok;
-              List.accum ok_weights weight
-            with Exit ->
-              (* Incompatible split *)
-              add_split_to ko)
+        (fun (split, weight, smaller) ->
+          let keep () =
+            Splits.add_split kept (Splits.Split.of_intz split) weight;
+            let pop = IntZ.popcount split in
+            let side = if pop <= num_elts - pop then split else IntZ.(mask_complement - split) in
+            List.accum clades (smaller, weight, (fun f -> iter_set_bits f side))
+          and reject () = Splits.add_split rejected (Splits.Split.of_intz split) weight
+          (* The side without element 0 *)
+          and cluster = if IntZ.testbit split 0 then IntZ.(mask_complement - split) else split in
+          let s = IntZ.popcount cluster in
+          if s <= 1 || s >= num_elts - 1 then
+            (* One element against the rest, or none: it fits any tree and changes none *)
+            keep ()
+          else if !resolving >= num_elts - 3 then
+            (* The tree is fully resolved, and nothing more can fit it *)
+            reject ()
+          else begin
+            let j = ref 0 in
+            iter_set_bits (fun e -> members.(!j) <- e; incr j) cluster;
+            if fits s then keep () else reject ()
+          end)
         sorted_arr;
-      if verbose then
-        Printf.eprintf "(%s): Found %d colors for %d elements, used %d/%d splits\n%!"
-          __FUNCTION__ !num_colors num_elts
-          (SplitsRMultimap.cardinal !ok) (SplitsRMultimap.cardinal !ko);
-      (* To return used and unused splits, we need to invert tables *)
-      let partition_to_splits partition =
-        let res = Splits.create names in
-        SplitsRMultimap.iter
-          (fun weight split -> Splits.add_split res (Splits.Split.of_intz split) weight)
-          !partition;
-        res in
-      (* Reconstruction.  The colour array is used only for the compatibility
-         check above; we do NOT reuse it to rebuild the tree (the colour-shift
-         recovery interprets bit position as tree depth, which is only valid
-         for a rooted, fully-resolved, depth-ordered split chain and otherwise
-         over-merges polytomies into spurious sub-clades).  Instead we feed the
-         accepted splits to [assemble_clades]: for each one we take its SMALLER
-         side -- the canonical clade -- which for a compatible set is laminar,
-         and a single smallest-first union-find pass over the set bits recovers
-         exactly the input bipartitions, weights on the correct edges, in time
-         linear in the total clade cardinality. *)
-      let _ = colors and _ = ok_weights in
-      let clades = ref [] in
-      SplitsRMultimap.iter
-        (fun w s ->
-          let pop = IntZ.popcount s in
-          let smaller, k =
-            if pop <= num_elts - pop then s, pop
-            else IntZ.(mask_complement - s), num_elts - pop in
-          (* Tag the clade with its source split [s] so that, should it be
-             dropped during reconstruction, it can be moved back from [ok] to
-             [ko] below *)
-          clades := (s, k, w, (fun f -> iter_set_bits f smaller)) :: !clades)
-        !ok;
-      let tree, dropped = assemble_clades ~verbose names num_elts !clades in
-      (* The colour pre-filter guarantees pairwise (Buneman) compatibility, but
-         [assemble_clades]'s smallest-first union-find can still meet a split
-         that straddles an already-built clade when the accepted set is not
-         globally laminar.  Such splits were dropped from the tree, so move them
-         from the kept ([ok]) to the unused ([ko]) partition, keeping the
-         returned bookkeeping honest: the tree and the [ok] database agree. *)
-      let dropped_set =
-        List.fold_left (fun acc s -> IntZSet.add s acc) IntZSet.empty dropped in
-      let ok_final = ref SplitsRMultimap.empty and ko_final = ref !ko in
-      SplitsRMultimap.iter
-        (fun w s ->
-          if IntZSet.mem s dropped_set then
-            ko_final := SplitsRMultimap.add w s !ko_final
-          else
-            ok_final := SplitsRMultimap.add w s !ok_final)
-        !ok;
-      partition_to_splits ok_final, tree, partition_to_splits ko_final
+      if verbose then begin
+        let num_splits = Array.length sorted_arr in
+        Printf.eprintf "(%s): kept %d of %d %s, %d of them resolving the tree\n%!" __FUNCTION__
+          (Splits.cardinal kept) num_splits (String.pluralize_int "split" num_splits) !resolving
+      end;
+      kept, assemble_clades names num_elts !clades, rejected
+    (* The caller promises a laminar family (e.g.\ a clustering dendrogram), so
+        an incompatible clade is the caller's error, and raises *)
     let of_clades ?(verbose = false) names clades =
-      let tagged =
-        List.map
-          (fun (idx, w) -> ((), Array.length idx, w, (fun f -> Array.iter f idx)))
-          clades in
-      (* Strict: the caller promises a laminar family (e.g.\ a clustering
-         dendrogram), so an incompatible clade is a caller error, not something
-         to silently drop *)
-      let tree, _ = assemble_clades ~verbose ~strict:true names (Array.length names) tagged in
+      let tree =
+        assemble_clades names (Array.length names)
+          (List.map (fun (idx, w) -> Array.length idx, w, (fun f -> Array.iter f idx)) clades) in
+      if verbose then begin
+        let n = List.length clades in
+        Printf.eprintf "(%s): assembled %d %s\n%!" __FUNCTION__ n (String.pluralize_int "clade" n)
+      end;
       tree
-  end : sig
+  end: sig
     val of_splits: ?verbose:bool -> Splits.t -> Splits.t * Newick.t * Splits.t
     val of_clades: ?verbose:bool -> string array -> (int array * float) list -> Newick.t
-  end)
+  end
+)
 
 (* Neighbour joining (Saitou and Nei 1987) with the Studier and Keppler 1988
    formulation of the criterion, which is what makes each step O(m^2) rather

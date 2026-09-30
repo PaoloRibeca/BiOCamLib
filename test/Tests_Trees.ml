@@ -714,6 +714,11 @@ let test_split_masks () =
       ~expected:"5" (SP.Split.to_string (SP.Split.of_string "5"));
     Testing.check_string "the empty split is zero"
       ~expected:"0" (SP.Split.to_string (SP.Split.of_list []));
+    (* A split is a set: naming an element twice must not carry into the next one up *)
+    Testing.check_string "an element listed twice is still one element"
+      ~expected:"8" (SP.Split.to_string (SP.Split.of_list [ 3; 3 ]));
+    Testing.check_string "in an array too"
+      ~expected:"12" (SP.Split.to_string (SP.Split.of_array [| 2; 3; 3; 2 |]));
     Testing.check_bool "to_intz and of_intz are inverse" ~expected:true
       (let s = SP.Split.of_list [ 1; 3; 5 ] in
        SP.Split.to_string (SP.Split.of_intz (SP.Split.to_intz s)) = SP.Split.to_string s))
@@ -825,6 +830,259 @@ let test_splits_io () =
           ~expected:(split_weights ss)
           (split_weights (SP.of_newick_file (prefix ^ ".nwk")))))
 
+(* Trees from splits.  [Trees.of_splits] is a greedy consensus: it takes a register's splits in
+   decreasing weight, ties going to the larger smaller side and then to the smaller mask, and
+   keeps each one that is compatible with every split kept before it -- two bipartitions A|A' and
+   B|B' being compatible when one of their four intersections is empty.  The reference below is
+   that definition written out pair by pair, as plainly as it goes, and a consensus is judged
+   against it four ways: the splits it keeps, the splits it rejects, the splits the tree it returns
+   holds, and the weight on each of that tree's edges. *)
+
+let letters n = Array.init n (fun i -> String.make 1 (Char.chr (97 + i)))
+
+let masks_of ss =
+  let acc = ref [] in
+  SP.iter (fun s _ -> List.accum acc (SP.Split.to_intz s)) ss;
+  List.sort IntZ.compare !acc
+
+let smaller_side n m =
+  let pop = IntZ.popcount m in
+  min pop (n - pop)
+
+let compatible_masks n a b =
+  let full = IntZ.(shift_left one n - one) in
+  let a' = IntZ.(full - a) and b' = IntZ.(full - b) in
+  List.exists (IntZ.equal IntZ.zero)
+    [ IntZ.logand a b; IntZ.logand a b'; IntZ.logand a' b; IntZ.logand a' b' ]
+
+let greedy_kept ss =
+  let n = Array.length (SP.get_names ss) and pool = ref [] in
+  SP.iter (fun s w -> List.accum pool (SP.Split.to_intz s, w)) ss;
+  let ordered =
+    List.sort
+      (fun (m1, w1) (m2, w2) ->
+        let c = compare w2 w1 in
+        if c <> 0 then c
+        else
+          let c = compare (smaller_side n m2) (smaller_side n m1) in
+          if c <> 0 then c else IntZ.compare m1 m2)
+      !pool in
+  List.fold_left
+    (fun kept (m, _) -> if List.for_all (compatible_masks n m) kept then m :: kept else kept)
+    [] ordered
+    |> List.sort IntZ.compare
+
+let compare_edges (m1, l1) (m2, l2) =
+  let c = IntZ.compare m1 m2 in
+  if c <> 0 then c else Float.compare l1 l2
+
+(* Every edge of [tree] that has a length, as the leaves below it -- a mask over the names of [ss],
+   in the register's canonical form -- and that length.  An edge's leaves are known once the walk
+   has come back up it, so they go up a stack of masks, one per node open *)
+let weighted_edges ss tree =
+  let names = SP.get_names ss and index = Hashtbl.create 64 in
+  Array.iteri (fun i x -> Hashtbl.replace index x i) names;
+  let full = IntZ.(shift_left one (Array.length names) - one)
+  and stack = ref [] and last = ref IntZ.zero and res = ref [] in
+  N.dfs_iter
+    (fun node n_children ->
+      let leaf =
+        if n_children > 0 then IntZ.zero
+        else
+          Hashtbl.find_opt index (N.get_node_name node)
+          |> Option.fold ~none:IntZ.zero ~some:(IntZ.shift_left IntZ.one) in
+      stack := ref leaf :: !stack)
+    (fun _ _ -> ())
+    (fun _ edge ->
+      let l = N.get_edge_length edge in
+      if Float.is_finite l then List.accum res (IntZ.min !last IntZ.(full - !last), l))
+    (fun _ _ ->
+      match !stack with
+      | top :: rest ->
+        last := !top;
+        stack := rest;
+        Option.iter (fun parent -> parent := IntZ.logor !parent !top) (List.nth_opt rest 0)
+      | [] -> ())
+    tree;
+  List.sort compare_edges !res
+
+(* The edges a consensus owes its kept splits: one per split with two elements or more on each
+   side, carrying that split's weight *)
+let kept_edges ss kept =
+  let n = Array.length (SP.get_names ss) and res = ref [] in
+  SP.iter
+    (fun s w ->
+      let m = SP.Split.to_intz s in
+      if smaller_side n m > 1 then List.accum res (m, w))
+    kept;
+  List.sort compare_edges !res
+
+(* What is wrong with the consensus of [ss], if anything.  The names of [ss] must be in
+   alphabetical order, since [SP.of_newick] numbers the leaves of a tree in that order *)
+let consensus_error ss =
+  let n = Array.length (SP.get_names ss)
+  and kept, tree, rejected = Trees.of_splits ss and expected = greedy_kept ss in
+  let expected_rejected =
+    List.filter (fun m -> not (List.exists (IntZ.equal m) expected)) (masks_of ss)
+  and expected_tree = List.filter (fun m -> smaller_side n m > 1) expected
+  and same = List.equal IntZ.equal
+  and same_edges = List.equal (fun a b -> compare_edges a b = 0) in
+  if not (same (masks_of kept) expected) then
+    Some
+      (Printf.sprintf "keeps %d splits where the greedy keeps %d, %d of them the same"
+         (SP.cardinal kept) (List.length expected)
+         (List.length (List.filter (fun m -> List.exists (IntZ.equal m) expected) (masks_of kept))))
+  else if not (same (masks_of rejected) expected_rejected) then
+    Some "keeps the right splits but rejects others than the greedy"
+  else if not (same (masks_of (SP.of_newick tree)) expected_tree) then
+    Some "keeps the right splits but builds a tree that does not hold them"
+  else if not (same_edges (weighted_edges ss tree) (kept_edges ss kept)) then
+    Some "builds the right tree but puts the weights on other edges"
+  else
+    None
+
+(* A register written out as its splits and weights, so that a failing one reads as a check *)
+let describe ss =
+  let names = SP.get_names ss and acc = ref [] in
+  SP.iter
+    (fun s w ->
+      let m = SP.Split.to_intz s in
+      let members = List.filter (IntZ.testbit m) (List.init (Array.length names) Fun.id) in
+      List.accum acc
+        (Printf.sprintf "%s:%g" (String.concat "" (List.map (fun i -> names.(i)) members)) w))
+    ss;
+  List.sort compare !acc |> String.concat " "
+
+(* Splits drawn anyhow, with weights from a handful of values so that ties are common *)
+let drawn_pool rng n =
+  let ss = SP.create (letters n) in
+  for _ = 1 to 3 * n do
+    let members = List.filter (fun _ -> Random.State.bool rng) (List.init n Fun.id) in
+    SP.add_split ss (SP.Split.of_list members) (float_of_int (1 + Random.State.int rng 4))
+  done;
+  ss
+
+(* A random tree's clusters, each beside a near miss with one or two elements moved across it --
+   what a bootstrap throws up -- weighted so that some near misses outrank the truth *)
+let near_miss_pool rng n =
+  let ss = SP.create (Array.init n (Printf.sprintf "t%03d")) in
+  let rec cut members =
+    let size = List.length members in
+    if size >= 2 then begin
+      let shuffled =
+        List.map (fun x -> Random.State.bits rng, x) members
+          |> List.sort compare |> List.map snd in
+      let at = 1 + Random.State.int rng (size - 1) in
+      let left = List.filteri (fun i _ -> i < at) shuffled
+      and right = List.filteri (fun i _ -> i >= at) shuffled in
+      List.iter
+        (fun part ->
+          SP.add_split ss (SP.Split.of_list part) (2. +. Random.State.float rng 4.);
+          let moved =
+            List.init (1 + Random.State.int rng 2) (fun _ -> Random.State.int rng n)
+              |> List.sort_uniq compare in
+          let miss =
+            List.filter (fun x -> not (List.mem x moved)) part
+            @ List.filter (fun x -> not (List.mem x part)) moved in
+          SP.add_split ss (SP.Split.of_list miss) (1. +. Random.State.float rng 3.))
+        [ left; right ];
+      cut left;
+      cut right
+    end in
+  cut (List.init n Fun.id);
+  ss
+
+let check_consensus_on_pools name pools =
+  Testing.verify name (fun () ->
+    let failures =
+      List.filter_map (fun ss -> Option.map (fun e -> ss, e) (consensus_error ss)) pools
+        |> List.sort (fun (a, _) (b, _) -> compare (SP.cardinal a) (SP.cardinal b)) in
+    match failures with
+    | [] -> true, ""
+    | (ss, e) :: _ ->
+      (* A pool small enough to read is written out whole, so that it can become a check *)
+      let what =
+        if SP.cardinal ss <= 40 then describe ss
+        else
+          Printf.sprintf "%d splits over %d elements" (SP.cardinal ss)
+            (Array.length (SP.get_names ss)) in
+      false,
+      Printf.sprintf "%d of %d pools disagree with the greedy; the smallest %s: %s"
+        (List.length failures) (List.length pools) e what)
+
+let register names splits =
+  let ss = SP.create names in
+  List.iter (fun (members, w) -> SP.add_split ss (SP.Split.of_list members) w) splits;
+  ss
+
+(* The edges of [tree] written as a register over the names of [ss], each at its length *)
+let describe_edges ss tree =
+  let r = SP.create (SP.get_names ss) in
+  List.iter (fun (m, l) -> SP.add_split r (SP.Split.of_intz m) l) (weighted_edges ss tree);
+  describe r
+
+let test_of_splits () =
+  Testing.section "Trees from splits" (fun () ->
+    (* A nested chain is laminar, so nothing in it may be rejected, whatever the weights: the
+       clusters a clustering hands over arrive exactly like this *)
+    let chain =
+      register (letters 8)
+        (List.init 6 (fun i -> List.init (i + 2) Fun.id, float_of_int (1 + (i * 7 mod 5)))) in
+    Testing.check_int "a nested chain is kept whole" ~expected:6
+      (let kept, _, _ = Trees.of_splits chain in SP.cardinal kept);
+    check_consensus_on_pools "and its tree holds every link of it, each at its weight" [ chain ];
+    (* Once {a,b,d} and {d} are kept, the elements they leave unseparated are {a,b}, {c,e} and
+       {d}.  {a,b,c} cuts one of those classes only, {c,e}; with it admitted, {a,c,d} cuts one
+       only too, {a,b}; yet each crosses {a,b,d} outright, and the two leave every element on
+       its own.  A test that looks at the classes alone keeps both and then takes the tree for
+       resolved, turning away {a,b}, which fits it *)
+    let crossing =
+      register (letters 5)
+        [ [ 0; 1; 3 ], 13.; [ 3 ], 10.; [ 1; 2 ], 7.; [ 0; 1; 2 ], 4.; [ 0; 2; 3 ], 4.;
+          [ 0; 1 ], 0.5 ] in
+    Testing.check_string "splits crossing a kept one are rejected, however few classes they cut"
+      ~expected:"abc:4 acd:4 bc:7"
+      (let _, _, rejected = Trees.of_splits crossing in describe rejected);
+    Testing.check_string "and a split fitting the tree is kept after them"
+      ~expected:"ab:0.5 abd:13 d:10"
+      (let kept, _, _ = Trees.of_splits crossing in describe kept);
+    (* A trivial split -- one element against the rest, or nothing against everything -- is
+       compatible with any tree and changes none *)
+    let trivial = register (letters 5) [ [ 0 ], 5.; [], 4.; [ 2 ], 3.; [ 0; 1 ], 1. ] in
+    Testing.check_int "trivial splits are kept" ~expected:4
+      (let kept, _, _ = Trees.of_splits trivial in SP.cardinal kept);
+    check_consensus_on_pools "and change no tree" [ trivial ];
+    (* A trivial split for every element, ranked above the rest, separates every element from
+       every other before a single real split has been looked at.  A test that counts the classes
+       of unseparated elements then takes the tree for resolved and returns a star; nothing here
+       conflicts, so all seven real splits must be kept *)
+    let saturated =
+      register (letters 12)
+        (List.init 12 (fun i -> [ i ], 10.)
+         @ [ [ 0; 1 ], 5.; [ 0; 1; 2 ], 4.; [ 3; 4 ], 3.; [ 3; 4; 5 ], 2.5; [ 6; 7 ], 2.;
+             [ 6; 7; 8; 9 ], 1.5; [ 0; 1; 2; 3; 4; 5 ], 1. ]) in
+    Testing.check_int "trivial splits ranked first leave the real ones to be kept" ~expected:7
+      (let _, tree, _ = Trees.of_splits saturated in SP.cardinal (SP.of_newick tree));
+    check_consensus_on_pools "and the tree is the greedy's" [ saturated ];
+    (* Each kept split's weight goes on the edge it makes; the edge above {d,e} is the
+       bipartition {a,b,c} against {d,e}, written as the side the register keeps *)
+    let weighted = register (letters 5) [ [ 0; 1 ], 2.5; [ 3; 4 ], 1.5 ] in
+    Testing.check_string "a kept split's weight is the length of its edge"
+      ~expected:"ab:2.5 abc:1.5"
+      (let _, tree, _ = Trees.of_splits weighted in describe_edges weighted tree);
+    (* [of_clades] takes a family its caller promises is laminar, and refuses one that is not *)
+    Testing.check_string "of_clades builds the tree of a laminar family, each weight on its edge"
+      ~expected:"ab:2.5 abc:1.5"
+      (describe_edges weighted (Trees.of_clades (letters 5) [ [| 0; 1 |], 2.5; [| 3; 4 |], 1.5 ]));
+    Testing.check_raises ~re:"not laminar" "and refuses clades that cross"
+      (fun () -> ignore (Trees.of_clades (letters 5) [ [| 0; 1 |], 1.; [| 1; 2 |], 1. ]));
+    let rng = Random.State.make [| 20260930 |] in
+    check_consensus_on_pools "the consensus is the greedy on 300 pools drawn anyhow"
+      (List.init 300 (fun i -> drawn_pool rng (5 + (i mod 10))));
+    check_consensus_on_pools "and on 30 near-miss pools over 200 elements"
+      (List.init 30 (fun _ -> near_miss_pool rng 200));
+    check_consensus_on_pools "and on 200 pools of up to four elements, none included"
+      (List.init 200 (fun i -> drawn_pool rng (i mod 5))))
 
 let run () =
   test_nj_names ();
@@ -846,5 +1104,6 @@ let run () =
   test_split_register ();
   test_split_fusion ();
   test_splits_of_newick ();
-  test_splits_io ()
+  test_splits_io ();
+  test_of_splits ()
 
