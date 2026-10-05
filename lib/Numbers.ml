@@ -319,7 +319,11 @@ module Bigarray:
         type elt_t
         val elt: (t, elt_t) Bigarray.kind
       end
-    module Vector: functor (T: Scalar_t) -> Vector_t with type N.t = T.t
+    (* The vector's type is stated, so that a caller can index one with the Bigarray syntax where
+        it matters: an access through the functor is a call, which the compiler does not inline,
+        and one in the syntax is, and a loop over a vector runs several times faster for it *)
+    module Vector: functor (T: Scalar_t) ->
+      Vector_t with type N.t = T.t and type t = (T.t, T.elt_t, Bigarray.c_layout) Bigarray.Array1.t
   end
 = struct
     module type Scalar_t =

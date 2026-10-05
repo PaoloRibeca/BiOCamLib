@@ -863,6 +863,18 @@ module type DNALevenshteinHash_t =
     val of_int: int -> t
     val add_base: t -> int -> t
   end
+(* The DNA alphabet as the balls and their clients encode it: four bases, each a 2-bit symbol, in
+   either case, and -1 for any other character *)
+module DNA =
+  struct
+    let alphabet = "ACGT"
+    let encode_char = function
+      | 'A' | 'a' -> 0
+      | 'C' | 'c' -> 1
+      | 'G' | 'g' -> 2
+      | 'T' | 't' -> 3
+      | _ -> -1
+  end
 module MakeDNALevenshteinBall (Hash: DNALevenshteinHash_t) (K: IntParameter_t):
     DNALevenshteinBall_t with type H.t = Hash.t =
   struct
@@ -874,14 +886,8 @@ module MakeDNALevenshteinBall (Hash: DNALevenshteinHash_t) (K: IntParameter_t):
             Exception.raise __FUNCTION__ Initialize
               (Printf.sprintf "Invalid argument (k must be <= %d, found %d)" Hash.max_k K.n);
           K.n
-        (* There are 4 symbols in the alphabet, each one encoded as a 2-bit number *)
-        let alphabet = "ACGT"
-        let encode_char = function
-          | 'A' | 'a' -> 0
-          | 'C' | 'c' -> 1
-          | 'G' | 'g' -> 2
-          | 'T' | 't' -> 3
-          | _ -> -1
+        let alphabet = DNA.alphabet
+        let encode_char = DNA.encode_char
         let encode_at s pos =
           if pos < 0 || pos + k > String.length s then
             Exception.raise __FUNCTION__ Initialize
