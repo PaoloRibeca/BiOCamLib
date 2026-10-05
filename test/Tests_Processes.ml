@@ -149,6 +149,31 @@ let test_process_stream_chunkwise_stop () =
       (Unix.gettimeofday () -. started < 30.);
     Testing.check_string "and what came back is the same" ~expected (show got))
 
+(* A worker whose item raises ends the section, which then raises in the
+   caller -- rather than the exception carrying the worker out of the section
+   and into the caller's code, and the caller seeing only a pipe that closed.
+   A worker still busy elsewhere is killed, not waited for, as when stopping. *)
+
+let test_process_stream_chunkwise_failure () =
+  Testing.section "Parallel streams whose worker fails" (fun () ->
+    let failing ~slow threads =
+      let next = ref 0 in
+      Processes.Parallel.process_stream_chunkwise
+        (fun () -> if !next >= 200 then raise End_of_file else (incr next; !next))
+        (fun x ->
+          if x = slow then Unix.sleepf 60.;
+          if x = 50 then failwith "item 50";
+          x * x)
+        (fun _ -> ())
+        threads in
+    Testing.check_raises "a failing item makes the section raise, on one thread"
+      (fun () -> failing ~slow:0 1);
+    Testing.check_raises "and on four" (fun () -> failing ~slow:0 4);
+    let started = Unix.gettimeofday () in
+    Testing.check_raises "and with a worker busy elsewhere" (fun () -> failing ~slow:60 4);
+    Testing.check_bool "which is killed, not waited for" ~expected:true
+      (Unix.gettimeofday () -. started < 30.))
+
 (* Stopping, looked at harder, because this function runs nearly every tool
    built on the library.  Wherever the stop falls, on any number of threads,
    what comes back is the prefix up to it, in order.  Every process the
@@ -266,5 +291,6 @@ let run () =
   test_memory ();
   test_process_stream_chunkwise ();
   test_process_stream_chunkwise_stop ();
+  test_process_stream_chunkwise_failure ();
   test_process_stream_chunkwise_stop_hard ();
   test_process_stream_linewise ()

@@ -195,7 +195,9 @@ module Parallel:
     (* The following functions can fail if the number of chunks/threads is not positive *)
     val process_stream_chunkwise: ?buffered_chunks_per_thread:int ->
       (* Beware: for everything to terminate properly, f shall raise End_of_file when done.
-         Side effects are propagated within f (not exported) and within h (exported) *)
+         Side effects are propagated within f (not exported) and within h (exported).
+         Where g raises, or a worker goes without delivering its result, the section is ended
+         as Stop ends it, and an Algorithm exception is raised once it has been *)
       (unit -> 'a) -> ('a -> 'b) -> ('b -> unit) -> int -> unit
     val process_stream_linewise: ?buffered_chunks_per_thread:int -> ?max_memory:int -> ?string_buffer_memory:int ->
                                  ?input_line:(in_channel -> string) -> ?verbose:bool ->
@@ -203,6 +205,8 @@ module Parallel:
   end
 = struct
     exception Stop
+    (* What the output process makes of a worker that failed or went, to end the section by *)
+    exception Worker_failed
     let get_nproc () =
       try
         (* nproc is GNU, and a Mac has none: there sysctl answers instead.  The command
@@ -237,6 +241,9 @@ module Parallel:
         end
       and w_2_o_pipes = Array.init threads (fun _ -> Unix.pipe ())
       and o_2_w_pipes = Array.init threads (fun _ -> Unix.pipe ()) in
+      (* What the caller has written and not yet flushed would otherwise be in every process forked
+         from here, and written again by any of them that writes *)
+      flush_all ();
       match Unix.fork () with
       | 0 -> (* Child *)
         (* I am the input process *)
@@ -303,48 +310,68 @@ module Parallel:
             let probe_output () =
               ignore (input_byte o_2_w)
             and initial = ref true in
-            while true do
-              (* Try to get one more chunk.
-                 Signal the input process that I am idle *)
-              output_byte w_2_i 0;
-              flush w_2_i;
-              (* Get & process a chunk *)
-              match input_byte i_2_w with
-              | 0 -> (* EOF reached *)
-                (* Did the output process ask for a notification? *)
-                if not !initial then (* The first time, we notify anyway to avoid crashes *)
+            (* NOTHING THIS PROCESS MEETS IS LET OUT OF IT: an exception let through would carry
+               it out of the section and on into the caller's code, running it a second time.
+               A chunk that raises is reported to the output process in the place of a
+               notification, which ends the section; anything else -- the input or the output
+               process gone, say -- ends this process, which the output process then sees *)
+            begin try
+              while true do
+                (* Try to get one more chunk.
+                   Signal the input process that I am idle *)
+                output_byte w_2_i 0;
+                flush w_2_i;
+                (* Get & process a chunk *)
+                match input_byte i_2_w with
+                | 0 -> (* EOF reached *)
+                  (* Did the output process ask for a notification? *)
+                  if not !initial then (* The first time, we notify anyway to avoid crashes *)
+                    probe_output ();
+                  (* Notify that EOF has been reached *)
+                  output_binary_int w_2_o (-1);
+                  flush w_2_o;
+                  (* Did the output process switch me off? *)
                   probe_output ();
-                (* Notify that EOF has been reached *)
-                output_binary_int w_2_o (-1);
-                flush w_2_o;
-                (* Did the output process switch me off? *)
-                probe_output ();
-                (* Commit suicide *)
-                Unix.close i_2_w_pipe_in;
-                Unix.close w_2_i_pipe_out;
-                Unix.close o_2_w_pipe_in;
-                Unix.close w_2_o_pipe_out;
-                Unix._exit 0 (* Do not flush buffers or do anything else *)
-              | 1 -> (* OK, one more token available *)
-                (* Get the chunk *)
-                let chunk_id, data = (input_value i_2_w:int * 'a) in
-                (* Process the chunk *)
-                let data = g data in
-                (* Did the output process ask for a notification? *)
-                if not !initial then (* The first time, we notify anyway to avoid crashes *)
-                  probe_output ()
-                else
-                  initial := false;
-                (* Tell the output process what we have *)
-                output_binary_int w_2_o chunk_id;
-                flush w_2_o;
-                (* Did the output process request data? *)
-                probe_output ();
-                (* Send the data to output *)
-                output_value w_2_o data;
-                flush w_2_o
-              | _ -> assert false
-            done
+                  (* Commit suicide *)
+                  Unix.close i_2_w_pipe_in;
+                  Unix.close w_2_i_pipe_out;
+                  Unix.close o_2_w_pipe_in;
+                  Unix.close w_2_o_pipe_out;
+                  Unix._exit 0 (* Do not flush buffers or do anything else *)
+                | 1 -> (* OK, one more token available *)
+                  (* Get the chunk *)
+                  let chunk_id, data = (input_value i_2_w:int * 'a) in
+                  (* Process the chunk *)
+                  let data =
+                    try
+                      g data
+                    with e ->
+                      Printf.eprintf "(%s): a worker failed: %s\n%!" __FUNCTION__
+                        (Printexc.to_string e);
+                      if not !initial then
+                        probe_output ();
+                      output_binary_int w_2_o (-2);
+                      flush w_2_o;
+                      Unix._exit 1 in
+                  (* Did the output process ask for a notification? *)
+                  if not !initial then (* The first time, we notify anyway to avoid crashes *)
+                    probe_output ()
+                  else
+                    initial := false;
+                  (* Tell the output process what we have *)
+                  output_binary_int w_2_o chunk_id;
+                  flush w_2_o;
+                  (* Did the output process request data? *)
+                  probe_output ();
+                  (* Send the data to output *)
+                  output_value w_2_o data;
+                  flush w_2_o
+                | _ -> assert false
+              done
+            with e ->
+              Printf.eprintf "(%s): a worker went: %s\n%!" __FUNCTION__ (Printexc.to_string e);
+              Unix._exit 1
+            end
           | worker_pid -> (* Parent *)
             workers := worker_pid :: !workers
         done;
@@ -369,42 +396,56 @@ module Parallel:
         let w_2_i_pipes_for_select, w_2_i_dict = get_stuff_for_select w_2_i_pipes
         and w_2_i = Array.map (fun (pipe_in, _) -> Unix.in_channel_of_descr pipe_in) w_2_i_pipes
         and i_2_w = Array.map (fun (_, pipe_out) -> Unix.out_channel_of_descr pipe_out) i_2_w_pipes in
-        (* My protocol is:
-           (1) read a chunk
-           (2) read a thread id
-           (3) post the chunk to the correspondng pipe. The worker will consume it *)
-        let chunk_id = ref 0 and off = ref 0 in
-        while !off < threads do
-          let ready = select_readable w_2_i_pipes_for_select in
-          List.iter
-            (fun ready ->
-              let w_id = Hashtbl.find w_2_i_dict ready in
-              ignore (input_byte w_2_i.(w_id));
-              let i_2_w = i_2_w.(w_id) in
-              try
-                if !off > 0 then
-                  raise End_of_file;
-                let payload = f () in
-                output_byte i_2_w 1; (* OK to transmit, we have not reached EOF yet *)
-                flush i_2_w;
-                output_value i_2_w (!chunk_id, payload);
-                flush i_2_w;
-                incr chunk_id
-              with End_of_file ->
-                output_byte i_2_w 0; (* Nothing to transmit *)
-                flush i_2_w;
-                incr off)
-            ready
-        done;
-        (* Waiting to be switched off *)
-        ignore (select_readable [fst w_2_i_pipes.(0)]);
-        close_pipes_out i_2_w_pipes;
-        close_pipes_in w_2_i_pipes;
         (* THE WORKERS ARE COLLECTED BEFORE THIS PROCESS GOES, each by its own pid rather than by
            waiting for whatever turns up: a caller of this function may have children of its own
            that it means to reap itself, and an indiscriminate wait would take one of those *)
-        List.iter (fun pid -> try ignore (Unix.waitpid [] pid) with Unix.Unix_error _ -> ())
-          !workers;
+        let collect_workers () =
+          List.iter (fun pid -> try ignore (Unix.waitpid [] pid) with Unix.Unix_error _ -> ())
+            !workers in
+        (* My protocol is:
+           (1) read a chunk
+           (2) read a thread id
+           (3) post the chunk to the correspondng pipe. The worker will consume it
+           NOTHING THIS PROCESS MEETS IS LET OUT OF IT either: a worker gone, which leaves its
+           pipe at its end, or a reader raising what is not the end of its input, ends the
+           section from here, the workers being killed and collected first *)
+        begin try
+          let chunk_id = ref 0 and off = ref 0 in
+          while !off < threads do
+            let ready = select_readable w_2_i_pipes_for_select in
+            List.iter
+              (fun ready ->
+                let w_id = Hashtbl.find w_2_i_dict ready in
+                ignore (input_byte w_2_i.(w_id));
+                let i_2_w = i_2_w.(w_id) in
+                try
+                  if !off > 0 then
+                    raise End_of_file;
+                  let payload = f () in
+                  output_byte i_2_w 1; (* OK to transmit, we have not reached EOF yet *)
+                  flush i_2_w;
+                  output_value i_2_w (!chunk_id, payload);
+                  flush i_2_w;
+                  incr chunk_id
+                with End_of_file ->
+                  output_byte i_2_w 0; (* Nothing to transmit *)
+                  flush i_2_w;
+                  incr off)
+              ready
+          done;
+          (* Waiting to be switched off *)
+          ignore (select_readable [fst w_2_i_pipes.(0)]);
+          close_pipes_out i_2_w_pipes;
+          close_pipes_in w_2_i_pipes
+        with e ->
+          Printf.eprintf "(%s): the input process of a parallel section stopped: %s\n%!"
+            __FUNCTION__ (Printexc.to_string e);
+          List.iter (fun pid -> try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ())
+            !workers;
+          collect_workers ();
+          Unix._exit 1
+        end;
+        collect_workers ();
         Unix._exit 0 (* Do not flush buffers or do anything else *)
       | input_pid -> (* I am the output process *)
         close_pipes_in o_2_w_pipes;
@@ -416,8 +457,9 @@ module Parallel:
         and next = ref 0 and queue = ref IntMap.empty and buf = ref IntMap.empty
         and off = ref 0 in
         (* The caller may stop the section from h, in which case it is left at once, whatever
-           is still being processed *)
-        let stopped =
+           is still being processed. A worker that failed, or that went without a word -- killed,
+           say, for the memory it took -- ends it the same way, and then the caller hears of it *)
+        let stopped, failed =
           try
             while !off < threads do
               (* Harvest new notifications *)
@@ -425,8 +467,10 @@ module Parallel:
               List.iter
                 (fun ready ->
                   let w_id = Hashtbl.find w_2_o_dict ready in
-                  let chunk_id = input_binary_int w_2_o.(w_id) in
-                  if chunk_id = -1 then (* EOF has been reached *)
+                  let chunk_id = try input_binary_int w_2_o.(w_id) with End_of_file -> -2 in
+                  if chunk_id = -2 then
+                    raise_notrace Worker_failed
+                  else if chunk_id = -1 then (* EOF has been reached *)
                     incr off
                   else
                     if not (IntMap.mem chunk_id !queue) then
@@ -446,7 +490,12 @@ module Parallel:
                 output_byte o_2_w.(w_id) 0;
                 flush o_2_w.(w_id);
                 assert (not (IntMap.mem chunk_id !buf));
-                buf := IntMap.add chunk_id (input_value w_2_o.(w_id):'b) !buf;
+                let data =
+                  try
+                    (input_value w_2_o.(w_id):'b)
+                  with End_of_file ->
+                    raise_notrace Worker_failed in
+                buf := IntMap.add chunk_id data !buf;
                 (* Tell the worker to send the next notification *)
                 output_byte o_2_w.(w_id) 0;
                 flush o_2_w.(w_id);
@@ -474,9 +523,10 @@ module Parallel:
               buf := IntMap.remove chunk_id !buf;
               incr next
             done;
-            false
-          with Stop ->
-            true in
+            false, false
+          with
+          | Stop -> true, false
+          | Worker_failed -> true, true in
         (* AND THE INPUT PROCESS IS COLLECTED HERE.  Every call forks one child from this side,
            and a caller that opens a parallel section per unit of work rather than once per run
            -- the Monte-Carlo clusterer opens one per epoch -- would otherwise fill the process
@@ -496,7 +546,10 @@ module Parallel:
           (try Unix.kill input_pid Sys.sigterm with Unix.Unix_error _ -> ());
           collect_input_process ();
           close_pipes_out o_2_w_pipes;
-          close_pipes_in w_2_o_pipes
+          close_pipes_in w_2_o_pipes;
+          if failed then
+            Exception.raise __FUNCTION__ Algorithm
+              "A worker of the parallel section failed, or went without delivering its result"
         end else begin
           (* Switch off all the workers *)
           for ii = 0 to red_threads do
