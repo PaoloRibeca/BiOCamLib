@@ -820,6 +820,10 @@ module Reads:
         val num_segments: t -> int
         val segment_span: t -> int -> int * int
         val sub: t -> int -> int -> string
+        (* How many segments a template is made of, one for a single-end read and two for a pair,
+            so that a consumer of the packed form can tell which segments make up which read. The
+            segments are stored template after template *)
+        val template_segments: t -> int -> int
       end
   end
 = struct
@@ -978,6 +982,10 @@ module Reads:
         val num_segments: t -> int
         val segment_span: t -> int -> int * int
         val sub: t -> int -> int -> string
+        (* How many segments a template is made of, one for a single-end read and two for a pair,
+            so that a consumer of the packed form can tell which segments make up which read. The
+            segments are stored template after template *)
+        val template_segments: t -> int -> int
       end
     = struct
         type template_t =
@@ -1067,6 +1075,8 @@ module Reads:
         (* The packed blob, for a consumer that reads the packed form directly *)
         let data store = store.packed
         let num_segments store = Tools.ArrayStack.length store.seg_starts
+        let template_segments store i =
+          if Tools.ArrayStack.get store.kinds i = 0 then 1 else 2
         (* Segment i's (first base, length) span in the packed blob *)
         let segment_span store i =
           let s = Tools.ArrayStack.get store.seg_starts i in
