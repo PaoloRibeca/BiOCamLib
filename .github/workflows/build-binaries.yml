@@ -64,7 +64,8 @@ jobs:
       - name: Set up OCaml
         uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: "4.14"
+          # flambda, without which the -O3 that dune-workspace passes does nothing
+          ocaml-compiler: "ocaml-variants.4.14.2+options,ocaml-option-flambda"
 
       - name: Install OCaml dependencies
         # gg and vg (whose vg.pdf backend is pure OCaml) back the Plot module.

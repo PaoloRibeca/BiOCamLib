@@ -1,12 +1,8 @@
+; Only the linking is set here, static in the release-static profile: the optimisation level
+; is set once, for everything built, in dune-workspace.
 (env
- (dev
-  (ocamlopt_flags (:standard -g)))
- (dev-static
-  (ocamlopt_flags (:standard -g -ccopt -static)))
- (release
-  (ocamlopt_flags (:standard -O3 -ccopt -O3)))
  (release-static
-  (ocamlopt_flags (:standard -O3 -ccopt -O3 -ccopt -static))))
+  (ocamlopt_flags (:standard -ccopt -static))))
 
 ; The assertion suite.  Tests is the entry point; the harness itself is now
 ; BiOCamLib.Testing, and every Tests_<Area> module is one area's checks.  Not

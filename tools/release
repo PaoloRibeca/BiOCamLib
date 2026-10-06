@@ -13,8 +13,9 @@
 #       assemble releases/<Project>-<ver>-<os>-<arch>.tar.xz from
 #       releases/MANIFEST.  <ver> is N.N.N; omitted it is read from
 #       releases/CURRENT, given it replaces CURRENT (the old one kept as
-#       CURRENT~).  Always builds the binaries afresh first -- release-static on
-#       Linux, release on macOS -- so that what is packaged is this tree,
+#       CURRENT~).  Always builds the binaries afresh first -- release-static
+#       where OCaml's C compiler is musl's, release everywhere else, macOS
+#       included -- so that what is packaged is this tree,
 #       compiled with the release profile and stamped with the version the
 #       archive is named for.  Set PACKAGE_PLATFORM + PACKAGE_BINDIR to package
 #       binaries downloaded for another platform instead (see mac-end), which
@@ -123,20 +124,24 @@ do_package() {
     [[ -d "$bindir" ]] || die "PACKAGE_BINDIR '$bindir' is not a directory"
   else
     # release-static links statically so the Linux binaries run on hosts lacking
-    # the shared libraries; macOS has no static libSystem, so -ccopt -static
-    # will not link there and plain release is used instead.
+    # the shared libraries, which takes OCaml's C compiler being musl's: glibc does
+    # not link statically in earnest, and macOS has no static libSystem at all, so
+    # -ccopt -static will not link there and plain release is used instead.  The
+    # profile is named rather than left to BUILD's default, for a BUILD that
+    # predates choosing it so.
     bindir="$ROOT/.build"
     local profile
-    case "$(uname -s)" in
-      Darwin) profile="release" ;;
-      *)      profile="release-static" ;;
-    esac
-    # ALWAYS REBUILT.  Whatever .build holds may come from another profile (dev
-    # is dynamic and unstripped), from sources older than the tree, from before
-    # a build that failed, or from before the version moved -- and the version
-    # is stamped inside the binaries, so a stale one would put the old number in
-    # an archive named for the new one.  Only a build made here is known to be
-    # what the archive claims to hold.
+    if [[ "$(ocamlopt -config | awk '$1 == "c_compiler:" { print $2 }')" == *musl* ]]; then
+      profile="release-static"
+    else
+      profile="release"
+    fi
+    # ALWAYS REBUILT.  Whatever .build holds may come from another profile or an
+    # older BUILD, from sources older than the tree, from before a build that
+    # failed, or from before the version moved -- and the version is stamped
+    # inside the binaries, so a stale one would put the old number in an archive
+    # named for the new one.  Only a build made here is known to be what the
+    # archive claims to hold.
     echo "($SELF package): building with '$profile' so that the archive holds this tree ..."
     rm -rf "$bindir"
     ( cd "$ROOT" && bash BUILD "$profile" )

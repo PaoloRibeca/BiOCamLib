@@ -1,0 +1,12 @@
+(lang dune 3.0)
+
+; Every profile compiles all the code here with -O3: the OCaml with flambda's, and any C or C++
+; with the C compiler's, whose default is otherwise the switch's own C flags -- which end in -Os
+; on a musl switch.  That covers the library as well as the executables, tests and benchmarks.  A
+; project vendoring BiOCamLib reads its own dune-workspace instead of this one, and sets the flags
+; BiOCamLib is compiled with there
+(env
+ (_
+  (ocamlopt_flags (:standard -O3))
+  (c_flags (:standard -O3))
+  (cxx_flags (:standard -O3))))

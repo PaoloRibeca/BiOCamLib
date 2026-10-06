@@ -20,6 +20,51 @@ TOOLS="$ROOT/tools"
 # builds the wrong tree.
 DUNE=(dune build --root "$ROOT")
 
+# THE PROFILE FOLLOWS THE TOOLCHAIN: release-static where OCaml's C compiler is
+# musl's, which is what lets a binary linked statically run on any Linux, and
+# release, dynamic, everywhere else -- glibc does not link statically in earnest,
+# and macOS does not link statically at all.  Either can still be asked for.
+default_profile() {
+  if [[ "$(ocamlopt -config | awk '$1 == "c_compiler:" { print $2 }')" == *musl* ]]; then
+    echo release-static
+  else
+    echo release
+  fi
+}
+# A mistyped target would otherwise be handed to dune as a profile
+check_profile() {
+  case "$1" in
+    release|release-static) ;;
+    dev|dev-static)
+      echo "BUILD: '$1' is not a profile: 'bash BUILD check' runs dev's warnings" >&2
+      exit 1 ;;
+    *)
+      echo "BUILD: unknown profile or target '$1'" >&2
+      exit 1 ;;
+  esac
+}
+
+# Emit version info.  The logic lives in stamp-version, which every repository
+# of the family reaches through its BiOCamLib submodule, so that none of them
+# carries a second copy of it to drift.  The nine binaries below take their
+# version from the same module through Info.for_program: they ship in one
+# archive from one tree, so they share its version and differ only in name.
+# The library first, then every binary this repository produces -- so the list
+# of what it produces lives here rather than in a literal inside each of them.
+stamp() {
+  bash "$TOOLS/stamp-version" --root "$ROOT" --out "$ROOT/lib/Info.ml" \
+    BiOCamLib AnnoTools Cophenetic FASTools NJ Octopus Parallel RC TREx Yggdrasill
+}
+
+# The warnings dune's dev profile makes fatal, checked over everything this
+# repository compiles without building any of it, and without touching .build:
+#   ./BUILD check
+if [[ "${1:-}" == "check" ]]; then
+  stamp
+  "${DUNE[@]}" --profile=dev @lib/check @bin/check @test/check @bench/check
+  exit 0
+fi
+
 if [[ "${1:-}" == "README.pdf" ]]; then
   bash "$TOOLS/markdown-pdf" --root "$ROOT" --title BiOCamLib
   exit 0
@@ -58,28 +103,19 @@ if [[ "${1:-}" == "mac-end" ]]; then
 fi
 
 if [[ "${1:-}" == "test" ]]; then
-  PROFILE="${2:-dev}"
+  PROFILE="${2:-$(default_profile)}"
+  check_profile "$PROFILE"
   run_tests "$PROFILE"
   exit 0
 fi
 
-PROFILE="$1"
-if [[ "$PROFILE" == "" ]]; then
-  PROFILE="dev"
-fi
+PROFILE="${1:-$(default_profile)}"
+check_profile "$PROFILE"
 
 # Always erase build directory to ensure peace of mind
 rm -rf _build
 
-# Emit version info.  The logic lives in stamp-version, which every repository
-# of the family reaches through its BiOCamLib submodule, so that none of them
-# carries a second copy of it to drift.  The nine binaries below take their
-# version from the same module through Info.for_program: they ship in one
-# archive from one tree, so they share its version and differ only in name.
-# The library first, then every binary this repository produces -- so the list
-# of what it produces lives here rather than in a literal inside each of them.
-bash "$TOOLS/stamp-version" --root "$ROOT" --out "$ROOT/lib/Info.ml" \
-  BiOCamLib AnnoTools Cophenetic FASTools NJ Octopus Parallel RC TREx Yggdrasill
+stamp
 
 #FLAGS="--verbose"
 
@@ -114,8 +150,6 @@ chmod 755 .build/*
 # failures: 'set -e' stops us here, before the binaries are stripped.
 run_tests
 
-if [[ "$PROFILE" == "release" || "$PROFILE" == "release-static" ]]; then
-  strip .build/*
-  rm -rf _build
-fi
+strip .build/*
+rm -rf _build
 
