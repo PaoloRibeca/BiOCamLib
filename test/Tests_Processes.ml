@@ -172,7 +172,38 @@ let test_process_stream_chunkwise_failure () =
     let started = Unix.gettimeofday () in
     Testing.check_raises "and with a worker busy elsewhere" (fun () -> failing ~slow:60 4);
     Testing.check_bool "which is killed, not waited for" ~expected:true
-      (Unix.gettimeofday () -. started < 30.))
+      (Unix.gettimeofday () -. started < 30.);
+    (* Once a worker has failed the input process kills them all, and the caller, still asking
+       the others for their results, writes to workers that have gone: that must end the section
+       with an exception, and not end the program with SIGPIPE.  A slow output function keeps the
+       caller busy while the workers are killed, which is when it happens.  It is run in a child
+       process, so that a program killed is a check failed and not the suite gone, and the child
+       says nothing on stderr *)
+    let survives () =
+      flush_all ();
+      match Unix.fork () with
+      | 0 ->
+        Unix.dup2 (Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0) Unix.stderr;
+        for _ = 1 to 10 do
+          let next = ref 0 in
+          try
+            Processes.Parallel.process_stream_chunkwise
+              (fun () -> if !next >= 200 then raise End_of_file else (incr next; !next))
+              (fun x -> if x = 50 then failwith "item 50"; x)
+              (fun _ -> Unix.sleepf 0.002)
+              8
+          with _ -> ()
+        done;
+        Unix._exit 0
+      | pid -> snd (Unix.waitpid [] pid) = Unix.WEXITED 0 in
+    Testing.check_bool "and workers gone while the caller asks for results do not kill it"
+      ~expected:true (survives ());
+    (* SIGPIPE is ignored while a section runs, so that such a write fails rather than kills *)
+    Testing.check_bool "the caller's handling of SIGPIPE is the same after the section"
+      ~expected:true
+      (Sys.set_signal Sys.sigpipe Sys.Signal_default;
+       (try failing ~slow:0 4 with _ -> ());
+       Sys.signal Sys.sigpipe Sys.Signal_default = Sys.Signal_default))
 
 (* Stopping, looked at harder, because this function runs nearly every tool
    built on the library.  Wherever the stop falls, on any number of threads,

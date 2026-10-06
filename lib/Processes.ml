@@ -244,6 +244,15 @@ module Parallel:
       (* What the caller has written and not yet flushed would otherwise be in every process forked
          from here, and written again by any of them that writes *)
       flush_all ();
+      (* A WORKER CAN GO WHILE THE OUTPUT PROCESS IS WRITING TO IT -- killed by the input process
+         once another one has failed, or from outside for the memory it took -- and the write
+         would then raise SIGPIPE, which by default ends the caller's whole program without a
+         word.  The signal is ignored for as long as the section runs, so that such a write fails
+         instead and ends the section as a failed worker does.  The input process keeps it ignored,
+         so that a write of its own to a worker gone ends the section too.  The workers run the
+         caller's code with the caller's own handling of it, which is put back here when the
+         section ends *)
+      let previous_sigpipe = Sys.signal Sys.sigpipe Sys.Signal_ignore in
       match Unix.fork () with
       | 0 -> (* Child *)
         (* I am the input process *)
@@ -269,9 +278,10 @@ module Parallel:
           match Unix.fork () with
           | 0 -> (* Child *)
             (* I am a worker.
-               The handler above is my parent's business: I run the caller's code, and get back
-               exactly the handling of the signal the caller had *)
+               The handlers above are my parents' business: I run the caller's code, and get back
+               exactly the handling of the signals the caller had *)
             Sys.set_signal Sys.sigterm previous_handler;
+            Sys.set_signal Sys.sigpipe previous_sigpipe;
             ignore (Unix.sigprocmask Unix.SIG_SETMASK previous_mask);
             (* I only keep my own pipes open *)
             let i_2_w_pipe_in, w_2_i_pipe_out, o_2_w_pipe_in, w_2_o_pipe_out =
@@ -456,6 +466,13 @@ module Parallel:
         and buffered_chunks = buffered_chunks_per_thread * threads
         and next = ref 0 and queue = ref IntMap.empty and buf = ref IntMap.empty
         and off = ref 0 in
+        (* A request to a worker that has gone fails, SIGPIPE being ignored, and ends the section *)
+        let ask w_id =
+          try
+            output_byte o_2_w.(w_id) 0;
+            flush o_2_w.(w_id)
+          with Sys_error _ ->
+            raise_notrace Worker_failed in
         (* The caller may stop the section from h, in which case it is left at once, whatever
            is still being processed. A worker that failed, or that went without a word -- killed,
            say, for the memory it took -- ends it the same way, and then the caller hears of it *)
@@ -487,8 +504,7 @@ module Parallel:
               while !available > 0 && !queue <> IntMap.empty do
                 let chunk_id, w_id = IntMap.min_binding !queue in
                 (* Tell the worker to send data *)
-                output_byte o_2_w.(w_id) 0;
-                flush o_2_w.(w_id);
+                ask w_id;
                 assert (not (IntMap.mem chunk_id !buf));
                 let data =
                   try
@@ -497,8 +513,7 @@ module Parallel:
                     raise_notrace Worker_failed in
                 buf := IntMap.add chunk_id data !buf;
                 (* Tell the worker to send the next notification *)
-                output_byte o_2_w.(w_id) 0;
-                flush o_2_w.(w_id);
+                ask w_id;
                 queue := IntMap.remove chunk_id !queue;
                 decr available
               done;
@@ -526,7 +541,10 @@ module Parallel:
             false, false
           with
           | Stop -> true, false
-          | Worker_failed -> true, true in
+          | Worker_failed -> true, true
+          | e ->
+            Sys.set_signal Sys.sigpipe previous_sigpipe;
+            raise e in
         (* AND THE INPUT PROCESS IS COLLECTED HERE.  Every call forks one child from this side,
            and a caller that opens a parallel section per unit of work rather than once per run
            -- the Monte-Carlo clusterer opens one per epoch -- would otherwise fill the process
@@ -547,18 +565,23 @@ module Parallel:
           collect_input_process ();
           close_pipes_out o_2_w_pipes;
           close_pipes_in w_2_o_pipes;
+          Sys.set_signal Sys.sigpipe previous_sigpipe;
           if failed then
             Exception.raise __FUNCTION__ Algorithm
               "A worker of the parallel section failed, or went without delivering its result"
         end else begin
-          (* Switch off all the workers *)
+          (* Switch off all the workers.  One gone since it delivered the end of its input needs
+             no switching off *)
           for ii = 0 to red_threads do
-            output_byte o_2_w.(ii) 0;
-            flush o_2_w.(ii)
+            try
+              output_byte o_2_w.(ii) 0;
+              flush o_2_w.(ii)
+            with Sys_error _ -> ()
           done;
           close_pipes_out o_2_w_pipes;
           close_pipes_in w_2_o_pipes;
-          collect_input_process ()
+          collect_input_process ();
+          Sys.set_signal Sys.sigpipe previous_sigpipe
         end
     let process_stream_linewise ?(buffered_chunks_per_thread = 10)
         ?(max_memory = 1_000_000_000) ?(string_buffer_memory = 16_777_216)
