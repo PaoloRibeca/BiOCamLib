@@ -545,6 +545,15 @@ module Parallel:
           | e ->
             Sys.set_signal Sys.sigpipe previous_sigpipe;
             raise e in
+        (* THE PIPES TO AND FROM THE WORKERS ARE CLOSED AS CHANNELS, which drops whatever a request
+           to a worker gone could not deliver.  With only its descriptor closed, a channel would
+           keep that byte, and the flush_all that every section begins with would write it into
+           whatever has taken the descriptor's number by then -- a pipe of the next section, say,
+           whose worker would then run a request ahead of the protocol and go before its end,
+           which ends that section as a worker gone *)
+        let close_channels () =
+          Array.iter close_out_noerr o_2_w;
+          Array.iter close_in_noerr w_2_o in
         (* AND THE INPUT PROCESS IS COLLECTED HERE.  Every call forks one child from this side,
            and a caller that opens a parallel section per unit of work rather than once per run
            -- the Monte-Carlo clusterer opens one per epoch -- would otherwise fill the process
@@ -563,8 +572,7 @@ module Parallel:
              the caller's code, running it a second time *)
           (try Unix.kill input_pid Sys.sigterm with Unix.Unix_error _ -> ());
           collect_input_process ();
-          close_pipes_out o_2_w_pipes;
-          close_pipes_in w_2_o_pipes;
+          close_channels ();
           Sys.set_signal Sys.sigpipe previous_sigpipe;
           if failed then
             Exception.raise __FUNCTION__ Algorithm
@@ -578,8 +586,7 @@ module Parallel:
               flush o_2_w.(ii)
             with Sys_error _ -> ()
           done;
-          close_pipes_out o_2_w_pipes;
-          close_pipes_in w_2_o_pipes;
+          close_channels ();
           collect_input_process ();
           Sys.set_signal Sys.sigpipe previous_sigpipe
         end

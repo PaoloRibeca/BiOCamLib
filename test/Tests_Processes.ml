@@ -205,6 +205,56 @@ let test_process_stream_chunkwise_failure () =
        (try failing ~slow:0 4 with _ -> ());
        Sys.signal Sys.sigpipe Sys.Signal_default = Sys.Signal_default))
 
+(* A worker can be gone by the time the output process switches it off --
+   killed from outside, say, once it has delivered all it had -- and the byte
+   that switches it off then cannot be written.  That byte must not stay
+   behind in the caller: every section begins by flushing every channel the
+   caller has, and a byte kept by a channel whose descriptor was closed would
+   be written into whatever has taken the descriptor's number by then -- a
+   pipe of the next section, whose worker would then run a request ahead of
+   the protocol.  Here the output function, at the last item, leaves the
+   workers the time to report the end of their input and kills them; the
+   section's own outcome is beside the point.  Then the lowest 64 free
+   descriptor numbers, which take in every one the section had, are given to
+   one file, which a flush must leave empty. *)
+
+let test_process_stream_chunkwise_workers_gone () =
+  Testing.section "Parallel streams whose workers go before they are switched off" (fun () ->
+    let pids_file = Filename.temp_file "BiOCamLib_Tests_" ".pids"
+    and flushed = Filename.temp_file "BiOCamLib_Tests_" ".flushed" in
+    Fun.protect ~finally:(fun () -> Sys.remove pids_file; Sys.remove flushed) (fun () ->
+      (* Each item notes the pid of the worker running it, in one write that a kill cannot
+         cut in half, so that the output function can kill every worker *)
+      let note_pid () =
+        let fd = Unix.openfile pids_file [ Unix.O_WRONLY; Unix.O_APPEND; Unix.O_CREAT ] 0o644 in
+        let line = Printf.sprintf "%d\n" (Unix.getpid ()) in
+        ignore (Unix.write_substring fd line 0 (String.length line));
+        Unix.close fd
+      and kill_workers () =
+        let ic = open_in pids_file in
+        let rec read acc =
+          match input_line ic with
+          | line -> read (int_of_string line :: acc)
+          | exception End_of_file -> acc in
+        let pids = read [] in
+        close_in ic;
+        List.iter (fun pid -> try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ())
+          (List.sort_uniq compare pids) in
+      let next = ref 0 in
+      (try
+         Processes.Parallel.process_stream_chunkwise
+           (fun () -> if !next >= 4 then raise End_of_file else (incr next; !next))
+           (fun x -> note_pid (); x)
+           (fun y -> if y = 4 then (Unix.sleepf 1.; kill_workers (); Unix.sleepf 0.5))
+           2
+       with Exception.E _ -> ());
+      let fds = List.init 64 (fun _ -> Unix.openfile flushed [ Unix.O_WRONLY; Unix.O_APPEND ] 0) in
+      flush_all ();
+      List.iter Unix.close fds;
+      Testing.check_int
+        "a byte that could not be written to a worker gone is not written anywhere else"
+        ~expected:0 (Unix.stat flushed).Unix.st_size))
+
 (* Stopping, looked at harder, because this function runs nearly every tool
    built on the library.  Wherever the stop falls, on any number of threads,
    what comes back is the prefix up to it, in order.  Every process the
@@ -323,5 +373,6 @@ let run () =
   test_process_stream_chunkwise ();
   test_process_stream_chunkwise_stop ();
   test_process_stream_chunkwise_failure ();
+  test_process_stream_chunkwise_workers_gone ();
   test_process_stream_chunkwise_stop_hard ();
   test_process_stream_linewise ()
