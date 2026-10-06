@@ -319,11 +319,7 @@ module Bigarray:
         type elt_t
         val elt: (t, elt_t) Bigarray.kind
       end
-    (* The vector's type is stated, so that a caller can index one with the Bigarray syntax where
-        it matters: an access through the functor is a call, which the compiler does not inline,
-        and one in the syntax is, and a loop over a vector runs several times faster for it *)
-    module Vector: functor (T: Scalar_t) ->
-      Vector_t with type N.t = T.t and type t = (T.t, T.elt_t, Bigarray.c_layout) Bigarray.Array1.t
+    module Vector: functor (T: Scalar_t) -> Vector_t with type N.t = T.t
   end
 = struct
     module type Scalar_t =
@@ -331,6 +327,56 @@ module Bigarray:
         include Scalar_t
         type elt_t
         val elt: (t, elt_t) Bigarray.kind
+      end
+    (* The accessors, written once for every kind.  The compiler picks the code for a Bigarray
+        access from the array's type where the access is written, and within the functor below
+        the kind is abstract: an access written there is a call to the C function that looks the
+        kind up at run time, boxing what it returns, and stays one when the functor is inlined.
+        A match on the kind fixes it in each branch, so each branch compiles to the native load
+        or store; and as an instance's kind is a constant, flambda inlines the accessor into it
+        and folds the match away, leaving the bare access.  That is why each branch applies the
+        primitive itself: a name bound to it outside the match would be compiled for any kind *)
+    module Access =
+      struct
+        module BA1 = Bigarray.Array1
+        type ('a, 'b) t = ('a, 'b, Bigarray.c_layout) BA1.t
+        let get (type a b) (k: (a, b) Bigarray.kind) (v: (a, b) t) i: a =
+          let open Bigarray in
+          match k with
+          | Float32 -> v.{i} | Float64 -> v.{i} | Int8_signed -> v.{i} | Int8_unsigned -> v.{i}
+          | Int16_signed -> v.{i} | Int16_unsigned -> v.{i} | Int32 -> v.{i} | Int64 -> v.{i}
+          | Int -> v.{i} | Nativeint -> v.{i} | Complex32 -> v.{i} | Complex64 -> v.{i}
+          | Char -> v.{i}
+          [@@inline]
+        let unsafe_get (type a b) (k: (a, b) Bigarray.kind) (v: (a, b) t) i: a =
+          let open Bigarray in
+          match k with
+          | Float32 -> BA1.unsafe_get v i | Float64 -> BA1.unsafe_get v i
+          | Int8_signed -> BA1.unsafe_get v i | Int8_unsigned -> BA1.unsafe_get v i
+          | Int16_signed -> BA1.unsafe_get v i | Int16_unsigned -> BA1.unsafe_get v i
+          | Int32 -> BA1.unsafe_get v i | Int64 -> BA1.unsafe_get v i | Int -> BA1.unsafe_get v i
+          | Nativeint -> BA1.unsafe_get v i | Complex32 -> BA1.unsafe_get v i
+          | Complex64 -> BA1.unsafe_get v i | Char -> BA1.unsafe_get v i
+          [@@inline]
+        let set (type a b) (k: (a, b) Bigarray.kind) (v: (a, b) t) i (x: a) =
+          let open Bigarray in
+          match k with
+          | Float32 -> v.{i} <- x | Float64 -> v.{i} <- x | Int8_signed -> v.{i} <- x
+          | Int8_unsigned -> v.{i} <- x | Int16_signed -> v.{i} <- x | Int16_unsigned -> v.{i} <- x
+          | Int32 -> v.{i} <- x | Int64 -> v.{i} <- x | Int -> v.{i} <- x | Nativeint -> v.{i} <- x
+          | Complex32 -> v.{i} <- x | Complex64 -> v.{i} <- x | Char -> v.{i} <- x
+          [@@inline]
+        let unsafe_set (type a b) (k: (a, b) Bigarray.kind) (v: (a, b) t) i (x: a) =
+          let open Bigarray in
+          match k with
+          | Float32 -> BA1.unsafe_set v i x | Float64 -> BA1.unsafe_set v i x
+          | Int8_signed -> BA1.unsafe_set v i x | Int8_unsigned -> BA1.unsafe_set v i x
+          | Int16_signed -> BA1.unsafe_set v i x | Int16_unsigned -> BA1.unsafe_set v i x
+          | Int32 -> BA1.unsafe_set v i x | Int64 -> BA1.unsafe_set v i x
+          | Int -> BA1.unsafe_set v i x | Nativeint -> BA1.unsafe_set v i x
+          | Complex32 -> BA1.unsafe_set v i x | Complex64 -> BA1.unsafe_set v i x
+          | Char -> BA1.unsafe_set v i x
+          [@@inline]
       end
     module Vector (T: Scalar_t) = (* This should work with float too *)
       struct
@@ -341,15 +387,21 @@ module Bigarray:
           let res = BA1.create T.elt Bigarray.C_layout n in
           BA1.fill res a;
           res
-        let init = BA1.init T.elt Bigarray.C_layout
         let empty = make 0 N.zero
         let length = BA1.dim
-        let get = BA1.get
-        let ( .@() ) = BA1.get
-        let unsafe_get = BA1.unsafe_get
-        let set = BA1.set
-        let ( .@()<- ) = BA1.set
-        let unsafe_set = BA1.unsafe_set
+        let get v i = Access.get T.elt v i [@@inline]
+        let ( .@() ) = get
+        let unsafe_get v i = Access.unsafe_get T.elt v i [@@inline]
+        let set v i x = Access.set T.elt v i x [@@inline]
+        let ( .@()<- ) = set
+        let unsafe_set v i x = Access.unsafe_set T.elt v i x [@@inline]
+        (* Not BA1.init, which stores through the generic access whatever the kind *)
+        let init n f =
+          let res = BA1.create T.elt Bigarray.C_layout n in
+          for i = 0 to n - 1 do
+            unsafe_set res i (f i)
+          done;
+          res
         let incr ba n = ba.@(n) <- N.(ba.@(n) + one) [@@inline]
         let ( .+() ) = incr
         let ( .++() ) = incr
@@ -454,8 +506,11 @@ module BigArrayVector = Bigarray.Vector
 module BAVector = Bigarray.Vector
 module FloatArrayVector = FloatarrayVector
 module FAVector = FloatarrayVector
-(* The following are common instances *)
-module Int32BAVector = BAVector (
+(* The following are common instances.  Each application is inlined whatever the level flambda
+   optimises at, which is what lets it see the instance's kind, a constant, and fold the
+   accessors' match on it away: an access to a vector of an application left as a call is itself
+   a call, which runs the match *)
+module Int32BAVector = BAVector [@inlined] (
   struct
     include Int32
     type elt_t = Stdlib.Bigarray.int32_elt
@@ -463,7 +518,7 @@ module Int32BAVector = BAVector (
   end
 )
 module I32BAVector = Int32BAVector
-module IntBAVector = BAVector (
+module IntBAVector = BAVector [@inlined] (
   struct
     include Int
     type elt_t = Stdlib.Bigarray.int_elt
@@ -471,7 +526,7 @@ module IntBAVector = BAVector (
   end
 )
 module IBAVector = IntBAVector
-module Float32BAVector = BAVector (
+module Float32BAVector = BAVector [@inlined] (
   struct
     include Float (* Note that here the OCaml type used to represent the number is special *)
     type elt_t = Stdlib.Bigarray.float32_elt
@@ -479,7 +534,7 @@ module Float32BAVector = BAVector (
   end
 )
 module F32BAVector = Float32BAVector
-module FloatBAVector = BAVector (
+module FloatBAVector = BAVector [@inlined] (
   struct
     include Float
     type elt_t = Stdlib.Bigarray.float64_elt

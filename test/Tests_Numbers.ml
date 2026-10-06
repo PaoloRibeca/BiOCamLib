@@ -365,6 +365,18 @@ let vector_script (module V: Numbers.Vector_t with type N.t = float) =
     (List.rev !seen |> String.concat " ")
     (V.length v)
 
+(* The accessors the script above leaves out -- the indexing operators, the unchecked pair, and
+   the traversals that build a new vector -- on values a 32-bit float holds exactly, so that every
+   float backing has to give the same answer. *)
+let accessor_script (module V: Numbers.Vector_t with type N.t = float) =
+  let v = V.of_list [ 1.; 2.; 3.; 4. ] in
+  V.(v.@(0) <- v.@(3) +. 0.5);
+  V.unsafe_set v 1 (V.unsafe_get v 2 *. 2.);
+  let w = V.mapi (fun i x -> x +. float_of_int i) (V.map (fun x -> x /. 2.) v) in
+  let seen = ref [] in
+  V.iter2 (fun x y -> List.accum seen (Printf.sprintf "%g/%g" x y)) v w;
+  List.rev !seen |> String.concat " "
+
 let test_bigarray_vectors () =
   Testing.section "Bigarray vectors" (fun () ->
     (* The same operations over the same values, on two different backings. *)
@@ -403,6 +415,39 @@ let test_bigarray_vectors () =
        V.incr v 0;
        V.decr_by v 2 4;
        V.to_list v = [ 1; 7; 10 ]);
+    Testing.check_bool "and so does the int32 one" ~expected:true
+      (let module V = Numbers.Int32BAVector in
+       let v = V.init 3 (fun i -> Int32.of_int (i * 7)) in
+       V.incr v 0;
+       V.decr_by v 2 4l;
+       V.to_list v = [ 1l; 7l; 10l ]);
+    (* Each vector reaches its elements through accesses of its own kind, so each kind is put
+       through all of them: the operators and traversals over the two float widths, the
+       unchecked pair over the two integer ones, and the checked pair still refusing an index
+       past the end, which is the one thing the unchecked pair is there not to do. *)
+    Testing.check_string "the accessors of the float Bigarray vector agree with the floatarray one"
+      ~expected:(accessor_script (module Numbers.FloatArrayVector))
+      (accessor_script (module Numbers.FloatBAVector));
+    Testing.check_string "and so do those of the 32-bit one"
+      ~expected:(accessor_script (module Numbers.FloatArrayVector))
+      (accessor_script (module Numbers.Float32BAVector));
+    Testing.check_bool "the unchecked accessors of the int vector agree with the checked ones"
+      ~expected:true
+      (let module V = Numbers.IntBAVector in
+       let v = V.make 3 0 in
+       V.unsafe_set v 1 5;
+       V.set v 2 (V.unsafe_get v 1 + 1);
+       V.to_list v = [ 0; 5; 6 ]);
+    Testing.check_bool "and so do those of the int32 one" ~expected:true
+      (let module V = Numbers.Int32BAVector in
+       let v = V.make 3 0l in
+       V.unsafe_set v 1 5l;
+       V.set v 2 (Int32.add (V.unsafe_get v 1) 1l);
+       V.to_list v = [ 0l; 5l; 6l ]);
+    Testing.check_raises ~re:"index out of bounds" "a Bigarray vector refuses to read past its end"
+      (fun () -> Numbers.IntBAVector.(get (make 3 0) 3));
+    Testing.check_raises ~re:"index out of bounds" "or to write past it"
+      (fun () -> Numbers.Float32BAVector.(set (make 3 0.) 3 1.));
     (* [empty] is the degenerate case every one of them has to get right. *)
     Testing.check_int "an empty Bigarray vector has no elements" ~expected:0
       (Numbers.FloatBAVector.length Numbers.FloatBAVector.empty);
