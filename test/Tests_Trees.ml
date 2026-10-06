@@ -807,13 +807,15 @@ let test_splits_io () =
       ~expected:"a,b,c,d,e"
       (String.concat "," (Array.to_list (SP.get_names (SP.of_string (SP.to_string ss)))));
     (* Through a file, and through the binary form, which is what a caller
-       reloading a large register actually uses. *)
+       reloading a large register actually uses.  Both writers add their own
+       extension to the name they are given, so the files removed afterwards
+       are the names they make of it. *)
     let prefix = Filename.temp_file "BiOCamLib_Tests_" "" in
     Sys.remove prefix;
     Fun.protect
       ~finally:(fun () ->
         List.iter (fun p -> if Sys.file_exists p then Sys.remove p)
-          [ prefix; prefix ^ ".txt"; prefix ^ ".Splits"; prefix ^ ".nwk" ])
+          [ prefix ^ ".txt.PhyloSplits.txt"; prefix ^ ".PhyloSplits"; prefix ^ ".nwk" ])
       (fun () ->
         SP.to_file ss (prefix ^ ".txt");
         Testing.check_string "a register survives a text file"
