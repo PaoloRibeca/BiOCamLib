@@ -197,7 +197,9 @@ module Parallel:
       (* Beware: for everything to terminate properly, f shall raise End_of_file when done.
          Side effects are propagated within f (not exported) and within h (exported).
          Where g raises, or a worker goes without delivering its result, the section is ended
-         as Stop ends it, and an Algorithm exception is raised once it has been *)
+         as Stop ends it, and an Algorithm exception is raised once it has been.  Anything else
+         raised while the section runs -- by h, or by a handler of the caller's for a signal --
+         ends it the same way, and is raised again once it has been *)
       (unit -> 'a) -> ('a -> 'b) -> ('b -> unit) -> int -> unit
     val process_stream_linewise: ?buffered_chunks_per_thread:int -> ?max_memory:int -> ?string_buffer_memory:int ->
                                  ?input_line:(in_channel -> string) -> ?verbose:bool ->
@@ -241,6 +243,23 @@ module Parallel:
         end
       and w_2_o_pipes = Array.init threads (fun _ -> Unix.pipe ())
       and o_2_w_pipes = Array.init threads (fun _ -> Unix.pipe ()) in
+      (* A WAIT THAT A SIGNAL INTERRUPTS IS RESUMED, in every process of the section.  A caller
+         with a handler of its own -- for SIGCHLD, say, or for SIGALRM from a timer -- would
+         otherwise have the interruption raised out of the section, and the input process inherits
+         that handler too.  The handler has run by the time the wait is left, and one that raises
+         sends its own exception on instead *)
+      let rec select_readable ?(timeout = -1.) pipes =
+        try
+          let ready, _, _ = Unix.select pipes [] [] timeout in
+          ready
+        with Unix.Unix_error (Unix.EINTR, _, _) ->
+          select_readable ~timeout pipes in
+      let rec collect pid =
+        try
+          ignore (Unix.waitpid [] pid)
+        with
+        | Unix.Unix_error (Unix.EINTR, _, _) -> collect pid
+        | Unix.Unix_error _ -> () in
       (* What the caller has written and not yet flushed would otherwise be in every process forked
          from here, and written again by any of them that writes *)
       flush_all ();
@@ -253,173 +272,169 @@ module Parallel:
          caller's code with the caller's own handling of it, which is put back here when the
          section ends *)
       let previous_sigpipe = Sys.signal Sys.sigpipe Sys.Signal_ignore in
+      (* SIGTERM IS HELD BACK ACROSS THE FORK.  It is what stops the section from here, and it may
+         be sent as soon as the fork has returned -- by a handler of the caller's that raises out of
+         the first wait, say.  Held back, it waits for the input process to have a handler of its
+         own, rather than meeting there whatever the caller does with the signal: a caller that
+         ignores it would leave the input process running, and this one waiting for it for ever *)
+      let caller_mask = Unix.sigprocmask Unix.SIG_BLOCK [ Sys.sigterm ] in
       match Unix.fork () with
       | 0 -> (* Child *)
         (* I am the input process *)
-        let i_2_w_pipes = Array.init threads (fun _ -> Unix.pipe ())
-        and w_2_i_pipes = Array.init threads (fun _ -> Unix.pipe ()) in
         let workers = ref [] in
         (* A SECTION STOPPED EARLY IS ENDED FROM HERE. The output process cannot reach the workers,
            which are children of this process, so it tells this process, and this process kills
-           and collects every worker it forked before going itself. The signal is held back while
-           the workers are being forked, so that none can be forked after the handler has looked
-           for them and be left running *)
-        let previous_mask = Unix.sigprocmask Unix.SIG_BLOCK [ Sys.sigterm ] in
+           and collects every worker it forked before going itself.  The signal comes in held
+           back, and is let through once every worker has been forked, so that none can be forked
+           after the handler has looked for them and be left running.  It is held back again
+           before the first worker is collected, so that the handler never signals a worker that
+           has been collected already, and whose pid may by then be another process's *)
         let previous_handler =
           Sys.signal Sys.sigterm
             (Sys.Signal_handle
               (fun _ ->
                 List.iter (fun pid -> try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ())
                   !workers;
-                List.iter (fun pid -> try ignore (Unix.waitpid [] pid) with Unix.Unix_error _ -> ())
-                  !workers;
+                List.iter collect !workers;
                 Unix._exit 0)) in
-        for i = 0 to red_threads do
-          match Unix.fork () with
-          | 0 -> (* Child *)
-            (* I am a worker.
-               The handlers above are my parents' business: I run the caller's code, and get back
-               exactly the handling of the signals the caller had *)
-            Sys.set_signal Sys.sigterm previous_handler;
-            Sys.set_signal Sys.sigpipe previous_sigpipe;
-            ignore (Unix.sigprocmask Unix.SIG_SETMASK previous_mask);
-            (* I only keep my own pipes open *)
-            let i_2_w_pipe_in, w_2_i_pipe_out, o_2_w_pipe_in, w_2_o_pipe_out =
-              let i_2_w_pipe_in = ref Unix.stdin and w_2_i_pipe_out = ref Unix.stdout
-              and o_2_w_pipe_in = ref Unix.stdin and w_2_o_pipe_out = ref Unix.stdout in
-              for ii = 0 to red_threads do
-                if ii = i then begin
-                  let pipe_in, pipe_out = i_2_w_pipes.(ii) in
-                  i_2_w_pipe_in := pipe_in;
-                  Unix.close pipe_out;
-                  let pipe_in, pipe_out = w_2_i_pipes.(ii) in
-                  Unix.close pipe_in;
-                  w_2_i_pipe_out := pipe_out;
-                  let pipe_in, pipe_out = o_2_w_pipes.(ii) in
-                  o_2_w_pipe_in := pipe_in;
-                  Unix.close pipe_out;
-                  let pipe_in, pipe_out = w_2_o_pipes.(ii) in
-                  Unix.close pipe_in;
-                  w_2_o_pipe_out := pipe_out
-                end else begin
-                  close_pipe i_2_w_pipes.(ii);
-                  close_pipe w_2_i_pipes.(ii);
-                  close_pipe o_2_w_pipes.(ii);
-                  close_pipe w_2_o_pipes.(ii)
-                end
-              done;
-              !i_2_w_pipe_in, !w_2_i_pipe_out, !o_2_w_pipe_in, !w_2_o_pipe_out in
-            let i_2_w = Unix.in_channel_of_descr i_2_w_pipe_in
-            and w_2_i = Unix.out_channel_of_descr w_2_i_pipe_out
-            and o_2_w = Unix.in_channel_of_descr o_2_w_pipe_in
-            and w_2_o = Unix.out_channel_of_descr w_2_o_pipe_out in
-            (* My protocol is:
-               (1) process a chunk more from the input
-               (2) notify the output process that a result is ready
-               (3) when the output process asks for it, post the result *)
-            let probe_output () =
-              ignore (input_byte o_2_w)
-            and initial = ref true in
-            (* NOTHING THIS PROCESS MEETS IS LET OUT OF IT: an exception let through would carry
-               it out of the section and on into the caller's code, running it a second time.
-               A chunk that raises is reported to the output process in the place of a
-               notification, which ends the section; anything else -- the input or the output
-               process gone, say -- ends this process, which the output process then sees *)
-            begin try
-              while true do
-                (* Try to get one more chunk.
-                   Signal the input process that I am idle *)
-                output_byte w_2_i 0;
-                flush w_2_i;
-                (* Get & process a chunk *)
-                match input_byte i_2_w with
-                | 0 -> (* EOF reached *)
-                  (* Did the output process ask for a notification? *)
-                  if not !initial then (* The first time, we notify anyway to avoid crashes *)
-                    probe_output ();
-                  (* Notify that EOF has been reached *)
-                  output_binary_int w_2_o (-1);
-                  flush w_2_o;
-                  (* Did the output process switch me off? *)
-                  probe_output ();
-                  (* Commit suicide *)
-                  Unix.close i_2_w_pipe_in;
-                  Unix.close w_2_i_pipe_out;
-                  Unix.close o_2_w_pipe_in;
-                  Unix.close w_2_o_pipe_out;
-                  Unix._exit 0 (* Do not flush buffers or do anything else *)
-                | 1 -> (* OK, one more token available *)
-                  (* Get the chunk *)
-                  let chunk_id, data = (input_value i_2_w:int * 'a) in
-                  (* Process the chunk *)
-                  let data =
-                    try
-                      g data
-                    with e ->
-                      Printf.eprintf "(%s): a worker failed: %s\n%!" __FUNCTION__
-                        (Printexc.to_string e);
-                      if not !initial then
-                        probe_output ();
-                      output_binary_int w_2_o (-2);
-                      flush w_2_o;
-                      Unix._exit 1 in
-                  (* Did the output process ask for a notification? *)
-                  if not !initial then (* The first time, we notify anyway to avoid crashes *)
-                    probe_output ()
-                  else
-                    initial := false;
-                  (* Tell the output process what we have *)
-                  output_binary_int w_2_o chunk_id;
-                  flush w_2_o;
-                  (* Did the output process request data? *)
-                  probe_output ();
-                  (* Send the data to output *)
-                  output_value w_2_o data;
-                  flush w_2_o
-                | _ -> assert false
-              done
-            with e ->
-              Printf.eprintf "(%s): a worker went: %s\n%!" __FUNCTION__ (Printexc.to_string e);
-              Unix._exit 1
-            end
-          | worker_pid -> (* Parent *)
-            workers := worker_pid :: !workers
-        done;
-        (* Every worker is known now, so a request to stop can be taken -- even where the caller
-           holds the signal back itself, this process being the section's and not the caller's *)
-        ignore (Unix.sigprocmask Unix.SIG_SETMASK (List.filter (( <> ) Sys.sigterm) previous_mask));
-        (* A request to stop interrupts whatever this process is waiting on. A wait so interrupted
-           is simply resumed, so that the handler, which ends the process, is what answers it, and
-           not an exception carrying this process back into the caller's code *)
-        let rec select_readable pipes =
-          try
-            let ready, _, _ = Unix.select pipes [] [] (-1.) in
-            ready
-          with Unix.Unix_error (Unix.EINTR, _, _) ->
-            select_readable pipes in
-        (* I am the input process.
-           I do not care about output process pipes *)
-        close_pipes w_2_o_pipes;
-        close_pipes o_2_w_pipes;
-        close_pipes_in i_2_w_pipes;
-        close_pipes_out w_2_i_pipes;
-        let w_2_i_pipes_for_select, w_2_i_dict = get_stuff_for_select w_2_i_pipes
-        and w_2_i = Array.map (fun (pipe_in, _) -> Unix.in_channel_of_descr pipe_in) w_2_i_pipes
-        and i_2_w = Array.map (fun (_, pipe_out) -> Unix.out_channel_of_descr pipe_out) i_2_w_pipes in
-        (* THE WORKERS ARE COLLECTED BEFORE THIS PROCESS GOES, each by its own pid rather than by
-           waiting for whatever turns up: a caller of this function may have children of its own
-           that it means to reap itself, and an indiscriminate wait would take one of those *)
-        let collect_workers () =
-          List.iter (fun pid -> try ignore (Unix.waitpid [] pid) with Unix.Unix_error _ -> ())
-            !workers in
-        (* My protocol is:
-           (1) read a chunk
-           (2) read a thread id
-           (3) post the chunk to the correspondng pipe. The worker will consume it
-           NOTHING THIS PROCESS MEETS IS LET OUT OF IT either: a worker gone, which leaves its
-           pipe at its end, or a reader raising what is not the end of its input, ends the
-           section from here, the workers being killed and collected first *)
+        (* NOTHING THIS PROCESS MEETS IS LET OUT OF IT: an exception let through would carry it out
+           of the section and on into the caller's code, running it a second time.  A worker that
+           cannot be forked, a worker gone, which leaves its pipe at its end, or a reader raising
+           what is not the end of its input, ends the section from here, the workers being killed
+           and collected first -- whether or not the message saying why can be written *)
         begin try
+          let i_2_w_pipes = Array.init threads (fun _ -> Unix.pipe ())
+          and w_2_i_pipes = Array.init threads (fun _ -> Unix.pipe ()) in
+          for i = 0 to red_threads do
+            match Unix.fork () with
+            | 0 -> (* Child *)
+              (* I am a worker.
+                 NOTHING THIS PROCESS MEETS IS LET OUT OF IT either, not even into the code of the
+                 input process it was forked in.  A chunk that raises is reported to the output
+                 process in the place of a notification, which ends the section; anything else --
+                 the input or the output process gone, say -- ends this process, which the output
+                 process then sees *)
+              begin try
+                (* The handlers above are my parents' business: I run the caller's code, and get
+                   back exactly the handling of the signals the caller had *)
+                Sys.set_signal Sys.sigterm previous_handler;
+                Sys.set_signal Sys.sigpipe previous_sigpipe;
+                ignore (Unix.sigprocmask Unix.SIG_SETMASK caller_mask);
+                (* I only keep my own pipes open *)
+                let i_2_w_pipe_in, w_2_i_pipe_out, o_2_w_pipe_in, w_2_o_pipe_out =
+                  let i_2_w_pipe_in = ref Unix.stdin and w_2_i_pipe_out = ref Unix.stdout
+                  and o_2_w_pipe_in = ref Unix.stdin and w_2_o_pipe_out = ref Unix.stdout in
+                  for ii = 0 to red_threads do
+                    if ii = i then begin
+                      let pipe_in, pipe_out = i_2_w_pipes.(ii) in
+                      i_2_w_pipe_in := pipe_in;
+                      Unix.close pipe_out;
+                      let pipe_in, pipe_out = w_2_i_pipes.(ii) in
+                      Unix.close pipe_in;
+                      w_2_i_pipe_out := pipe_out;
+                      let pipe_in, pipe_out = o_2_w_pipes.(ii) in
+                      o_2_w_pipe_in := pipe_in;
+                      Unix.close pipe_out;
+                      let pipe_in, pipe_out = w_2_o_pipes.(ii) in
+                      Unix.close pipe_in;
+                      w_2_o_pipe_out := pipe_out
+                    end else begin
+                      close_pipe i_2_w_pipes.(ii);
+                      close_pipe w_2_i_pipes.(ii);
+                      close_pipe o_2_w_pipes.(ii);
+                      close_pipe w_2_o_pipes.(ii)
+                    end
+                  done;
+                  !i_2_w_pipe_in, !w_2_i_pipe_out, !o_2_w_pipe_in, !w_2_o_pipe_out in
+                let i_2_w = Unix.in_channel_of_descr i_2_w_pipe_in
+                and w_2_i = Unix.out_channel_of_descr w_2_i_pipe_out
+                and o_2_w = Unix.in_channel_of_descr o_2_w_pipe_in
+                and w_2_o = Unix.out_channel_of_descr w_2_o_pipe_out in
+                (* My protocol is:
+                   (1) process a chunk more from the input
+                   (2) notify the output process that a result is ready
+                   (3) when the output process asks for it, post the result *)
+                let probe_output () =
+                  ignore (input_byte o_2_w)
+                and initial = ref true in
+                while true do
+                  (* Try to get one more chunk.
+                     Signal the input process that I am idle *)
+                  output_byte w_2_i 0;
+                  flush w_2_i;
+                  (* Get & process a chunk *)
+                  match input_byte i_2_w with
+                  | 0 -> (* EOF reached *)
+                    (* Did the output process ask for a notification? *)
+                    if not !initial then (* The first time, we notify anyway to avoid crashes *)
+                      probe_output ();
+                    (* Notify that EOF has been reached *)
+                    output_binary_int w_2_o (-1);
+                    flush w_2_o;
+                    (* Did the output process switch me off? *)
+                    probe_output ();
+                    (* Commit suicide *)
+                    Unix.close i_2_w_pipe_in;
+                    Unix.close w_2_i_pipe_out;
+                    Unix.close o_2_w_pipe_in;
+                    Unix.close w_2_o_pipe_out;
+                    Unix._exit 0 (* Do not flush buffers or do anything else *)
+                  | 1 -> (* OK, one more token available *)
+                    (* Get the chunk *)
+                    let chunk_id, data = (input_value i_2_w:int * 'a) in
+                    (* Process the chunk *)
+                    let data =
+                      try
+                        g data
+                      with e ->
+                        Printf.eprintf "(%s): a worker failed: %s\n%!" __FUNCTION__
+                          (Printexc.to_string e);
+                        if not !initial then
+                          probe_output ();
+                        output_binary_int w_2_o (-2);
+                        flush w_2_o;
+                        Unix._exit 1 in
+                    (* Did the output process ask for a notification? *)
+                    if not !initial then (* The first time, we notify anyway to avoid crashes *)
+                      probe_output ()
+                    else
+                      initial := false;
+                    (* Tell the output process what we have *)
+                    output_binary_int w_2_o chunk_id;
+                    flush w_2_o;
+                    (* Did the output process request data? *)
+                    probe_output ();
+                    (* Send the data to output *)
+                    output_value w_2_o data;
+                    flush w_2_o
+                  | _ -> assert false
+                done
+              with e ->
+                (try
+                   Printf.eprintf "(%s): a worker went: %s\n%!" __FUNCTION__ (Printexc.to_string e)
+                 with _ -> ());
+                Unix._exit 1
+              end
+            | worker_pid -> (* Parent *)
+              workers := worker_pid :: !workers
+          done;
+          (* Every worker is known now, so a request to stop can be taken -- even where the caller
+             holds the signal back itself, this process being the section's and not the caller's *)
+          ignore (Unix.sigprocmask Unix.SIG_SETMASK (List.filter (( <> ) Sys.sigterm) caller_mask));
+          (* I am the input process.
+             I do not care about output process pipes *)
+          close_pipes w_2_o_pipes;
+          close_pipes o_2_w_pipes;
+          close_pipes_in i_2_w_pipes;
+          close_pipes_out w_2_i_pipes;
+          let w_2_i_pipes_for_select, w_2_i_dict = get_stuff_for_select w_2_i_pipes
+          and w_2_i = Array.map (fun (pipe_in, _) -> Unix.in_channel_of_descr pipe_in) w_2_i_pipes
+          and i_2_w =
+            Array.map (fun (_, pipe_out) -> Unix.out_channel_of_descr pipe_out) i_2_w_pipes in
+          (* My protocol is:
+             (1) read a chunk
+             (2) read a thread id
+             (3) post the chunk to the correspondng pipe. The worker will consume it *)
           let chunk_id = ref 0 and off = ref 0 in
           while !off < threads do
             let ready = select_readable w_2_i_pipes_for_select in
@@ -443,19 +458,37 @@ module Parallel:
                   incr off)
               ready
           done;
-          (* Waiting to be switched off *)
-          ignore (select_readable [fst w_2_i_pipes.(0)]);
-          close_pipes_out i_2_w_pipes;
-          close_pipes_in w_2_i_pipes
+          (* Every worker has been sent the end of its input, and goes once the output process has
+             switched it off, or once it has been killed if the section is stopped.  Nothing comes
+             down the pipe of a worker after the request that the end answered, so the pipe can
+             only be read at its end, which it reaches when the worker has gone *)
+          let running = ref w_2_i_pipes_for_select in
+          while !running <> [] do
+            let ready = select_readable !running in
+            List.iter
+              (fun ready ->
+                match input_byte w_2_i.(Hashtbl.find w_2_i_dict ready) with
+                | _ -> assert false
+                | exception End_of_file -> ())
+              ready;
+            running := List.filter (fun pipe -> not (List.mem pipe ready)) !running
+          done
         with e ->
-          Printf.eprintf "(%s): the input process of a parallel section stopped: %s\n%!"
-            __FUNCTION__ (Printexc.to_string e);
+          ignore (Unix.sigprocmask Unix.SIG_BLOCK [ Sys.sigterm ]);
+          (try
+             Printf.eprintf "(%s): the input process of a parallel section stopped: %s\n%!"
+               __FUNCTION__ (Printexc.to_string e)
+           with _ -> ());
           List.iter (fun pid -> try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ())
             !workers;
-          collect_workers ();
+          List.iter collect !workers;
           Unix._exit 1
         end;
-        collect_workers ();
+        (* THE WORKERS ARE COLLECTED BEFORE THIS PROCESS GOES, each by its own pid rather than by
+           waiting for whatever turns up: a caller of this function may have children of its own
+           that it means to reap itself, and an indiscriminate wait would take one of those *)
+        ignore (Unix.sigprocmask Unix.SIG_BLOCK [ Sys.sigterm ]);
+        List.iter collect !workers;
         Unix._exit 0 (* Do not flush buffers or do anything else *)
       | input_pid -> (* I am the output process *)
         close_pipes_in o_2_w_pipes;
@@ -475,12 +508,26 @@ module Parallel:
             raise_notrace Worker_failed in
         (* The caller may stop the section from h, in which case it is left at once, whatever
            is still being processed. A worker that failed, or that went without a word -- killed,
-           say, for the memory it took -- ends it the same way, and then the caller hears of it *)
-        let stopped, failed =
+           say, for the memory it took -- ends it the same way, and then the caller hears of it.
+           So does anything else raised here -- by h, or by a handler of the caller's for a
+           signal -- which is raised again once the section has ended *)
+        let stopped, raised =
           try
+            (* The caller's own handling of SIGTERM is back for as long as the section runs *)
+            ignore (Unix.sigprocmask Unix.SIG_SETMASK caller_mask);
             while !off < threads do
-              (* Harvest new notifications *)
-              let ready, _, _ = Unix.select w_2_o_pipes_for_select [] [] (-1.) in
+              (* Harvest new notifications.  THEY ARE NOT WAITED FOR WHILE THERE IS SOMETHING TO
+                 FETCH OR TO OUTPUT ALREADY: every worker free to notify may be waiting to be asked
+                 for what it has, and the wait would then last as long as the one still busy -- on
+                 an item past where the caller stops, say -- holding back all that is ready *)
+              let can_fetch =
+                !queue <> IntMap.empty
+                && (IntMap.cardinal !buf < buffered_chunks
+                    || fst (IntMap.min_binding !queue) = !next)
+              and can_output = !buf <> IntMap.empty && fst (IntMap.min_binding !buf) = !next in
+              let ready =
+                select_readable ~timeout:(if can_fetch || can_output then 0. else -1.)
+                  w_2_o_pipes_for_select in
               List.iter
                 (fun ready ->
                   let w_id = Hashtbl.find w_2_o_dict ready in
@@ -509,7 +556,7 @@ module Parallel:
                 let data =
                   try
                     (input_value w_2_o.(w_id):'b)
-                  with End_of_file ->
+                  with End_of_file | Failure _ -> (* Gone before sending it, or while doing so *)
                     raise_notrace Worker_failed in
                 buf := IntMap.add chunk_id data !buf;
                 (* Tell the worker to send the next notification *)
@@ -538,13 +585,10 @@ module Parallel:
               buf := IntMap.remove chunk_id !buf;
               incr next
             done;
-            false, false
+            false, None
           with
-          | Stop -> true, false
-          | Worker_failed -> true, true
-          | e ->
-            Sys.set_signal Sys.sigpipe previous_sigpipe;
-            raise e in
+          | Stop -> true, None
+          | e -> true, Some (e, Printexc.get_raw_backtrace ()) in
         (* THE PIPES TO AND FROM THE WORKERS ARE CLOSED AS CHANNELS, which drops whatever a request
            to a worker gone could not deliver.  With only its descriptor closed, a channel would
            keep that byte, and the flush_all that every section begins with would write it into
@@ -559,24 +603,21 @@ module Parallel:
            -- the Monte-Carlo clusterer opens one per epoch -- would otherwise fill the process
            table with them.  A wait a signal interrupts is resumed, as it must be before a
            stopped section's pipes are closed *)
-        let rec collect_input_process () =
-          try
-            ignore (Unix.waitpid [] input_pid)
-          with
-          | Unix.Unix_error (Unix.EINTR, _, _) -> collect_input_process ()
-          | Unix.Unix_error _ -> () in
         if stopped then begin
           (* The input process kills and collects its workers, and then goes.
              THE PIPES STAY OPEN UNTIL IT HAS GONE: a worker waiting on one that closed would read
              the end of its input, and the exception would carry it out of its loop and on into
              the caller's code, running it a second time *)
           (try Unix.kill input_pid Sys.sigterm with Unix.Unix_error _ -> ());
-          collect_input_process ();
+          collect input_pid;
           close_channels ();
           Sys.set_signal Sys.sigpipe previous_sigpipe;
-          if failed then
+          match raised with
+          | Some (Worker_failed, _) ->
             Exception.raise __FUNCTION__ Algorithm
               "A worker of the parallel section failed, or went without delivering its result"
+          | Some (e, backtrace) -> Printexc.raise_with_backtrace e backtrace
+          | None -> ()
         end else begin
           (* Switch off all the workers.  One gone since it delivered the end of its input needs
              no switching off *)
@@ -587,9 +628,16 @@ module Parallel:
             with Sys_error _ -> ()
           done;
           close_channels ();
-          collect_input_process ();
+          collect input_pid;
           Sys.set_signal Sys.sigpipe previous_sigpipe
         end
+      | exception e ->
+        (* A fork that fails leaves no section to end: what was set up for it is undone *)
+        ignore (Unix.sigprocmask Unix.SIG_SETMASK caller_mask);
+        close_pipes w_2_o_pipes;
+        close_pipes o_2_w_pipes;
+        Sys.set_signal Sys.sigpipe previous_sigpipe;
+        raise e
     let process_stream_linewise ?(buffered_chunks_per_thread = 10)
         ?(max_memory = 1_000_000_000) ?(string_buffer_memory = 16_777_216)
         ?(input_line = input_line) ?(verbose = true)

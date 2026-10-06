@@ -255,27 +255,50 @@ let test_process_stream_chunkwise_workers_gone () =
         "a byte that could not be written to a worker gone is not written anywhere else"
         ~expected:0 (Unix.stat flushed).Unix.st_size))
 
+(* Whether every process a section forked is gone once [sections] has returned.  They all inherit
+   the write end of a pipe opened before, which reads as ended once the caller has closed its own
+   copy and every one of them has gone -- which no pid taken over by another process, as the
+   machine forks on, can fake. *)
+
+let gone_after sections =
+  let alive_in, alive_out = Unix.pipe () in
+  match sections () with
+  | res ->
+    Unix.close alive_out;
+    let gone =
+      match Unix.select [ alive_in ] [] [] 0. with
+      | [], _, _ -> false
+      | _ -> Unix.read alive_in (Bytes.create 1) 0 1 = 0 in
+    Unix.close alive_in;
+    res, gone
+  | exception e ->
+    Unix.close alive_out;
+    Unix.close alive_in;
+    raise e
+
 (* Stopping, looked at harder, because this function runs nearly every tool
    built on the library.  Wherever the stop falls, on any number of threads,
    what comes back is the prefix up to it, in order.  Every process the
    section forked is gone by the time it returns, whether it had finished its
-   work or was killed in the middle of it.  A caller that holds SIGTERM back
-   itself -- the signal the section uses to stop -- can still stop a section,
-   and keeps its own mask.  And many sections in a row, stopped or not, leave
+   work or was killed in the middle of it, and the input process, a child of
+   the caller, has been collected.  A caller that holds SIGTERM back itself
+   -- the signal the section uses to stop -- can still stop a section, and
+   keeps its own mask.  And many sections in a row, stopped or not, leave
    nothing behind. *)
 
 let test_process_stream_chunkwise_stop_hard () =
   Testing.section "Parallel streams stopped early, harder" (fun () ->
     let pids_file = Filename.temp_file "BiOCamLib_Tests_" ".pids" in
     Fun.protect ~finally:(fun () -> Sys.remove pids_file) (fun () ->
-      (* Each item notes the pid of the worker running it, in one write that a kill cannot
-         cut in half, so that every worker can be checked to be gone afterwards *)
+      (* The input process notes its pid as it reads the first item, in one write that a kill
+         cannot cut in half, so that it can be checked to have been collected afterwards *)
       let note_pid () =
         let fd = Unix.openfile pids_file [ Unix.O_WRONLY; Unix.O_APPEND; Unix.O_CREAT ] 0o644 in
         let line = Printf.sprintf "%d\n" (Unix.getpid ()) in
         ignore (Unix.write_substring fd line 0 (String.length line));
         Unix.close fd in
-      let workers_gone () =
+      (* Waiting for a child that has been collected finds no such child *)
+      let collected () =
         let ic = open_in pids_file in
         let rec read acc =
           match input_line ic with
@@ -287,18 +310,23 @@ let test_process_stream_chunkwise_stop_hard () =
         pids <> []
           && List.for_all
               (fun pid ->
-                match Unix.kill pid 0 with
-                | () -> false
-                | exception Unix.Unix_error (Unix.ESRCH, _, _) -> true)
+                match Unix.waitpid [ Unix.WNOHANG ] pid with
+                | _ -> false
+                | exception Unix.Unix_error (Unix.ECHILD, _, _) -> true)
               pids in
-      let run ~items ~stop_at ~slow threads =
+      (* Item x takes [takes x] seconds *)
+      let run ?(takes = fun _ -> 0.) ~items ~stop_at threads =
         let next = ref 0 and acc = ref [] in
         Processes.Parallel.process_stream_chunkwise
-          (fun () -> if !next >= items then raise End_of_file else (incr next; !next))
-          (fun x -> note_pid (); if x = slow then Unix.sleepf 60.; x)
+          (fun () ->
+            if !next = 0 then
+              note_pid ();
+            if !next >= items then raise End_of_file else (incr next; !next))
+          (fun x -> Unix.sleepf (takes x); x)
           (fun y -> List.accum acc y; if y = stop_at then raise Processes.Parallel.Stop)
           threads;
         List.rev !acc in
+      let slow k x = if x = k then 60. else 0. in
       let prefix k = List.init k (fun i -> i + 1) in
       let failures = ref [] in
       let expect what got expected =
@@ -308,9 +336,9 @@ let test_process_stream_chunkwise_stop_hard () =
           List.iter
             (fun stop_at ->
               let what = Printf.sprintf "stop at %d on %d threads" stop_at threads in
-              let got = run ~items:30 ~stop_at ~slow:0 threads in
+              let got, gone = gone_after (fun () -> run ~items:30 ~stop_at threads) in
               expect what got (prefix (min stop_at 30));
-              if not (workers_gone ()) then
+              if not (gone && collected ()) then
                 List.accum failures (what ^ " left a worker"))
             [ 1; 2; 7; 29; 30; 31 ])
         [ 1; 2; 4; 16 ];
@@ -318,26 +346,113 @@ let test_process_stream_chunkwise_stop_hard () =
         "every stop point, and none, on 1, 2, 4 and 16 threads: the prefix, in order, and no worker left"
         ~expected:"" (List.rev !failures |> String.concat "; ");
       let started = Unix.gettimeofday () in
-      let got = run ~items:30 ~stop_at:3 ~slow:5 4 in
+      let got, gone = gone_after (fun () -> run ~takes:(slow 5) ~items:30 ~stop_at:3 4) in
       Testing.check_bool "a worker killed in the middle of an item is gone as well" ~expected:true
-        (got = prefix 3 && Unix.gettimeofday () -. started < 30. && workers_gone ());
+        (got = prefix 3 && Unix.gettimeofday () -. started < 30. && gone && collected ());
       let caller_mask = Unix.sigprocmask Unix.SIG_BLOCK [ Sys.sigterm ] in
       let started = Unix.gettimeofday () in
-      let got = run ~items:30 ~stop_at:3 ~slow:5 4 in
+      let got, gone = gone_after (fun () -> run ~takes:(slow 5) ~items:30 ~stop_at:3 4) in
       let elapsed = Unix.gettimeofday () -. started in
       let still_blocked = List.mem Sys.sigterm (Unix.sigprocmask Unix.SIG_BLOCK []) in
       ignore (Unix.sigprocmask Unix.SIG_SETMASK caller_mask);
       Testing.check_bool "a caller holding SIGTERM back can still stop, and keeps its mask"
-        ~expected:true (got = prefix 3 && elapsed < 30. && still_blocked && workers_gone ());
+        ~expected:true (got = prefix 3 && elapsed < 30. && still_blocked && gone && collected ());
+      (* Results pile up behind a slow item, as many as the section buffers, and come out a few
+         at a time once it is done.  A stop among them must not wait for the next result to come
+         in when every worker still at work has an item past the stop that takes a minute.  On 2
+         threads the section buffers 20 results, and the other worker fills that up while item 1
+         takes half a second; every item after those takes a minute *)
+      let started = Unix.gettimeofday () in
+      let got, gone =
+        gone_after (fun () ->
+          run ~takes:(fun x -> if x = 1 then 0.5 else if x > 21 then 60. else 0.) ~items:100
+            ~stop_at:10 2) in
+      Testing.check_bool
+        "a stop among results piled up behind a slow item is not held up by items past it"
+        ~expected:true
+        (got = prefix 10 && Unix.gettimeofday () -. started < 30. && gone && collected ());
       failures := [];
-      for i = 1 to 100 do
-        let stop_at = if i mod 2 = 0 then 1 + i mod 20 else 21 in
-        expect (Printf.sprintf "section %d" i) (run ~items:20 ~stop_at ~slow:0 4)
-          (prefix (min stop_at 20))
-      done;
+      let (), gone =
+        gone_after (fun () ->
+          for i = 1 to 100 do
+            let stop_at = if i mod 2 = 0 then 1 + i mod 20 else 21 in
+            expect (Printf.sprintf "section %d" i) (run ~items:20 ~stop_at 4)
+              (prefix (min stop_at 20))
+          done) in
       Testing.check_string "a hundred sections in a row, stopped or not, are each exact"
         ~expected:"" (List.rev !failures |> String.concat "; ");
-      Testing.check_bool "and leave no worker behind" ~expected:true (workers_gone ())))
+      Testing.check_bool "and leave no worker behind" ~expected:true (gone && collected ())))
+
+(* A caller that takes a signal itself -- the SIGALRM of a timer, say -- has
+   its handler run while a section waits, and the wait is interrupted.  The
+   section resumes it rather than raising the interruption, and where the
+   handler raises, the section ends as a stop ends it and then lets the
+   exception through.  A one-shot timer, set by the output function as it
+   takes the first item, goes off while the section is bound to be waiting for
+   the second, which sleeps; as timers are not inherited across a fork, only
+   the caller sees it.  A handler for SIGCHLD, which the input process
+   inherits and which every worker's end sets off there, is tried on sections
+   that end in each of the three ways. *)
+
+let test_process_stream_chunkwise_signals () =
+  Testing.section "Parallel streams in a caller that takes signals" (fun () ->
+    let run ?(sleep = 0.) ?(stop_at = 0) ?(fail = 0) ?(first = ignore) threads =
+      let next = ref 0 and acc = ref [] in
+      Processes.Parallel.process_stream_chunkwise
+        (fun () -> if !next >= 30 then raise End_of_file else (incr next; !next))
+        (fun x ->
+          if x = 2 then Unix.sleepf sleep;
+          if x = fail then failwith "a failing item";
+          x)
+        (fun y ->
+          if y = 1 then first ();
+          List.accum acc y; if y = stop_at then raise Processes.Parallel.Stop)
+        threads;
+      List.rev !acc in
+    let all = List.init 30 (fun i -> i + 1) in
+    (* The handler given takes SIGALRM, once, 100 ms after f has set the timer through the
+       function it is handed *)
+    let with_alarm handler f =
+      let previous = Sys.signal Sys.sigalrm (Sys.Signal_handle handler)
+      and set_timer it_value =
+        ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.; it_value }) in
+      Fun.protect ~finally:(fun () -> set_timer 0.; Sys.set_signal Sys.sigalrm previous)
+        (fun () -> f (fun () -> set_timer 0.1)) in
+    let fired = ref 0 in
+    let got, gone =
+      gone_after (fun () ->
+        with_alarm (fun _ -> incr fired) (fun first -> run ~sleep:0.5 ~first 4)) in
+    Testing.check_bool
+      "a wait the caller's handler interrupts is resumed: every item comes back, in order"
+      ~expected:true (got = all && !fired = 1);
+    Testing.check_bool "and nothing is left" ~expected:true gone;
+    let started = Unix.gettimeofday () in
+    let raised, gone =
+      gone_after (fun () ->
+        match with_alarm (fun _ -> raise Exit) (fun first -> run ~sleep:60. ~first 4) with
+        | _ -> false
+        | exception Exit -> true) in
+    Testing.check_bool
+      "a handler that raises ends the section at once, and its exception comes through"
+      ~expected:true (raised && Unix.gettimeofday () -. started < 30.);
+    Testing.check_bool "and nothing is left either" ~expected:true gone;
+    let previous = Sys.signal Sys.sigchld (Sys.Signal_handle ignore) in
+    let outcomes, gone =
+      gone_after (fun () ->
+        Fun.protect ~finally:(fun () -> Sys.set_signal Sys.sigchld previous) (fun () ->
+          List.init 15
+            (fun i ->
+              match i mod 3 with
+              | 0 -> run 4 = all
+              | 1 -> run ~stop_at:3 4 = [ 1; 2; 3 ]
+              | _ ->
+                match run ~fail:5 4 with
+                | _ -> false
+                | exception Exception.E (Exception.Kind.Algorithm, _, _) -> true))) in
+    Testing.check_bool
+      "with a handler for SIGCHLD, sections that end, stop or fail do as they should"
+      ~expected:true (List.for_all Fun.id outcomes);
+    Testing.check_bool "and leave nothing" ~expected:true gone)
 
 (* The line-wise wrapper over the same machinery, which takes channels rather
    than closures and is what a filter reading stdin actually calls. *)
@@ -375,4 +490,5 @@ let run () =
   test_process_stream_chunkwise_failure ();
   test_process_stream_chunkwise_workers_gone ();
   test_process_stream_chunkwise_stop_hard ();
+  test_process_stream_chunkwise_signals ();
   test_process_stream_linewise ()
