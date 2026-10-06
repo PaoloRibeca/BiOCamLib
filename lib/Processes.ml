@@ -241,8 +241,12 @@ module Parallel:
             pipes;
           dict
         end
-      and w_2_o_pipes = Array.init threads (fun _ -> Unix.pipe ())
-      and o_2_w_pipes = Array.init threads (fun _ -> Unix.pipe ()) in
+      (* EVERY PIPE OF THE SECTION IS CLOSED ON EXEC.  The processes forked here keep their ends,
+         and a program that f, g or h starts does not get them: one left running would otherwise
+         hold a worker's pipe open, and the section, which ends once every worker's pipe has
+         reached its end, would wait for it *)
+      and w_2_o_pipes = Array.init threads (fun _ -> Unix.pipe ~cloexec:true ())
+      and o_2_w_pipes = Array.init threads (fun _ -> Unix.pipe ~cloexec:true ()) in
       (* A WAIT THAT A SIGNAL INTERRUPTS IS RESUMED, in every process of the section.  A caller
          with a handler of its own -- for SIGCHLD, say, or for SIGALRM from a timer -- would
          otherwise have the interruption raised out of the section, and the input process inherits
@@ -303,8 +307,9 @@ module Parallel:
            what is not the end of its input, ends the section from here, the workers being killed
            and collected first -- whether or not the message saying why can be written *)
         begin try
-          let i_2_w_pipes = Array.init threads (fun _ -> Unix.pipe ())
-          and w_2_i_pipes = Array.init threads (fun _ -> Unix.pipe ()) in
+          (* Closed on exec too, as the output process's are *)
+          let i_2_w_pipes = Array.init threads (fun _ -> Unix.pipe ~cloexec:true ())
+          and w_2_i_pipes = Array.init threads (fun _ -> Unix.pipe ~cloexec:true ()) in
           for i = 0 to red_threads do
             match Unix.fork () with
             | 0 -> (* Child *)

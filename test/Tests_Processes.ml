@@ -454,6 +454,45 @@ let test_process_stream_chunkwise_signals () =
       ~expected:true (List.for_all Fun.id outcomes);
     Testing.check_bool "and leave nothing" ~expected:true gone)
 
+(* A program that an item starts and leaves running -- or one that outlives a
+   worker killed in the middle of an item -- would hold open whatever pipes of
+   the section it inherited, and the section, which ends only once every
+   worker's pipe has reached its end, would wait for that program to go.  So
+   here the first item starts a program that lives for twenty seconds, without
+   waiting for it, and the section must end well before the program would.  The
+   program is killed afterwards, which is safe for as long as it is bound to be
+   running still, that is, until twenty seconds have gone by. *)
+
+let test_process_stream_chunkwise_programs () =
+  Testing.section "Parallel streams whose items start programs" (fun () ->
+    let pids_file = Filename.temp_file "BiOCamLib_Tests_" ".pids" in
+    Fun.protect ~finally:(fun () -> Sys.remove pids_file) (fun () ->
+      (* The item notes the program's pid, in one write that a kill cannot cut in half *)
+      let start_program () =
+        let null = Unix.openfile "/dev/null" [ Unix.O_RDWR ] 0 in
+        let pid = Unix.create_process "sleep" [| "sleep"; "20" |] null null null in
+        Unix.close null;
+        let fd = Unix.openfile pids_file [ Unix.O_WRONLY; Unix.O_APPEND ] 0 in
+        let line = Printf.sprintf "%d\n" pid in
+        ignore (Unix.write_substring fd line 0 (String.length line));
+        Unix.close fd in
+      let next = ref 0 and acc = ref [] in
+      let started = Unix.gettimeofday () in
+      Processes.Parallel.process_stream_chunkwise
+        (fun () -> if !next >= 30 then raise End_of_file else (incr next; !next))
+        (fun x -> if x = 1 then start_program (); x)
+        (fun y -> List.accum acc y)
+        4;
+      let elapsed = Unix.gettimeofday () -. started in
+      let ic = open_in pids_file in
+      let pid = int_of_string (input_line ic) in
+      close_in ic;
+      if Unix.gettimeofday () -. started < 19. then
+        (try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ());
+      Testing.check_bool
+        "a program an item starts and leaves running does not hold the section up"
+        ~expected:true (List.rev !acc = List.init 30 (fun i -> i + 1) && elapsed < 10.)))
+
 (* The line-wise wrapper over the same machinery, which takes channels rather
    than closures and is what a filter reading stdin actually calls. *)
 
@@ -491,4 +530,5 @@ let run () =
   test_process_stream_chunkwise_workers_gone ();
   test_process_stream_chunkwise_stop_hard ();
   test_process_stream_chunkwise_signals ();
+  test_process_stream_chunkwise_programs ();
   test_process_stream_linewise ()
