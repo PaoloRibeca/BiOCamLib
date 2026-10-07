@@ -436,19 +436,22 @@ let test_gem () =
         line [ "c"; "8"; "T"; "5"; ",.$.,,"; "JIIJJ" ];
         line [ "c"; "9"; "A"; "4"; ",.,,"; "JIJJ" ];
         line [ "c"; "10"; "A"; "4"; ",$.$,$,$"; "JIJJ" ] ] in
-    let from_map ?(qualities = true) ?missing_quality ?strand ?memory ?threads
-        ?(reference = reference) text =
+    let with_map text f =
       let path = Filename.temp_file "BiOCamLib_Tests_" ".map" in
       Fun.protect ~finally:(fun () -> Sys.remove path)
         (fun () ->
           let oc = open_out path in
           output_string oc text;
           close_out oc;
-          let ic = open_in path and acc = ref [] in
-          Fun.protect ~finally:(fun () -> close_in ic)
-            (fun () ->
-              M.Gem.iter ~qualities ?missing_quality ?strand ?memory ?threads ~reference
-                (fun u -> List.accum acc u) ic);
+          let ic = open_in path in
+          Fun.protect ~finally:(fun () -> close_in ic) (fun () -> f ic)) in
+    let from_map ?(qualities = true) ?missing_quality ?strand ?memory ?threads
+        ?(reference = reference) text =
+      with_map text
+        (fun ic ->
+          let acc = ref [] in
+          M.Gem.iter ~qualities ?missing_quality ?strand ?memory ?threads ~reference
+            (fun u -> List.accum acc u) ic;
           List.rev !acc) in
     let shown = List.map M.Summary.to_string in
     let expected = List.map (fun l -> summarize l) pileup and got = from_map map in
@@ -469,6 +472,59 @@ let test_gem () =
       (fun () -> shown (from_map ~threads:3 ~memory:50_000 many) = in_turn);
     Testing.check_raises "a record a worker cannot read still stops the reading"
       (fun () -> from_map ~threads:2 (many ^ "r\tAACC\tIIII\t1+0\tc:+:1:2?2:::60\n"));
+    (* Handed over a stretch at a time, the summaries are the ones delivered one at a time, in the
+       same order, every stretch but the last as long as asked -- whether the stretches are
+       processed in turn or by a parallel section, across the end of a contig and over an empty
+       one.  A stretch that starts within placements takes what they say from there on *)
+    let two = [| "c", "AACCGGTTAA"; "d", "GATTACA" |] in
+    let chunkwise ?memory ?threads ?elements_per_step ?(g = Fun.id) ?(reference = two) text =
+      with_map text
+        (fun ic ->
+          let acc = ref [] in
+          M.Gem.process_chunkwise ~qualities:true ?memory ?threads ?elements_per_step ~reference
+            (fun stretch -> g stretch |> Array.to_list |> shown) (List.accum acc) ic;
+          List.rev !acc) in
+    let one_at_a_time = shown (from_map ~reference:two many) in
+    let fits ?(one_at_a_time = one_at_a_time) elements_per_step stretches =
+      List.concat stretches = one_at_a_time
+      && List.for_all (fun stretch -> List.length stretch = elements_per_step)
+           (List.rev stretches |> List.tl) in
+    Testing.check "in stretches, the summaries are the same, each but the last as long as asked"
+      (fun () -> chunkwise ~elements_per_step:3 many |> fits 3);
+    Testing.check "and from a parallel section of two, a position at a time"
+      (fun () -> chunkwise ~threads:2 ~elements_per_step:1 many |> fits 1);
+    Testing.check "and of three, through runs, in stretches some of which span two contigs"
+      (fun () -> chunkwise ~threads:3 ~memory:50_000 ~elements_per_step:4 many |> fits 4);
+    Testing.check "a contig without positions between two others is passed over"
+      (fun () ->
+        let reference = [| "c", "AACCGGTTAA"; "e", ""; "d", "GATTACA" |] in
+        chunkwise ~reference ~threads:2 ~elements_per_step:4 many
+        |> fits ~one_at_a_time:(shown (from_map ~reference many)) 4);
+    Testing.check "a stretch longer than the reference holds all of it"
+      (fun () -> chunkwise ~threads:2 many = [ one_at_a_time ]);
+    (* Reads of several lengths tiled over a longer reference on both strands, so that most
+       stretches start within some placements, and the runs, of a few hundred placements each,
+       are read from marks within them *)
+    let long = String.init 3000 (fun i -> "ACGT".[(7 * i + i / 5) mod 4]) in
+    let tiled =
+      List.init 600
+        (fun k ->
+          let start = 1 + 5 * k mod 2940 and length = 40 + k mod 21 and forward = k mod 2 = 0 in
+          let segment = String.sub long (start - 1) length in
+          Printf.sprintf "t%d\t%s\t%s\t1+0\tl:%c:%d:%d:::60\n" k
+            (if forward then segment else Sequences.Lint.rc segment)
+            (String.make length (Char.chr (53 + k mod 20))) (if forward then '+' else '-') start
+            length)
+      |> String.concat "" in
+    Testing.check "on a longer reference, stretches cut through placements read from many runs"
+      (fun () ->
+        let reference = [| "l", long |] in
+        chunkwise ~reference ~threads:3 ~memory:20_000 ~elements_per_step:37 tiled
+        |> fits ~one_at_a_time:(shown (from_map ~reference tiled)) 37);
+    Testing.check_raises "a stretch that cannot be processed stops the section"
+      (fun () -> chunkwise ~threads:2 ~g:(fun _ -> raise Exit) many);
+    Testing.check_raises "stretches without positions are refused"
+      (fun () -> chunkwise ~elements_per_step:0 many);
     Testing.check "a second contig the reads do not reach is delivered empty, position by position"
       (fun () ->
         let got = from_map ~reference:[| "c", "AACCGGTTAA"; "d", "GATTACA" |] map in

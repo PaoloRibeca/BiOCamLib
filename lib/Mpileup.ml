@@ -788,10 +788,16 @@ include (
             store.bytes <- bigger
           end
         let key bytes at = get_int32 bytes at, get_int32 bytes (at + 4)
-        (* The records of the store in the reference's order *)
+        (* The records of the store in the reference's order, compared as numbers rather than as
+           keys, there being millions of them *)
         let sorted store =
           let index = Array.sub store.index 0 store.count in
-          Array.sort (fun a b -> compare (key store.bytes a) (key store.bytes b)) index;
+          Array.stable_sort
+            (fun a b ->
+              match Int.compare (get_int32 store.bytes a) (get_int32 store.bytes b) with
+              | 0 -> Int.compare (get_int32 store.bytes (a + 4)) (get_int32 store.bytes (b + 4))
+              | c -> c)
+            index;
           index
         (* A CELL is what the reads have said at one position, counted as summarize counts a
            line: the bases, each with its qualities, the gaps, the skips and the indels.  It
@@ -844,8 +850,18 @@ include (
         (* How much of the input a worker gets at a time when it is read in parallel: whole lines,
            at least one, up to this many bytes, some hundreds of records *)
         let block_bytes = 262_144
-        let iter ?(qualities = false) ?strata ?(quality_offset = 33) ?missing_quality ?(path = "-")
-            ?strand ?memory ?(threads = 1) ?(verbose = false) ~reference f ic =
+        (* Every this many placements of a run, a mark says where in its file the run has got to,
+           so that the run can be read from near the placements a stretch wants *)
+        let mark_stride = 64
+        (* THE SUMMARIES, A STRETCH OF THE REFERENCE AT A TIME: once the input has been read and its
+           placements sorted, [consume] is given a function that delivers the summaries of the
+           positions from one position of the reference up to another, which is not one of them,
+           in the reference's order -- a position being a contig's number and a position on it, and
+           the reference's end the contig past the last.  Any stretch can be asked for, in any order
+           and by any process forked from here.  The runs are removed when [consume] is done,
+           whatever ends it *)
+        let sweep ?(qualities = false) ?strata ?(quality_offset = 33) ?missing_quality ?(path = "-")
+            ?strand ?memory ?(threads = 1) ?(verbose = false) ~reference consume ic =
           let malformed message = Exception.raise __FUNCTION__ IO_Format message in
           (* The reference as the reads were mapped to it *)
           let contigs =
@@ -861,14 +877,22 @@ include (
              budget says the store is full *)
           let new_store () =
             { bytes = Bytes.create 65536; length = 0; index = Array.make 1024 0; count = 0 } in
-          let store = new_store () and runs = ref [] and placements = ref 0 in
+          let store = new_store () and runs = ref [] and marks = ref [] and opened = ref []
+          and placements = ref 0 and max_span = ref 0 in
           let spill () =
             let path = Filename.temp_file "BiOCamLib_Mpileup_Gem_" ".run" in
             List.accum runs path;
-            let oc = open_out_bin path in
-            Array.iter (fun at -> output oc store.bytes at (get_int32 store.bytes (at + 12)))
+            let oc = open_out_bin path and offset = ref 0 and noted = ref [] in
+            Array.iteri
+              (fun k at ->
+                let length = get_int32 store.bytes (at + 12) in
+                if k mod mark_stride = 0 then
+                  List.accum noted (key store.bytes at, !offset);
+                output oc store.bytes at length;
+                offset := !offset + length)
               (sorted store);
             close_out oc;
+            List.accum marks (path, Array.of_list (List.rev !noted));
             store.length <- 0;
             store.count <- 0 in
           let enter store at =
@@ -912,10 +936,12 @@ include (
               contigs.(i) read m;
             set_int32 store.bytes (at + 12) (store.length - at);
             enter store at in
-          (* A placement that has joined the store is counted, and a store over the budget goes to
-             a run *)
+          (* A placement that has joined the store is counted, and its span noted: none of them
+             reaches further into a stretch than the longest span from before it.  A store over
+             the budget goes to a run *)
           let joined () =
             incr placements;
+            max_span := max !max_span (get_int32 store.bytes (store.index.(store.count - 1) + 8));
             match memory with
             | Some budget when store.length + 8 * store.count >= budget -> spill ()
             | _ -> () in
@@ -931,67 +957,10 @@ include (
             enter store store.length;
             store.length <- store.length + length;
             joined () in
-          (* THE CELLS, FED IN THE REFERENCE'S ORDER; every position before the placement at hand
-             is over, and is delivered on the way to it *)
-          let ring = { cells = Array.init 256 (fun _ -> empty_cell ()); head = 0; live = 0 }
-          and contig = ref (-1) and base = ref 1 in
-          let deliver i pos =
-            let name, sequence = contigs.(i) in
-            f (summary_of name sequence pos (ring_pop ring)) in
-          let reach i pos =
-            while !contig < i do
-              if !contig >= 0 then
-                for p = !base to String.length (snd contigs.(!contig)) do
-                  deliver !contig p
-                done;
-              incr contig;
-              base := 1
-            done;
-            while !base < pos do
-              deliver i !base;
-              incr base
-            done in
-          let apply bytes at =
-            let i = get_int32 bytes at and first = get_int32 bytes (at + 4)
-            and span = get_int32 bytes (at + 8) and length = get_int32 bytes (at + 12) in
-            reach i first;
-            for k = 0 to span - 1 do
-              let b = Char.code (Bytes.unsafe_get bytes (at + header_length + 2 * k)) in
-              let code = b land 7 and s = b lsr 3 in
-              if wanted s then begin
-                let cell = ring_get ring k in
-                if code = gap_code then
-                  cell.gaps <- cell.gaps + 1
-                else if code = skip_code then
-                  cell.skips <- cell.skips + 1
-                else begin
-                  cell.counts.(code) <- cell.counts.(code) + 1;
-                  let quality =
-                    Char.code (Bytes.unsafe_get bytes (at + header_length + 2 * k + 1)) in
-                  match cell.quals.(code) with
-                  | Some q -> Qualities.add q quality
-                  | None ->
-                    let q = Qualities.make () in
-                    Qualities.add q quality;
-                    cell.quals.(code) <- Some q
-                end
-              end
-            done;
-            let p = ref (at + header_length + 2 * span) in
-            while !p < at + length do
-              let offset = get_int32 bytes !p and s = Bytes.get_int8 bytes (!p + 4)
-              and n = get_int32 bytes (!p + 5) in
-              if wanted s then begin
-                let cell = ring_get ring offset and symbol = Bytes.sub_string bytes (!p + 9) n in
-                cell.indels <-
-                  (match List.assoc_opt symbol cell.indels with
-                   | Some m -> (symbol, m + 1) :: List.remove_assoc symbol cell.indels
-                   | None -> (symbol, 1) :: cell.indels)
-              end;
-              p := !p + 9 + n
-            done in
           Fun.protect
-            ~finally:(fun () -> List.iter (fun path -> try Sys.remove path with _ -> ()) !runs)
+            ~finally:(fun () ->
+              List.iter close_in_noerr !opened;
+              List.iter (fun path -> try Sys.remove path with _ -> ()) !runs)
             (fun () ->
               if threads > 1 then begin
                 (* THE INPUT IS READ IN PARALLEL, a block of lines to a worker at a time.  A worker
@@ -1028,62 +997,240 @@ include (
               end else
                 Files.Gem.iter ~qualities ?strata ~path (fun read ~placements:_ m -> keep read m)
                   ic;
-              if !runs = [] then begin
-                if verbose then
-                  Printf.eprintf "(%s): Sorting %d %s in memory\n%!" __FUNCTION__ !placements
-                    (String.pluralize_int "placement" !placements);
-                Array.iter (apply store.bytes) (sorted store)
-              end else begin
-                (* What is left joins the runs, and the runs are merged: the earliest head among
-                   them goes next, each run reading on as its head goes *)
-                if store.count > 0 then
-                  spill ();
-                if verbose then
-                  Printf.eprintf "(%s): Merging %d %s from %d %s within a budget of %d bytes\n%!"
-                    __FUNCTION__ !placements (String.pluralize_int "placement" !placements)
-                    (List.length !runs) (String.pluralize_int "run" (List.length !runs))
-                    (Option.get memory);
-                let runs =
-                  List.map (fun path -> open_in_bin path, ref (Bytes.create 65536), ref true) !runs
-                    |> Array.of_list in
-                let advance (ic, buf, alive) =
-                  match really_input ic !buf 0 header_length with
-                  | () ->
-                    let length = get_int32 !buf 12 in
-                    if Bytes.length !buf < length then begin
-                      let bigger = Bytes.create (max length (2 * Bytes.length !buf)) in
-                      Bytes.blit !buf 0 bigger 0 header_length;
-                      buf := bigger
-                    end;
-                    really_input ic !buf header_length (length - header_length)
-                  | exception End_of_file -> alive := false in
-                Fun.protect ~finally:(fun () -> Array.iter (fun (ic, _, _) -> close_in ic) runs)
-                  (fun () ->
-                    Array.iter advance runs;
-                    let rec merge () =
-                      let next = ref (-1) in
+              (* THE PLACEMENTS IN THE REFERENCE'S ORDER, from the first at or after a given
+                 position on: the one at hand, None once they are over, and the way on to the
+                 next *)
+              let placements_from =
+                if !runs = [] then begin
+                  if verbose then
+                    Printf.eprintf "(%s): Sorting %d %s in memory\n%!" __FUNCTION__ !placements
+                      (String.pluralize_int "placement" !placements);
+                  let sorted = sorted store in
+                  (fun from ->
+                    let lo = ref 0 and hi = ref (Array.length sorted) in
+                    while !lo < !hi do
+                      let mid = (!lo + !hi) / 2 in
+                      if compare (key store.bytes sorted.(mid)) from < 0 then
+                        lo := mid + 1
+                      else
+                        hi := mid
+                    done;
+                    let k = ref !lo in
+                    (fun () ->
+                      if !k < Array.length sorted then Some (store.bytes, sorted.(!k)) else None),
+                    (fun () -> incr k))
+                end else begin
+                  (* What is left joins the runs, and the runs are merged: each is read from its
+                     last mark before the position, and the earliest head among them goes next,
+                     each run reading on as its head goes.  A process reads the runs through
+                     channels of its own, opened the first time it needs them: processes sharing a
+                     channel would share where it is in its file *)
+                  if store.count > 0 then
+                    spill ();
+                  if verbose then
+                    Printf.eprintf "(%s): Merging %d %s from %d %s within a budget of %d bytes\n%!"
+                      __FUNCTION__ !placements (String.pluralize_int "placement" !placements)
+                      (List.length !runs) (String.pluralize_int "run" (List.length !runs))
+                      (Option.get memory);
+                  let marks = Array.of_list !marks and mine = ref (-1, [||]) in
+                  let advance (ic, buf, alive) =
+                    match really_input ic !buf 0 header_length with
+                    | () ->
+                      let length = get_int32 !buf 12 in
+                      if Bytes.length !buf < length then begin
+                        let bigger = Bytes.create (max length (2 * Bytes.length !buf)) in
+                        Bytes.blit !buf 0 bigger 0 header_length;
+                        buf := bigger
+                      end;
+                      really_input ic !buf header_length (length - header_length)
+                    | exception End_of_file -> alive := false in
+                  (fun from ->
+                    if fst !mine <> Unix.getpid () then
+                      mine :=
+                        Unix.getpid (),
+                        Array.map
+                          (fun (path, _) ->
+                            let ic = open_in_bin path in
+                            List.accum opened ic;
+                            ic, ref (Bytes.create 65536), ref true)
+                          marks;
+                    let heads = snd !mine and earliest = ref (-1) in
+                    Array.iteri
+                      (fun r (_, noted) ->
+                        let lo = ref 0 and hi = ref (Array.length noted) in
+                        while !lo < !hi do
+                          let mid = (!lo + !hi) / 2 in
+                          if compare (fst noted.(mid)) from < 0 then
+                            lo := mid + 1
+                          else
+                            hi := mid
+                        done;
+                        let ic, buf, alive = heads.(r) in
+                        seek_in ic (if !lo = 0 then 0 else snd noted.(!lo - 1));
+                        alive := true;
+                        advance heads.(r);
+                        while !alive && compare (key !buf 0) from < 0 do
+                          advance heads.(r)
+                        done)
+                      marks;
+                    let choose () =
+                      earliest := -1;
                       Array.iteri
                         (fun j (_, buf, alive) ->
                           if !alive then
-                            if !next < 0 then
-                              next := j
+                            if !earliest < 0 then
+                              earliest := j
                             else begin
-                              let (_, b, _) = runs.(!next) in
+                              let _, b, _ = heads.(!earliest) in
                               if compare (key !buf 0) (key !b 0) < 0 then
-                                next := j
+                                earliest := j
                             end)
-                        runs;
-                      if !next >= 0 then begin
-                        let run = runs.(!next) in
-                        let (_, buf, _) = run in
-                        apply !buf 0;
-                        advance run;
-                        merge ()
-                      end in
-                    merge ())
-              end;
-              (* Whatever the reads did not reach, to the reference's end *)
-              reach (Array.length contigs) 1)
+                        heads in
+                    choose ();
+                    (fun () ->
+                      if !earliest < 0 then
+                        None
+                      else
+                        let _, buf, _ = heads.(!earliest) in
+                        Some (!buf, 0)),
+                    (fun () ->
+                      advance heads.(!earliest);
+                      choose ()))
+                end in
+              (* THE CELLS, FED IN THE REFERENCE'S ORDER over a stretch, from position [pos] of
+                 contig [i] up to [stop]: every position before the placement at hand is over, and
+                 its summary goes to [f] on the way to it.  The placements wanted are all those
+                 that may reach into the stretch, and one that starts before it is applied from
+                 where the stretch starts *)
+              let stretch (i, pos) stop f =
+                let ring = { cells = Array.init 256 (fun _ -> empty_cell ()); head = 0; live = 0 }
+                and contig = ref i and base = ref pos in
+                let deliver i pos =
+                  let name, sequence = contigs.(i) in
+                  f (summary_of name sequence pos (ring_pop ring)) in
+                let reach (i, pos) =
+                  while !contig < i do
+                    for p = !base to String.length (snd contigs.(!contig)) do
+                      deliver !contig p
+                    done;
+                    incr contig;
+                    base := 1
+                  done;
+                  while !base < pos do
+                    deliver i !base;
+                    incr base
+                  done in
+                (* A placement into the cells, but for whatever it covers before the first one *)
+                let apply bytes at =
+                  let first = get_int32 bytes (at + 4) and span = get_int32 bytes (at + 8)
+                  and length = get_int32 bytes (at + 12) in
+                  let skip = max 0 (!base - first) in
+                  for k = skip to span - 1 do
+                    let b = Char.code (Bytes.unsafe_get bytes (at + header_length + 2 * k)) in
+                    let code = b land 7 and s = b lsr 3 in
+                    if wanted s then begin
+                      let cell = ring_get ring (k - skip) in
+                      if code = gap_code then
+                        cell.gaps <- cell.gaps + 1
+                      else if code = skip_code then
+                        cell.skips <- cell.skips + 1
+                      else begin
+                        cell.counts.(code) <- cell.counts.(code) + 1;
+                        let quality =
+                          Char.code (Bytes.unsafe_get bytes (at + header_length + 2 * k + 1)) in
+                        match cell.quals.(code) with
+                        | Some q -> Qualities.add q quality
+                        | None ->
+                          let q = Qualities.make () in
+                          Qualities.add q quality;
+                          cell.quals.(code) <- Some q
+                      end
+                    end
+                  done;
+                  let p = ref (at + header_length + 2 * span) in
+                  while !p < at + length do
+                    let offset = get_int32 bytes !p and s = Bytes.get_int8 bytes (!p + 4)
+                    and n = get_int32 bytes (!p + 5) in
+                    if offset >= skip && wanted s then begin
+                      let cell = ring_get ring (offset - skip)
+                      and symbol = Bytes.sub_string bytes (!p + 9) n in
+                      cell.indels <-
+                        (match List.assoc_opt symbol cell.indels with
+                         | Some m -> (symbol, m + 1) :: List.remove_assoc symbol cell.indels
+                         | None -> (symbol, 1) :: cell.indels)
+                    end;
+                    p := !p + 9 + n
+                  done in
+                (* Once the placements reaching into the stretch are over, whatever they did not
+                   reach goes too, to the stretch's end *)
+                let at_hand, move_on = placements_from (i, pos - !max_span + 1) in
+                let rec go () =
+                  match at_hand () with
+                  | Some (bytes, at) when compare (key bytes at) stop < 0 ->
+                    reach (key bytes at);
+                    apply bytes at;
+                    move_on ();
+                    go ()
+                  | _ -> reach stop in
+                go () in
+              consume stretch)
+        let iter ?qualities ?strata ?quality_offset ?missing_quality ?path ?strand ?memory ?threads
+            ?verbose ~reference f ic =
+          sweep ?qualities ?strata ?quality_offset ?missing_quality ?path ?strand ?memory ?threads
+            ?verbose ~reference (fun stretch -> stretch (0, 1) (Array.length reference, 1) f) ic
+        (* THE SUMMARIES A STRETCH AT A TIME, the stretches handed out in turn to the workers of a
+           single parallel section, each of which makes the summaries of its own stretches and
+           processes them: all that goes to a worker is where a stretch starts and stops *)
+        let process_chunkwise ?qualities ?strata ?quality_offset ?missing_quality ?path ?strand
+            ?memory ?(threads = 1) ?(elements_per_step = 1000) ?verbose ~reference g h ic =
+          if elements_per_step < 1 then
+            Printf.sprintf "The number of positions in a stretch must be positive (found %d)"
+              elements_per_step
+            |> Exception.raise __FUNCTION__ Initialize;
+          let lengths = Array.map (fun (_, sequence) -> String.length sequence) reference in
+          let n = Array.length lengths in
+          sweep ?qualities ?strata ?quality_offset ?missing_quality ?path ?strand ?memory ~threads
+            ?verbose ~reference
+            (fun stretch ->
+              (* The next [elements_per_step] positions, or those left, from where the last stretch
+                 stopped and past the contigs that are over; and the end of the input once they all
+                 are *)
+              let at = ref (0, 1) in
+              let next () =
+                while fst !at < n && snd !at > lengths.(fst !at) do
+                  at := (fst !at + 1, 1)
+                done;
+                let start = !at and left = ref elements_per_step in
+                if fst start = n then
+                  raise End_of_file;
+                while !left > 0 && fst !at < n do
+                  let i, pos = !at in
+                  let here = lengths.(i) - pos + 1 in
+                  if here <= !left then begin
+                    left := !left - here;
+                    at := (i + 1, 1)
+                  end else begin
+                    at := (i, pos + !left);
+                    left := 0
+                  end
+                done;
+                start, !at
+              and summaries (start, stop) =
+                let acc = ref [] in
+                stretch start stop (List.accum acc);
+                Array.of_list (List.rev !acc) in
+              if threads > 1 then
+                Processes.Parallel.process_stream_chunkwise next (fun range -> summaries range |> g)
+                  h threads
+              else
+                let rec loop () =
+                  match next () with
+                  | range ->
+                    summaries range |> g |> h;
+                    loop ()
+                  | exception End_of_file -> () in
+                loop ())
+            ic
       end
   end: sig
     module Call:
@@ -1206,7 +1353,15 @@ include (
        many placements were sorted or merged.
        With [threads] above one the input is read by that many processes, each
        parsing a block of lines at a time and walking its placements, which
-       join the others in the input's order: what comes out is the same *)
+       join the others in the input's order: what comes out is the same.
+       [process_chunkwise] cuts the reference into stretches of
+       [elements_per_step] positions, hands the summaries of each stretch, in
+       the reference's order, to [g], and what [g] makes of them to [h], in the
+       stretches' order.  With [threads] above one the stretches go to the
+       workers of a single parallel section, each of which makes the summaries
+       of a stretch itself before applying [g] to them, and [h] runs in the
+       caller: what [h] gets is what applying [g] to every stretch in turn would
+       give it *)
     module Gem:
       sig
         val iter:
@@ -1214,6 +1369,11 @@ include (
           ?path:string -> ?strand:Sequences.Types.strand_t -> ?memory:int -> ?threads:int ->
           ?verbose:bool -> reference:(string * string) array -> (Summary.t -> unit) ->
           in_channel -> unit
+        val process_chunkwise:
+          ?qualities:bool -> ?strata:int -> ?quality_offset:int -> ?missing_quality:int ->
+          ?path:string -> ?strand:Sequences.Types.strand_t -> ?memory:int -> ?threads:int ->
+          ?elements_per_step:int -> ?verbose:bool -> reference:(string * string) array ->
+          (Summary.t array -> 'a) -> ('a -> unit) -> in_channel -> unit
       end
   end
 )
