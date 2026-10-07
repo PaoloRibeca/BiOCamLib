@@ -314,7 +314,20 @@ let test_gem_map () =
     Testing.check_raises "counters that cannot be counted are reported"
       (fun () -> read ~strata:1 "r\tACGT\t!\tc:+:1:4:::0\n");
     Testing.check_raises "counters announcing no placement for a placed read are reported"
-      (fun () -> read "r\tACGT\t0:0+0\tc:+:1:4:::0\n"))
+      (fun () -> read "r\tACGT\t0:0+0\tc:+:1:4:::0\n");
+    (* A block of a larger input, as a worker reading that input in parallel gets it: its records
+       read as a file of them does, and a malformed one is reported at its line in the input *)
+    let read_string ?strata ?line text =
+      let seen = ref [] in
+      G.iter_string ?strata ?line
+        (fun read ~placements m -> List.accum seen (read.G.tag, placements, m)) text;
+      List.rev !seen in
+    Testing.check "a string of records reads as a file of them does"
+      (fun () ->
+        read_string text = read text && read_string ~strata:1 three = read ~strata:1 three);
+    Testing.check_raises ~re:"On line 41"
+      "and a malformed record is reported at its line in the input"
+      (fun () -> read_string ~line:40 ("r\tACGT\t1+0\tc:+:1:4\n" ^ "r\tACGT\t1+0\tc:+:1:2?2\n")))
 
 let run () =
   test_quoted_path ();

@@ -436,8 +436,8 @@ let test_gem () =
         line [ "c"; "8"; "T"; "5"; ",.$.,,"; "JIIJJ" ];
         line [ "c"; "9"; "A"; "4"; ",.,,"; "JIJJ" ];
         line [ "c"; "10"; "A"; "4"; ",$.$,$,$"; "JIJJ" ] ] in
-    let from_map ?(qualities = true) ?missing_quality ?strand ?memory ?(reference = reference)
-        text =
+    let from_map ?(qualities = true) ?missing_quality ?strand ?memory ?threads
+        ?(reference = reference) text =
       let path = Filename.temp_file "BiOCamLib_Tests_" ".map" in
       Fun.protect ~finally:(fun () -> Sys.remove path)
         (fun () ->
@@ -447,7 +447,7 @@ let test_gem () =
           let ic = open_in path and acc = ref [] in
           Fun.protect ~finally:(fun () -> close_in ic)
             (fun () ->
-              M.Gem.iter ~qualities ?missing_quality ?strand ?memory ~reference
+              M.Gem.iter ~qualities ?missing_quality ?strand ?memory ?threads ~reference
                 (fun u -> List.accum acc u) ic);
           List.rev !acc) in
     let shown = List.map M.Summary.to_string in
@@ -458,6 +458,17 @@ let test_gem () =
       (fun () -> shown (from_map ~memory:1 map) = shown expected);
     Testing.check "and within one that holds a few placements at a time"
       (fun () -> shown (from_map ~memory:60 map) = shown expected);
+    (* Read in parallel, the input goes to the workers a block of lines at a time, so the records
+       above are repeated until they fill several blocks: what comes out must be what reading them
+       in turn gives, through runs as well *)
+    let many = String.concat "" (List.init 2000 (Fun.const map)) in
+    let in_turn = shown (from_map many) in
+    Testing.check "read by two processes, a block of lines each at a time, the input says the same"
+      (fun () -> shown (from_map ~threads:2 many) = in_turn);
+    Testing.check "and by three, within a budget that sends it through runs"
+      (fun () -> shown (from_map ~threads:3 ~memory:50_000 many) = in_turn);
+    Testing.check_raises "a record a worker cannot read still stops the reading"
+      (fun () -> from_map ~threads:2 (many ^ "r\tAACC\tIIII\t1+0\tc:+:1:2?2:::60\n"));
     Testing.check "a second contig the reads do not reach is delivered empty, position by position"
       (fun () ->
         let got = from_map ~reference:[| "c", "AACCGGTTAA"; "d", "GATTACA" |] map in

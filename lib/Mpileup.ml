@@ -841,8 +841,11 @@ include (
             ring.live <- ring.live - 1;
             cell
           end
+        (* How much of the input a worker gets at a time when it is read in parallel: whole lines,
+           at least one, up to this many bytes, some hundreds of records *)
+        let block_bytes = 262_144
         let iter ?(qualities = false) ?strata ?(quality_offset = 33) ?missing_quality ?(path = "-")
-            ?strand ?memory ?(verbose = false) ~reference f ic =
+            ?strand ?memory ?(threads = 1) ?(verbose = false) ~reference f ic =
           let malformed message = Exception.raise __FUNCTION__ IO_Format message in
           (* The reference as the reads were mapped to it *)
           let contigs =
@@ -856,9 +859,9 @@ include (
             | Some (Sequences.Types.Reverse _) -> s = 1 in
           (* THE INPUT, PLACEMENT BY PLACEMENT, INTO THE STORE -- and out of it into runs when a
              budget says the store is full *)
-          let store =
-            { bytes = Bytes.create 65536; length = 0; index = Array.make 1024 0; count = 0 }
-          and runs = ref [] and placements = ref 0 in
+          let new_store () =
+            { bytes = Bytes.create 65536; length = 0; index = Array.make 1024 0; count = 0 } in
+          let store = new_store () and runs = ref [] and placements = ref 0 in
           let spill () =
             let path = Filename.temp_file "BiOCamLib_Mpileup_Gem_" ".run" in
             List.accum runs path;
@@ -868,7 +871,17 @@ include (
             close_out oc;
             store.length <- 0;
             store.count <- 0 in
-          let keep read m =
+          let enter store at =
+            if store.count = Array.length store.index then begin
+              let bigger = Array.make (2 * store.count) 0 in
+              Array.blit store.index 0 bigger 0 store.count;
+              store.index <- bigger
+            end;
+            store.index.(store.count) <- at;
+            store.count <- store.count + 1 in
+          (* One placement walked into a store: this one, or a worker's when the input is read in
+             parallel *)
+          let place ?budget store read m =
             let i =
               match Hashtbl.find_opt index m.Files.Gem.contig with
               | Some i -> i
@@ -878,7 +891,7 @@ include (
                 |> malformed in
             let first, span = extent m in
             let at = store.length in
-            reserve ?budget:memory store (header_length + 2 * span);
+            reserve ?budget store (header_length + 2 * span);
             set_int32 store.bytes at i;
             set_int32 store.bytes (at + 4) first;
             set_int32 store.bytes (at + 8) span;
@@ -890,7 +903,7 @@ include (
                 Bytes.unsafe_set store.bytes (k + 1) (Char.unsafe_chr quality))
               ~note_indel:(fun pos symbol s ->
                 let n = String.length symbol in
-                reserve ?budget:memory store (9 + n);
+                reserve ?budget store (9 + n);
                 set_int32 store.bytes store.length (pos - first);
                 Bytes.set_int8 store.bytes (store.length + 4) s;
                 set_int32 store.bytes (store.length + 5) n;
@@ -898,17 +911,26 @@ include (
                 store.length <- store.length + 9 + n)
               contigs.(i) read m;
             set_int32 store.bytes (at + 12) (store.length - at);
-            if store.count = Array.length store.index then begin
-              let bigger = Array.make (2 * store.count) 0 in
-              Array.blit store.index 0 bigger 0 store.count;
-              store.index <- bigger
-            end;
-            store.index.(store.count) <- at;
-            store.count <- store.count + 1;
+            enter store at in
+          (* A placement that has joined the store is counted, and a store over the budget goes to
+             a run *)
+          let joined () =
             incr placements;
             match memory with
             | Some budget when store.length + 8 * store.count >= budget -> spill ()
             | _ -> () in
+          let keep read m =
+            place ?budget:memory store read m;
+            joined ()
+          (* A placement a worker walked, from its store into this one.  A record holds its indels
+             as offsets from its own start, so it moves as it is *)
+          and adopt bytes at =
+            let length = get_int32 bytes (at + 12) in
+            reserve ?budget:memory store length;
+            Bytes.blit bytes at store.bytes store.length length;
+            enter store store.length;
+            store.length <- store.length + length;
+            joined () in
           (* THE CELLS, FED IN THE REFERENCE'S ORDER; every position before the placement at hand
              is over, and is delivered on the way to it *)
           let ring = { cells = Array.init 256 (fun _ -> empty_cell ()); head = 0; live = 0 }
@@ -971,7 +993,41 @@ include (
           Fun.protect
             ~finally:(fun () -> List.iter (fun path -> try Sys.remove path with _ -> ()) !runs)
             (fun () ->
-              Files.Gem.iter ~qualities ?strata ~path (fun read ~placements:_ m -> keep read m) ic;
+              if threads > 1 then begin
+                (* THE INPUT IS READ IN PARALLEL, a block of lines to a worker at a time.  A worker
+                   parses the block's records and walks their placements into a store of its own;
+                   the stores come back in the input's order, and their placements join this one
+                   one at a time, as keep would have placed them, so that what is sorted, spilled
+                   and merged is the same.  The lines are numbered here, for the workers'
+                   messages *)
+                let line = ref 1 and over = ref false in
+                Processes.Parallel.process_stream_chunkwise
+                  (fun () ->
+                    if !over then
+                      raise End_of_file;
+                    let first = !line and block = Buffer.create (2 * block_bytes) in
+                    begin try
+                      while Buffer.length block < block_bytes do
+                        Buffer.add_string block (input_line ic);
+                        Buffer.add_char block '\n';
+                        incr line
+                      done
+                    with End_of_file ->
+                      over := true
+                    end;
+                    if Buffer.length block = 0 then
+                      raise End_of_file;
+                    first, Buffer.contents block)
+                  (fun (first, block) ->
+                    let own = new_store () in
+                    Files.Gem.iter_string ~qualities ?strata ~path ~line:first
+                      (fun read ~placements:_ m -> place own read m) block;
+                    Bytes.sub own.bytes 0 own.length, Array.sub own.index 0 own.count)
+                  (fun (bytes, offsets) -> Array.iter (adopt bytes) offsets)
+                  threads
+              end else
+                Files.Gem.iter ~qualities ?strata ~path (fun read ~placements:_ m -> keep read m)
+                  ic;
               if !runs = [] then begin
                 if verbose then
                   Printf.eprintf "(%s): Sorting %d %s in memory\n%!" __FUNCTION__ !placements
@@ -1142,19 +1198,22 @@ include (
        which a pileup could not tell apart.  What the reads say is checked
        against the reference, so a reference other than the one they were mapped
        to is refused.
-       Without [memory] everything the reads say is kept until the input is
-       over, at two bytes a call and a cell a position; with it, in bytes, the
-       calls are first counted in a pass that keeps one count per position, the
-       reference is cut into windows whose cells fit the budget, and each window
-       is filled by a pass of its own, so the input, read once more than there
-       are windows, must then be a file, named by [path]; [verbose] says how
-       many passes it took *)
+       What the reads say is kept at two bytes a call, until the input is over
+       without [memory]; with it, in bytes, until the budget is reached, when it
+       is sorted and written to a temporary file, a run, the runs being merged
+       once the input is over, so that the input can be a pipe whatever its
+       size; [path] names the input in error messages, and [verbose] says how
+       many placements were sorted or merged.
+       With [threads] above one the input is read by that many processes, each
+       parsing a block of lines at a time and walking its placements, which
+       join the others in the input's order: what comes out is the same *)
     module Gem:
       sig
         val iter:
           ?qualities:bool -> ?strata:int -> ?quality_offset:int -> ?missing_quality:int ->
-          ?path:string -> ?strand:Sequences.Types.strand_t -> ?memory:int -> ?verbose:bool ->
-          reference:(string * string) array -> (Summary.t -> unit) -> in_channel -> unit
+          ?path:string -> ?strand:Sequences.Types.strand_t -> ?memory:int -> ?threads:int ->
+          ?verbose:bool -> reference:(string * string) array -> (Summary.t -> unit) ->
+          in_channel -> unit
       end
   end
 )

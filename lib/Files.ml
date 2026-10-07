@@ -1304,6 +1304,11 @@ module Gem:
     val iter:
       ?qualities:bool -> ?path:string -> ?strata:int -> (read_t -> placements:int -> match_t -> unit) ->
         in_channel -> unit
+    (* The same over a string of whole records, a line each, such as a block of a larger input:
+        [line] is the number of its first line in that input, for error messages *)
+    val iter_string:
+      ?qualities:bool -> ?path:string -> ?strata:int -> ?line:int ->
+        (read_t -> placements:int -> match_t -> unit) -> string -> unit
   end
 = struct
     module Gigar =
@@ -1383,8 +1388,7 @@ module Gem:
       | Mate (* The read's other mate, of the same placement *)
       | Placement (* The read's next placement *)
       | Done
-    let iter ?(qualities = false) ?(path = "-") ?strata f ic =
-      let lexbuf = Lexing.from_channel ic in
+    let iter_lexbuf ?(qualities = false) ?(path = "-") ?strata f lexbuf =
       let malformed comment =
         Exception.raise_malformed __FUNCTION__ lexbuf.Lexing.lex_curr_p.Lexing.pos_lnum "GEM MAP" path
           ~comment in
@@ -1479,5 +1483,11 @@ module Gem:
         records ()
       with Gem_Lex.Error what ->
         malformed what
+    let iter ?qualities ?path ?strata f ic =
+      Lexing.from_channel ic |> iter_lexbuf ?qualities ?path ?strata f
+    let iter_string ?qualities ?path ?strata ?(line = 1) f s =
+      let lexbuf = Lexing.from_string s in
+      Lexing.set_position lexbuf { lexbuf.Lexing.lex_curr_p with Lexing.pos_lnum = line };
+      iter_lexbuf ?qualities ?path ?strata f lexbuf
   end
 
